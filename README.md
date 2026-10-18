@@ -27,11 +27,15 @@ Open **Settings…** from Mouse's menu-bar icon. Settings also opens on launch w
 
 Say **“Hey Mouse, open Chrome.”** The legacy **“Hey Chosen”** phrase also works. Activation persists between commands until you explicitly put Mouse to sleep; silence does not expire the session.
 
+Mouse accepts clear computer instructions and silently ignores conversation, informational questions, and unclear phrases. A conservative local filter runs before transcription is displayed or a task starts. Rejected speech triggers no screen capture, API request, answer, or desktop action; Mouse remains active. “Open Chrome” and “Can you open Chrome?” are commands; “How do I open Chrome?”, “I told him to open Chrome”, and “don't open Chrome” are ignored. Unknown phrasing may need to be restated as a direct instruction.
+
+Spoken stop and sleep controls are matched as complete phrases at the existing silence boundary (about 700 ms), so “stop by later” or “cancel my dinner reservation” does not cancel a computer task.
+
 | State or command | Behavior |
 |---|---|
 | Standby | No overlay; local wake-word monitoring continues. |
 | Active | A slightly expanded, empty gradient notch indicates readiness. |
-| Speaking | The live transcript wraps at a constrained width and grows downward. |
+| Speaking a clear command | The live transcript wraps at a constrained width and grows downward. |
 | Acting | The panel shrinks smoothly to one short description for the current operation. |
 | Finished | The panel returns to the small active indicator, ready for another command. |
 | “Stop” or “cancel” | Cancels queued actions and retains activation. Earlier clicks or typing are not undone. |
@@ -48,6 +52,8 @@ The Responses API uses a strict custom `execute_actions` function with required 
 
 A separate `pause_for_user` function requests missing information, authorization, or review without executing actions. Invalid, incomplete, refused, mixed, or multiple operations are rejected. Completion is requested only after the model inspects the resulting screen. Requests time out after 30 seconds and are not automatically retried; each command retains an 8-model-turn execution guard.
 
+For command-like phrasing that passes the local filter, the model can return `ignore_utterance({})` as a second check on intent. This silently ends the turn without an answer or action. Ignoring cannot be combined with an action batch, clarification, or message, and earlier commands cannot turn new conversation into an instruction. This model fallback still uses the normal screenshot/request; the local filter rejects ordinary chat before either is created.
+
 Screenshot sizing is unchanged: ScreenCaptureKit captures at the selected display's logical dimensions, capped at 1600 pixels wide, then encodes JPEG at 78% quality. Existing coordinate mapping converts image coordinates to display coordinates. No additional 40% scaling was introduced.
 
 This iteration focuses on the notch UI on the current Mac. Spaces, fullscreen behavior, and multiple-display overlay placement remain deferred.
@@ -63,7 +69,7 @@ Run offline tests with:
 ./Scripts/test.sh --filter OpenAIClientTests
 ```
 
-Coverage includes strict schemas, description/action parsing, screenshot continuations, pause handling, cancellation, persistent activation, stop-versus-sleep behavior, usage counting, and coordinate mapping. Tests make no live API requests. A passing suite does not establish microphone quality or end-to-end Mac control.
+Coverage includes local command intent filtering, ignored conversation, strict schemas, description/action parsing, screenshot continuations, pause/ignore handling, cancellation, persistent activation, stop-versus-sleep behavior, usage counting, and coordinate mapping. Tests make no live API requests. A passing suite does not establish microphone quality or end-to-end Mac control.
 
 Preview the notch without microphone capture, API requests, or desktop input:
 

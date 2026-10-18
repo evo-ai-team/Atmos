@@ -28,12 +28,22 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertEqual(body["parallel_tool_calls"] as? Bool, false)
         XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "low")
         let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
-        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user"])
+        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance"])
         for tool in tools {
             XCTAssertEqual(tool["type"] as? String, "function")
             XCTAssertEqual(tool["strict"] as? Bool, true)
             try assertClosedObjects(XCTUnwrap(tool["parameters"] as? [String: Any]))
         }
+        let ignoreParameters = try XCTUnwrap(tools.last?["parameters"] as? [String: Any])
+        XCTAssertTrue((ignoreParameters["properties"] as? [String: Any])?.isEmpty == true)
+        XCTAssertEqual(ignoreParameters["required"] as? [String], [])
+        XCTAssertEqual(ignoreParameters["additionalProperties"] as? Bool, false)
+        let instructions = try XCTUnwrap(body["instructions"] as? String)
+        XCTAssertTrue(instructions.contains("call ignore_utterance with {}"))
+        XCTAssertTrue(instructions.contains("no answer, question, explanation, or UI action"))
+        XCTAssertTrue(instructions.contains("Can you open Chrome?"))
+        XCTAssertTrue(instructions.contains("How do I open Chrome?"))
+        XCTAssertTrue(instructions.contains("must never turn chat into a command"))
         let parameters = try XCTUnwrap(tools.first?["parameters"] as? [String: Any])
         let properties = try XCTUnwrap(parameters["properties"] as? [String: Any])
         XCTAssertEqual(Set(properties.keys), Set(["description", "actions"]))
@@ -45,7 +55,8 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertNil(body["previous_response_id"])
         let input = try XCTUnwrap(body["input"] as? [[String: Any]])
         let content = try XCTUnwrap(input.first?["content"] as? [[String: String]])
-        XCTAssertTrue(content[0]["text"]?.contains("Open Calculator") == true)
+        XCTAssertTrue(content[0]["text"]?.contains("Current utterance: Open Calculator") == true)
+        XCTAssertTrue(content[0]["text"]?.contains("Prior context (background only): Finder is active") == true)
         XCTAssertEqual(content[1], ["type": "input_image", "image_url": frame.dataURL, "detail": "original"])
         XCTAssertEqual(turn.message, "Done.")
         XCTAssertEqual(turn.inputTokens, 42)
@@ -117,6 +128,45 @@ final class OpenAIClientTests: XCTestCase {
         let turn = try OpenAIComputerClient.parseResponse(responseData([function(["reason": "Which channel should I open?"], name: "pause_for_user")]))
         XCTAssertEqual(turn.pauseReason, "Which channel should I open?")
         XCTAssertTrue(turn.calls.isEmpty)
+    }
+
+    func testIgnoreUtteranceReturnsSilentNoOp() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "id": "resp_ignore", "status": "completed",
+            "output": [["type": "reasoning", "summary": []], try function([:], name: "ignore_utterance")],
+            "usage": ["input_tokens": 42, "output_tokens": 5]
+        ])
+        let turn = try OpenAIComputerClient.parseResponse(data)
+        XCTAssertTrue(turn.ignored)
+        XCTAssertTrue(turn.calls.isEmpty)
+        XCTAssertTrue(turn.message.isEmpty)
+        XCTAssertNil(turn.pauseReason)
+        XCTAssertEqual(turn.inputTokens, 42)
+        XCTAssertEqual(turn.outputTokens, 5)
+        XCTAssertFalse(ModelTurn(id: "normal", calls: [], message: "Done.").ignored)
+    }
+
+    func testRejectsIgnoreCombinedWithAnyOtherOutput() throws {
+        let ignore = try function([:], name: "ignore_utterance")
+        let action = try function(["description": "Opening YouTube…", "actions": [["type": "wait"]]], callID: "call_2")
+        let pause = try function(["reason": "Please confirm."], name: "pause_for_user", callID: "call_2")
+        let anotherIgnore = try function([:], name: "ignore_utterance", callID: "call_2")
+        let final: [String: Any] = ["type": "message", "content": [["type": "output_text", "text": "I will ignore that."]]]
+        let commentary: [String: Any] = ["type": "message", "phase": "commentary", "content": [["type": "output_text", "text": "Understood."]]]
+        let emptyMessage: [String: Any] = ["type": "message", "content": []]
+        for other in [action, pause, anotherIgnore, final, commentary, emptyMessage] {
+            try assertBlocked([ignore, other])
+            try assertBlocked([other, ignore])
+        }
+    }
+
+    func testRejectsIgnoreArgumentsBeyondEmptyObject() throws {
+        try assertBlocked([function(["reason": "private-utterance"], name: "ignore_utterance")])
+        var call = try function([:], name: "ignore_utterance")
+        for arguments in ["[]", "null", "true", "\"ignore\""] {
+            call["arguments"] = arguments
+            try assertBlocked([call])
+        }
     }
 
     func testRejectsMalformedDescriptionsAndBatches() throws {

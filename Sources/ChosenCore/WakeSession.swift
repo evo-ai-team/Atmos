@@ -1,16 +1,14 @@
 import Foundation
 
-/// The boundary between continuous, local wake-word monitoring and submitted
-/// commands. Activation persists until an explicit sleep command; silence and
-/// recognition-stream replacement never deactivate it.
+/// Continuous speech stays local. Only an explicit wake phrase at an utterance
+/// boundary activates Mouse, and only clear computer commands cross this boundary.
 public struct WakeSession {
     public enum Event: Equatable {
         case activated
         case partial(String)
         case command(String)
-        /// Cancel the current action, while keeping the existing activation state.
+        case ignored
         case stopped
-        /// Return to local wake-word monitoring and cancel any current action.
         case deactivated
     }
 
@@ -22,27 +20,21 @@ public struct WakeSession {
     private var previousWords: [String] = []
     private var ignoredWords: [String] = []
     private var carriedCommand = ""
-    // A partial "stop" cancels immediately. Keep its stream until the acoustic
-    // boundary so a subsequent partial "stop listening" can still put us to sleep.
-    private var interruptionOffset: Int?
-    private var carriedInterruptionWords: [String] = []
+    private var displayedPartial = ""
 
     public init() {}
 
-    /// Call when replacing a cumulative recognition stream, never for every partial.
+    /// Replace a cumulative recognition stream without losing an unfinished
+    /// utterance, activation, or a split wake/control phrase.
     public mutating func beginRecognition(preservingPending: Bool = false) {
-        if preservingPending, let interruptionOffset {
-            carriedInterruptionWords += previousWords.dropFirst(interruptionOffset)
-            self.interruptionOffset = 0
-        } else {
-            interruptionOffset = nil
-            carriedInterruptionWords = []
-        }
         previousWords = []
         ignoredWords = []
         carriedCommand = preservingPending ? pendingCommand : ""
-        if !preservingPending { pendingCommand = "" }
-        if pendingCommand.isEmpty && interruptionOffset == nil { lastChangeAt = nil }
+        if !preservingPending {
+            pendingCommand = ""
+            displayedPartial = ""
+            lastChangeAt = nil
+        }
     }
 
     @discardableResult
@@ -60,135 +52,89 @@ public struct WakeSession {
         return [.deactivated]
     }
 
-    /// Execution pauses command submission, but never disables voice interruption.
     public mutating func setExecuting(_ executing: Bool, at time: TimeInterval) {
         let finishedExecution = isExecuting && !executing
         isExecuting = executing
-        // Speech observed while actions were running must not be prepended to
-        // the next command in the same cumulative recognition stream. A voice
-        // interruption has already set isExecuting to false, so its partial
-        // "stop" remains available to finish as "stop listening".
-        if executing || finishedExecution { clearUtterance() }
+        // Consume speech heard during the task before accepting a new command.
+        if executing || (finishedExecution && CommandIntent.control(pendingCommand) == nil) { clearUtterance() }
     }
 
     public mutating func receive(_ transcript: String, at time: TimeInterval) -> [Event] {
-        var events: [Event] = []
         let tokens = Self.tokens(in: transcript)
         let words = tokens.map(\.word)
-        guard words != previousWords else { return events }
+        guard words != previousWords else { return [] }
         previousWords = words
-
-        if let interruptionOffset {
-            let interruptedPhrase = carriedInterruptionWords + Array(words.dropFirst(interruptionOffset))
-            if Self.isDeactivation(interruptedPhrase) { return deactivate() }
-            // Do not submit the remainder of the cancelled utterance as a new task.
-            ignoredWords = words
-            lastChangeAt = time
-            return []
-        }
-
-        // Recognition revises partials. Keep the consumed prefix behind the boundary,
-        // even when spelling or punctuation in that prefix is revised later.
         let offset = min(ignoredWords.count, words.count)
-        let available = Array(words.dropFirst(offset))
-        guard !available.isEmpty else { return events }
+        guard offset < tokens.count else { return [] }
+        let suffix = (offset == 0 ? transcript : String(transcript[tokens[offset - 1].range.upperBound...]))
+            .trimmingCharacters(in: Self.utteranceSeparators)
+        var utterance = [carriedCommand, suffix].filter { !$0.isEmpty }.joined(separator: " ")
+        var events: [Event] = []
 
-        if isExecuting {
-            // Commands aren't accepted during execution, so interruption can occur
-            // after other recognized background words without repeating the wake phrase.
-            if available.indices.contains(where: { Self.isDeactivation(Array(available[$0...])) }) {
-                return deactivate()
+        if !isExecuting {
+            let utteranceTokens = Self.tokens(in: utterance)
+            let isQuoted = ["\"", "“", "'", "‘"].contains(where: { utterance.hasPrefix($0) })
+            if !isQuoted, let wakeEnd = Self.wakeEnd(in: utteranceTokens.map(\.word)) {
+                let carriedCount = Self.tokens(in: carriedCommand).count
+                let consumedCurrentWords = max(0, wakeEnd - carriedCount)
+                ignoredWords = Array(words.prefix(offset + consumedCurrentWords))
+                carriedCommand = ""
+                utterance = String(utterance[utteranceTokens[wakeEnd - 1].range.upperBound...])
+                    .trimmingCharacters(in: Self.utteranceSeparators)
+                if !isActive {
+                    isActive = true
+                    events.append(.activated)
+                }
             }
-            if let index = available.firstIndex(where: { $0 == "stop" || $0 == "cancel" }) {
-                return interrupt(from: offset + index, at: time)
-            }
-            return events
         }
 
-        var commandOffset = offset
-        if !isActive {
-            guard let wake = Self.wakeIndex(in: available) else { return events }
-            commandOffset = offset + wake + 2
-            ignoredWords = Array(words.prefix(commandOffset))
-            isActive = true
-            events.append(.activated)
-        } else if let wake = Self.wakeIndex(in: available), wake == 0 {
-            // Repeating the wake phrase while active is harmless.
-            commandOffset = offset + 2
-            ignoredWords = Array(words.prefix(commandOffset))
-        }
-
-        let commandWords = Array(words.dropFirst(commandOffset))
-        let carriedWords = Self.tokens(in: carriedCommand).map(\.word)
-        if Self.isDeactivation(commandWords) || Self.isDeactivation(carriedWords + commandWords) {
-            return events + deactivate()
-        }
-        if Self.isInterruption(commandWords) {
-            return events + interrupt(from: commandOffset, at: time)
-        }
-        let suffix: String
-        if commandOffset < tokens.count {
-            suffix = String(transcript[tokens[commandOffset].range.lowerBound...])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        } else {
-            suffix = ""
-        }
-        let command = [carriedCommand, suffix].filter { !$0.isEmpty }.joined(separator: " ")
-        guard command != pendingCommand else { return events }
-        pendingCommand = command
+        pendingCommand = utterance
         lastChangeAt = time
-        events.append(.partial(command))
+        // Controls wait for the acoustic endpoint as well: a partial "stop"
+        // must not cancel a task before it becomes "stop by later".
+        let visible = isActive && !isExecuting && CommandIntent.isClearCommand(utterance) ? utterance : ""
+        if visible != displayedPartial {
+            displayedPartial = visible
+            events.append(.partial(visible))
+        }
         return events
     }
 
-    /// The audio layer calls this after actual silence, not after seeing the wake phrase.
+    /// Called after the audio layer observes a full trailing silence window.
     public mutating func finishUtterance(at time: TimeInterval) -> [Event] {
-        if interruptionOffset != nil {
-            clearUtterance()
-            return []
-        }
-        guard isActive, !isExecuting, !pendingCommand.isEmpty else { return [] }
-        let command = pendingCommand
+        let utterance = pendingCommand
+        let hadUtterance = !utterance.isEmpty
         clearUtterance()
-        return [.command(command)]
+        guard hadUtterance else { return [] }
+        guard isActive || isExecuting else { return [] }
+        if let control = CommandIntent.control(utterance) {
+            switch control {
+            case .sleep: return deactivate()
+            case .stop:
+                isExecuting = false
+                return [.stopped]
+            }
+        }
+        guard !isExecuting, CommandIntent.isClearCommand(utterance) else { return [.ignored] }
+        return [.command(utterance)]
     }
 
     private mutating func clearUtterance() {
         pendingCommand = ""
         carriedCommand = ""
         ignoredWords = previousWords
-        interruptionOffset = nil
-        carriedInterruptionWords = []
+        displayedPartial = ""
         lastChangeAt = nil
     }
 
-    private mutating func interrupt(from offset: Int, at time: TimeInterval) -> [Event] {
-        isExecuting = false
-        clearUtterance()
-        interruptionOffset = offset
-        lastChangeAt = time
-        return [.stopped]
+    private static func wakeEnd(in words: [String]) -> Int? {
+        let prefixCount = words.prefix(while: { ["okay", "ok", "please"].contains($0) }).count
+        guard prefixCount <= 2, words.count >= prefixCount + 2,
+              words[prefixCount] == "hey", ["mouse", "chosen"].contains(words[prefixCount + 1]) else { return nil }
+        return prefixCount + 2
     }
 
-    private static func wakeIndex(in words: [String]) -> Int? {
-        guard words.count >= 2 else { return nil }
-        return (0..<(words.count - 1)).first {
-            words[$0] == "hey" && ["mouse", "chosen"].contains(words[$0 + 1])
-        }
-    }
-
-    private static func isDeactivation(_ words: [String]) -> Bool {
-        let meaningful = Array(words.drop(while: { ["please", "mouse", "chosen"].contains($0) }))
-        return meaningful.starts(with: ["stop", "listening"])
-            || meaningful.starts(with: ["go", "to", "sleep"])
-            || meaningful.starts(with: ["sleep", "mouse"])
-            || meaningful.starts(with: ["sleep", "chosen"])
-    }
-
-    private static func isInterruption(_ words: [String]) -> Bool {
-        let meaningful = words.drop(while: { ["please", "mouse", "chosen"].contains($0) })
-        return meaningful.first == "stop" || meaningful.first == "cancel"
-    }
+    private static let utteranceSeparators = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",:;.!?"))
 
     private static func tokens(in text: String) -> [(word: String, range: Range<String.Index>)] {
         let pattern = #"[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)?"#

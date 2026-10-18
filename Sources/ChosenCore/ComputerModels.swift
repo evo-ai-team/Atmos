@@ -53,10 +53,12 @@ public struct ModelTurn: Sendable {
     public var message: String
     /// A request for user input or review; never accompanied by executable actions.
     public var pauseReason: String?
+    /// The utterance was not a clear request for computer control. Stay silent and take no action.
+    public var ignored: Bool
     public var inputTokens: Int
     public var outputTokens: Int
-    public init(id: String, calls: [ComputerCall], message: String = "", pauseReason: String? = nil, inputTokens: Int = 0, outputTokens: Int = 0) {
-        self.id = id; self.calls = calls; self.message = message; self.pauseReason = pauseReason
+    public init(id: String, calls: [ComputerCall], message: String = "", pauseReason: String? = nil, ignored: Bool = false, inputTokens: Int = 0, outputTokens: Int = 0) {
+        self.id = id; self.calls = calls; self.message = message; self.pauseReason = pauseReason; self.ignored = ignored
         self.inputTokens = inputTokens; self.outputTokens = outputTokens
     }
 }

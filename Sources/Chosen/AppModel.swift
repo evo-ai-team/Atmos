@@ -79,7 +79,7 @@ final class AppModel: ObservableObject {
         }
         voice.onCommand = { [weak self] text in self?.submit(text) }
         voice.onPartial = { [weak self] text in
-            guard let self, !self.working else { return }
+            guard let self, !self.working, self.transcript != text else { return }
             self.transcript = text
             self.noticeTask?.cancel()
             if self.active { self.notch.show(text.isEmpty ? .active : .transcribing(text)) }
@@ -186,8 +186,16 @@ final class AppModel: ObservableObject {
     func submit(_ value: String? = nil) {
         let text = (value ?? command).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        if ["stop listening", "go to sleep", "sleep mouse", "sleep chosen"].contains(text.lowercased()) { sleep(); return }
-        if ["stop", "cancel", "stop mouse", "stop chosen", "cancel that"].contains(text.lowercased()) { cancel(); return }
+        if let control = CommandIntent.control(text) {
+            switch control {
+            case .sleep: sleep()
+            case .stop: cancel()
+            }
+            return
+        }
+        // This boundary also covers manually entered commands. Unclear speech
+        // cannot cancel a task, change the UI, capture the screen, or spend a request.
+        guard CommandIntent.isClearCommand(text) else { return }
         cancel(silent: true)
         command = ""; transcript = text; error = nil; lastDuration = nil
         let token = UUID(); generation = token
@@ -217,6 +225,13 @@ final class AppModel: ObservableObject {
                 for step in 0..<DemoBudget.stepsPerCommand {
                     try check(token)
                     record(turn)
+                    if turn.ignored {
+                        // A command-like phrase can still be conversational. The
+                        // model's no-op fallback must not become an answer or notice.
+                        status = active ? "Ready for your next command" : "Waiting for Hey Mouse"
+                        finish(token)
+                        return
+                    }
                     if let reason = turn.pauseReason {
                         error = reason
                         status = "Needs your input"

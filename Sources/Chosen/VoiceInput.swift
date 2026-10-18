@@ -47,6 +47,7 @@ final class VoiceInput {
     private var recognitionStartedAt: TimeInterval = 0
     private var recoveryAttempts = 0
     private var lastLevel = 0.0
+    private var publishedPartial = ""
     private let silenceDuration: TimeInterval = 0.7
 
     /// Call after an explicit Enable Microphone action, or on launch when both
@@ -102,7 +103,7 @@ final class VoiceInput {
         onActivationChanged?(false)
         lastLevel = 0
         onLevel?(0)
-        onPartial?("")
+        publishPartial("")
         onStatus?("Voice off")
     }
 
@@ -255,31 +256,42 @@ final class VoiceInput {
             switch event {
             case .activated:
                 onActivationChanged?(true)
-                onPartial?("")
+                publishPartial("")
                 onStatus?("Listening…")
             case .partial(let text):
-                onPartial?(text)
+                publishPartial(text)
             case .command(let text):
                 // Discard late callbacks from the committed stream before invoking
                 // app code, which may synchronously set the executing state.
                 rotateRecognition()
+                // The app now owns the executing UI. Forget the live partial
+                // without emitting a clear that later ambient speech could replay.
+                publishedPartial = ""
                 onCommand?(text)
+            case .ignored:
+                rotateRecognition()
+                publishPartial("")
             case .stopped:
                 executionInProgress = false
-                // Keep this cumulative stream until silence: "stop" may still
-                // become "stop listening" in the next recognition partial.
-                onPartial?("")
+                rotateRecognition()
+                publishPartial("")
                 onStop?()
                 onStatus?(session.isActive ? "Listening…" : "Say “Hey Mouse”")
             case .deactivated:
                 executionInProgress = false
                 onActivationChanged?(false)
                 rotateRecognition()
-                onPartial?("")
+                publishPartial("")
                 onDeactivation?()
                 onStatus?(isRunning ? "Say “Hey Mouse”" : "Microphone off")
             }
         }
+    }
+
+    private func publishPartial(_ text: String) {
+        guard text != publishedPartial else { return }
+        publishedPartial = text
+        onPartial?(text)
     }
 
     private func rotateRecognition() {
@@ -299,7 +311,7 @@ final class VoiceInput {
             // A disconnected microphone can truncate a sentence. Keep activation
             // unchanged, but require the user to repeat its unfinished contents.
             session.beginRecognition(preservingPending: false)
-            onPartial?("")
+            publishPartial("")
         }
         if recoveryTask != nil {
             // A route notification must still replace the obsolete engine even if

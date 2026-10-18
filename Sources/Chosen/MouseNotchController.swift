@@ -105,6 +105,12 @@ private final class MouseNotchPanel: NSPanel {
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        // AppKit otherwise pushes the panel below the menu-bar/notch safe area.
+        // Our geometry already anchors it to the physical top edge of the screen.
+        frameRect
+    }
 }
 
 private struct MouseNotchGeometry {

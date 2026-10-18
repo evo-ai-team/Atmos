@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 import Combine
 import ServiceManagement
-import Speech
 import AVFoundation
 #if SWIFT_PACKAGE
 import ChosenCore
@@ -37,6 +36,7 @@ final class AppModel: ObservableObject {
     @Published var launchAtLogin = false
     @Published var showSettings = false
     @Published var lastDuration: Double?
+    @Published private(set) var startingVoice = false
     let computer = NativeComputer()
     let voice = VoiceInput()
     private var runningTask: Task<Void, Never>?
@@ -48,7 +48,6 @@ final class AppModel: ObservableObject {
     private let notch = MouseNotchController()
     private var noticeTask: Task<Void, Never>?
     private var started = false
-    private var startingVoice = false
     private let budgetURL: URL
     private var canPersistUsage = true
 
@@ -117,7 +116,7 @@ final class AppModel: ObservableObject {
         screenAllowed = computer.screenRecordingGranted
         accessibilityAllowed = computer.accessibilityGranted
         listening = voice.isRunning
-        voiceAuthorized = SFSpeechRecognizer.authorizationStatus() == .authorized && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        voiceAuthorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
     var needsSetup: Bool { !hasKey || !screenAllowed || !accessibilityAllowed || !voiceAuthorized }
@@ -144,6 +143,7 @@ final class AppModel: ObservableObject {
     private func startVoice(activate: Bool = false) {
         guard !startingVoice else { return }
         startingVoice = true
+        status = "Preparing voice…"
         Task {
             defer { startingVoice = false; refreshPermissions() }
             do {
@@ -154,7 +154,7 @@ final class AppModel: ObservableObject {
             } catch {
                 self.error = error.localizedDescription; listening = false
                 status = "Voice needs attention"
-                showNotice("Check voice permissions")
+                showNotice("Voice setup needs attention")
             }
         }
     }

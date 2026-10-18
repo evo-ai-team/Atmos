@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 import Foundation
 import Speech
 #if SWIFT_PACKAGE
@@ -18,235 +19,307 @@ final class VoiceInput {
     private(set) var isRunning = false
 
     enum InputError: LocalizedError {
-        case microphoneDenied, speechDenied, unavailable, noMicrophone, missingUsageDescriptions
-
+        case microphoneDenied, noMicrophone, missingUsageDescription, formatUnavailable
+        case microphoneChanged, audioStalled, utteranceTooLong, unavailableAudio, finalizationTimedOut
         var errorDescription: String? {
             switch self {
             case .microphoneDenied: return "Allow Mouse microphone access in System Settings → Privacy & Security."
-            case .speechDenied: return "Allow Mouse speech recognition in System Settings → Privacy & Security."
-            case .unavailable: return "On-device English speech recognition is unavailable. Enable English dictation in System Settings, then try again."
-            case .noMicrophone: return "No microphone is available. Connect one, then try again."
-            case .missingUsageDescriptions: return "Launch the packaged Mouse app to enable microphone permissions."
+            case .noMicrophone: return "No microphone is available. Connect one, then enable the microphone again."
+            case .missingUsageDescription: return "Launch the packaged Mouse app to enable microphone permissions."
+            case .formatUnavailable: return "Apple's speech model has no compatible audio format on this Mac."
+            case .microphoneChanged: return "The microphone changed. Enable it again in Mouse and repeat the unfinished command."
+            case .audioStalled: return "The microphone stopped providing audio. Enable it again to resume voice control."
+            case .utteranceTooLong: return "Voice paused because the unfinished utterance exceeded one minute. Enable the microphone and use a shorter command."
+            case .unavailableAudio: return "Speech recognition fell behind the audio buffer. Enable the microphone and repeat the command."
+            case .finalizationTimedOut: return "The speech model could not finalize this utterance. Voice was paused without submitting unfinished text."
             }
         }
     }
 
     private var session = WakeSession()
+    private var transcript = SpeechTranscriptState()
+    private var history: [SpeechAudioPacket] = []
+    private var snapshotFloor: TimeInterval = 0
+    private var resetCaptureFloor: TimeInterval = 0
     private var engine: AVAudioEngine?
-    private var recognizer: SFSpeechRecognizer?
-    private var recognitionTask: SFSpeechRecognitionTask?
-    private let audio = VoiceAudioRelay()
+    private var tapInstalled = false
+    private var feed: SpeechAudioFeed?
+    private var analyzer: SpeechAnalyzer?
+    private var locale: Locale?
     private var configurationObserver: NSObjectProtocol?
+    private var startupTask: Task<Void, Error>?
+    private var resultsTask: Task<Void, Never>?
     private var timerTask: Task<Void, Never>?
-    private var recoveryTask: Task<Void, Never>?
-    private var generation = UUID()
+    private var finalTask: Task<Void, Never>?
+    private var finalTaskID: UUID?
     private var lifecycle = UUID()
     private var isStarting = false
     private var executionInProgress = false
-    private var recognitionStartedAt: TimeInterval = 0
-    private var recoveryAttempts = 0
-    private var lastLevel = 0.0
+    private var presentedActive = false
     private var publishedPartial = ""
-    private let silenceDuration: TimeInterval = 0.7
+    private var lastLevel = 0.0
 
-    /// Call after an explicit Enable Microphone action, or on launch when both
-    /// permissions are already authorized. Other lifecycle methods never prompt.
     func start() async throws {
         guard !isRunning, !isStarting else { return }
         isStarting = true
-        defer { isStarting = false }
         let startID = UUID()
         lifecycle = startID
-        guard Bundle.main.object(forInfoDictionaryKey: "NSMicrophoneUsageDescription") != nil,
-              Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") != nil else {
-            throw InputError.missingUsageDescriptions
+        let task = Task<Void, Error> { @MainActor [weak self] in
+            guard let self else { throw CancellationError() }
+            try await self.prepare(startID: startID)
         }
-        guard await Self.microphoneAuthorization() else { throw InputError.microphoneDenied }
-        guard startID == lifecycle, !Task.isCancelled else { throw CancellationError() }
-        guard await Self.speechAuthorization() else { throw InputError.speechDenied }
-        guard startID == lifecycle, !Task.isCancelled else { throw CancellationError() }
-        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
-              recognizer.supportsOnDeviceRecognition else { throw InputError.unavailable }
-
-        self.recognizer = recognizer
-        // Typed commands can already be running when voice is enabled. Preserve
-        // their interruption state while resetting the newly opened wake stream.
-        let alreadyExecuting = executionInProgress
-        session = WakeSession()
-        onActivationChanged?(false)
-        session.setExecuting(alreadyExecuting, at: Self.now)
-        recoveryAttempts = 0
+        // Keep an owned task so Pause Microphone cancels an asset download too.
+        startupTask = task
+        defer { isStarting = false; startupTask = nil }
         do {
-            try startAudioEngine()
-            isRunning = true
-            try beginRecognition(preservingPending: false)
-            startTimer()
-            onStatus?(alreadyExecuting ? "Working · say “stop” to sleep" : "Say “Hey Mouse”")
+            try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
         } catch {
-            stop()
+            if lifecycle == startID { stop() }
             throw error
         }
+    }
+
+    private func prepare(startID: UUID) async throws {
+        guard Bundle.main.object(forInfoDictionaryKey: "NSMicrophoneUsageDescription") != nil else { throw InputError.missingUsageDescription }
+        guard await Self.microphoneAuthorization() else { throw InputError.microphoneDenied }
+        try ensureCurrent(startID)
+        onStatus?("Preparing Apple's speech transcriber…")
+        let selectedLocale = try await SpeechRuntimeSetup.supportedEnglishLocale()
+        let transcriber = SpeechTranscriber(locale: selectedLocale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [.audioTimeRange])
+        try await SpeechRuntimeSetup.ensureAssets(for: [transcriber], locale: selectedLocale, allowsDownload: true) { [weak self] status in
+            guard let self, self.lifecycle == startID else { return }
+            self.onStatus?(status)
+        }
+        try ensureCurrent(startID)
+        let engine = AVAudioEngine()
+        let naturalFormat = engine.inputNode.outputFormat(forBus: 0)
+        guard naturalFormat.sampleRate > 0, naturalFormat.channelCount > 0 else { throw InputError.noMicrophone }
+        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber], considering: naturalFormat) else { throw InputError.formatUnavailable }
+        let analyzer = SpeechAnalyzer(modules: [transcriber], options: .init(priority: .userInitiated, modelRetention: .processLifetime))
+        let context = AnalysisContext()
+        context.contextualStrings[.general] = ["Hey Mouse", "Hey Chosen", "Mouse", "Chosen"]
+        try await analyzer.setContext(context)
+        try await analyzer.prepareToAnalyze(in: format)
+        try ensureCurrent(startID)
+
+        session = WakeSession()
+        session.setExecuting(executionInProgress, at: Self.now)
+        transcript = SpeechTranscriptState()
+        history = []
+        snapshotFloor = 0
+        resetCaptureFloor = 0
+        self.locale = selectedLocale
+        self.analyzer = analyzer
+        self.engine = engine
+        let feed = try SpeechAudioFeed(inputFormat: naturalFormat, targetFormat: format) { [weak self] packet in
+            await self?.receiveAudio(packet, lifecycle: startID) ?? false
+        } onFailure: { [weak self] message in
+            await self?.fail(message, lifecycle: startID)
+        }
+        self.feed = feed
+        isRunning = true
+        presentActivation(false)
+        resultsTask = Task { @MainActor [weak self] in
+            do {
+                for try await result in transcriber.results {
+                    guard let self, self.isRunning, self.lifecycle == startID, !Task.isCancelled else { return }
+                    self.receive(result)
+                }
+                if let self, self.isRunning, self.lifecycle == startID, !Task.isCancelled {
+                    self.fail("Apple's live speech stream ended unexpectedly. Enable the microphone again.", lifecycle: startID)
+                }
+            } catch is CancellationError {} catch {
+                self?.fail(error.localizedDescription, lifecycle: startID)
+            }
+        }
+        try await analyzer.start(inputSequence: feed.inputSequence)
+        try ensureCurrent(startID)
+        engine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: naturalFormat) { buffer, _ in feed.append(buffer) }
+        tapInstalled = true
+        engine.prepare()
+        try engine.start()
+        configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.fail(InputError.microphoneChanged.localizedDescription, lifecycle: startID) }
+        }
+        startTimer(lifecycle: startID)
+        onStatus?(executionInProgress ? "Working · say “stop” to sleep" : "Say “Hey Mouse”")
     }
 
     func stop() {
         lifecycle = UUID()
         isRunning = false
-        timerTask?.cancel()
-        timerTask = nil
-        recoveryTask?.cancel()
-        recoveryTask = nil
-        endRecognition()
-        endAudioEngine()
-        recognizer = nil
+        startupTask?.cancel()
+        timerTask?.cancel(); timerTask = nil
+        resultsTask?.cancel(); resultsTask = nil
+        cancelFinalPass()
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+        configurationObserver = nil
+        if let engine {
+            engine.stop()
+            if tapInstalled { engine.inputNode.removeTap(onBus: 0) }
+        }
+        tapInstalled = false
+        engine = nil
+        feed?.stop(); feed = nil
+        if let analyzer { Task { await analyzer.cancelAndFinishNow() } }
+        analyzer = nil
+        locale = nil
+        history = []
+        snapshotFloor = 0
+        resetCaptureFloor = 0
+        transcript = SpeechTranscriptState()
         session = WakeSession()
-        onActivationChanged?(false)
+        presentActivation(false)
         lastLevel = 0
         onLevel?(0)
         publishPartial("")
-        onStatus?("Voice off")
+        onStatus?("Microphone off")
     }
 
-    /// Activates until explicitly put to sleep, without a wake phrase. Enabling the microphone is
-    /// deliberately a separate, explicit user action through start().
     func activate() {
-        guard isRunning else { return }
-        if session.isExecuting {
-            onStatus?("Working · say “stop” to sleep")
-            return
-        }
+        guard isRunning, !session.isExecuting else { return }
+        resetUtterance()
         handle(session.activate(at: Self.now))
     }
 
-    /// Returns to local wake-word monitoring while leaving the microphone enabled.
     func deactivate() {
+        resetUtterance()
         handle(session.deactivate())
     }
 
     func setExecuting(_ executing: Bool) {
+        let changed = executionInProgress != executing
         executionInProgress = executing
+        // A stop already being spoken survives task completion; other busy audio
+        // must not become a fresh idle command.
+        if changed, VoiceControl.match(transcript.text) == nil { resetUtterance() }
         session.setExecuting(executing, at: Self.now)
         guard isRunning else { return }
         onStatus?(executing ? "Working · say “stop” to sleep" : session.isActive ? "Listening…" : "Say “Hey Mouse”")
     }
 
-    private func startAudioEngine() throws {
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else { throw InputError.noMicrophone }
-        audio.resetMeter()
-        let relay = audio
-        input.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in
-            relay.append(buffer)
+    private func receiveAudio(_ packet: SpeechAudioPacket, lifecycle id: UUID) -> Bool {
+        guard isRunning, lifecycle == id else { return false }
+        let meter = feed?.meter()
+        if transcript.observeAudio(end: packet.endSeconds, lastSpeechAt: meter?.lastSpeechAt ?? Self.now, convertedCaptureAt: packet.capturedAt) { cancelFinalPass() }
+        // A reset also excludes audio captured earlier but still awaiting conversion,
+        // and drops a single packet straddling the boundary rather than replaying it.
+        if packet.capturedAt - (packet.endSeconds - packet.startSeconds) < resetCaptureFloor {
+            snapshotFloor = packet.endSeconds
+            transcript.discard(through: packet.endSeconds)
+            trimHistory()
+            return true
         }
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            input.removeTap(onBus: 0)
-            throw InputError.noMicrophone
+        history.append(packet)
+        trimHistory()
+        if let first = history.first, packet.endSeconds - first.startSeconds > 65 || history.count > 4_096 {
+            fail(InputError.utteranceTooLong.localizedDescription, lifecycle: id)
+            return false
         }
-        self.engine = engine
-        configurationObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.recover(rebuildAudio: true) }
-        }
+        return true
     }
 
-    private func endAudioEngine() {
-        if let configurationObserver {
-            NotificationCenter.default.removeObserver(configurationObserver)
+    private func receive(_ result: SpeechTranscriber.Result) {
+        let start = CMTimeGetSeconds(result.range.start)
+        let end = CMTimeGetSeconds(CMTimeRangeGetEnd(result.range))
+        var pieces: [SpeechTranscriptState.Segment] = []
+        for run in result.text.runs {
+            guard let range = run.audioTimeRange else { continue }
+            let a = CMTimeGetSeconds(range.start)
+            let b = CMTimeGetSeconds(CMTimeRangeGetEnd(range))
+            guard a.isFinite, b.isFinite else { continue }
+            pieces.append(.init(start: a, end: b, text: String(result.text[run.range].characters).trimmingCharacters(in: .whitespacesAndNewlines)))
         }
-        configurationObserver = nil
-        if let engine {
-            engine.stop()
-            engine.inputNode.removeTap(onBus: 0)
-        }
-        engine = nil
+        if pieces.isEmpty { pieces = [.init(start: start, end: end, text: String(result.text.characters))] }
+        if transcript.replace(start: start, end: end, with: pieces, at: Self.now) { cancelFinalPass() }
+        publishPreview()
     }
 
-    private func beginRecognition(preservingPending: Bool) throws {
-        guard let recognizer, recognizer.supportsOnDeviceRecognition, recognizer.isAvailable else {
-            throw InputError.unavailable
-        }
-        endRecognition()
-        session.beginRecognition(preservingPending: preservingPending)
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.requiresOnDeviceRecognition = true
-        request.shouldReportPartialResults = true
-        request.addsPunctuation = false
-        request.taskHint = .dictation
-        request.contextualStrings = ["Hey Mouse", "Mouse", "Hey Chosen", "Chosen", "stop"]
-        let token = UUID()
-        generation = token
-        recognitionStartedAt = Self.now
-        audio.setRequest(request)
-        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            // Copy the values before crossing onto the actor; no audio or transcript
-            // leaves this process except commands explicitly emitted by WakeSession.
-            let transcript = result?.bestTranscription.formattedString
-            let isFinal = result?.isFinal ?? false
-            let hadError = error != nil
-            Task { @MainActor [weak self] in
-                guard let self, self.isRunning, self.generation == token else { return }
-                if let transcript, !transcript.isEmpty {
-                    self.recoveryAttempts = 0
-                    self.handle(self.session.receive(transcript, at: Self.now))
-                }
-                // handle() may replace the recognition task after a command or stop.
-                guard self.generation == token else { return }
-                if hadError && !isFinal {
-                    self.recoveryAttempts += 1
-                    if self.recoveryAttempts >= 6 {
-                        self.fail(InputError.unavailable.localizedDescription)
-                        return
-                    }
-                }
-                if isFinal || hadError {
-                    self.recover(rebuildAudio: false, quiet: isFinal)
-                }
-            }
-        }
+    private func publishPreview() {
+        // Volatile recognition can suggest a wake phrase, but only corrected
+        // final text changes the authoritative WakeSession activation state.
+        var preview = session
+        preview.beginRecognition(preservingPending: false)
+        let events = preview.receive(transcript.text, at: Self.now)
+        presentActivation(preview.isActive)
+        let partial = events.compactMap { event -> String? in
+            if case .partial(let text) = event { return text }
+            return nil
+        }.last ?? ""
+        publishPartial(partial)
     }
 
-    private func endRecognition() {
-        generation = UUID()
-        audio.setRequest(nil)
-        recognitionTask?.cancel()
-        recognitionTask = nil
-    }
-
-    private func startTimer() {
+    private func startTimer(lifecycle id: UUID) {
         timerTask?.cancel()
         timerTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(100))
-                guard !Task.isCancelled, let self, self.isRunning else { return }
-                self.tick()
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                guard let self, self.isRunning, self.lifecycle == id else { return }
+                self.tick(lifecycle: id)
             }
         }
     }
 
-    private func tick() {
+    private func tick(lifecycle id: UUID) {
+        guard let feed else { return }
         let now = Self.now
-        let meter = audio.meter()
+        let meter = feed.meter()
         lastLevel = lastLevel * 0.65 + min(1, meter.rms * 14) * 0.35
         onLevel?(lastLevel)
-        guard recoveryTask == nil else { return }
-        guard engine?.isRunning == true else {
-            recover(rebuildAudio: true)
+        if now - meter.lastBufferAt > 3 { fail(InputError.audioStalled.localizedDescription, lifecycle: id); return }
+        if transcript.observeAudio(end: transcript.audioEnd, lastSpeechAt: meter.lastSpeechAt) { cancelFinalPass() }
+        guard finalTask == nil, let candidate = transcript.beginFinalization(at: now, silenceDuration: 1.0, latestCaptureAt: meter.lastBufferAt) else { return }
+        var preview = session
+        preview.beginRecognition(preservingPending: false)
+        _ = preview.receive(transcript.text, at: now)
+        if !session.isActive && !session.isExecuting && !preview.isActive {
+            _ = transcript.commit(candidate)
+            trimHistory()
             return
         }
-        if let changed = session.lastChangeAt,
-           now - max(changed, meter.lastSpeechAt) >= silenceDuration {
-            handle(session.finishUtterance(at: now))
+        guard let locale, let first = history.first,
+              transcript.firstTextStart.map({ $0 + 0.05 >= first.startSeconds }) ?? false else {
+            fail(InputError.unavailableAudio.localizedDescription, lifecycle: id); return
         }
-        if now - recognitionStartedAt >= 50,
-           now - meter.lastSpeechAt >= silenceDuration {
-            // Renew before Speech's task-duration limit, at an acoustic boundary.
-            // Any unfinished words survive a stream replacement.
-            rotateRecognition()
+        // Keep real leading context and the full observed trailing silence.
+        let from = max(snapshotFloor, transcript.consumedThrough - 0.6)
+        let packets = history.filter { $0.startSeconds >= snapshotFloor && $0.endSeconds > from && $0.startSeconds < candidate.through }
+        guard !packets.isEmpty else { fail(InputError.unavailableAudio.localizedDescription, lifecycle: id); return }
+        finalTaskID = candidate.id
+        finalTask = Task { @MainActor [weak self] in
+            do {
+                let finalText = try await withThrowingTaskGroup(of: String.self) { group in
+                    group.addTask { try await SpeechUtteranceFinalizer.transcribe(packets, locale: locale) }
+                    group.addTask {
+                        try await Task.sleep(for: .seconds(12))
+                        throw InputError.finalizationTimedOut
+                    }
+                    defer { group.cancelAll() }
+                    return try await group.next() ?? ""
+                }
+                guard let self, self.isRunning, self.lifecycle == id, !Task.isCancelled else { return }
+                guard let meter = self.feed?.meter() else { self.cancelFinalPass(); return }
+                if self.transcript.observeAudio(end: self.transcript.audioEnd, lastSpeechAt: meter.lastSpeechAt)
+                    || !self.transcript.audioIsCaughtUp(at: Self.now, latestCaptureAt: meter.lastBufferAt) {
+                    self.cancelFinalPass(); return
+                }
+                guard self.transcript.commit(candidate) else { self.cancelFinalPass(); return }
+                self.finalTask = nil; self.finalTaskID = nil
+                self.trimHistory()
+                // Reset text assembly only, preserving persistent activation.
+                // Re-read the corrected full phrase so a revised wake word cannot
+                // accidentally authorize an utterance heard while on standby.
+                self.session.beginRecognition(preservingPending: false)
+                self.handle(self.session.receive(finalText, at: Self.now))
+                self.presentActivation(self.session.isActive)
+                self.handle(self.session.finishUtterance(at: Self.now))
+                if !self.session.isExecuting { self.publishPartial("") }
+            } catch is CancellationError {
+            } catch {
+                guard let self, self.lifecycle == id, self.transcript.isCurrent(candidate) else { return }
+                self.fail(error.localizedDescription, lifecycle: id)
+            }
+            if let self, self.finalTaskID == candidate.id { self.finalTask = nil; self.finalTaskID = nil }
         }
     }
 
@@ -254,31 +327,43 @@ final class VoiceInput {
         for event in events {
             switch event {
             case .activated:
-                onActivationChanged?(true)
-                publishPartial("")
+                presentActivation(true)
                 onStatus?("Listening…")
-            case .partial(let text):
-                publishPartial(text)
+            case .partial(let text): publishPartial(text)
             case .command(let text):
-                // Discard late callbacks from the committed stream before invoking
-                // app code, which may synchronously set the executing state.
-                rotateRecognition()
-                // The app now owns the executing UI. Forget the live partial
-                // without emitting a clear that later ambient speech could replay.
                 publishedPartial = ""
                 onCommand?(text)
-            case .ignored:
-                rotateRecognition()
-                publishPartial("")
+            case .ignored: publishPartial("")
             case .deactivated:
                 executionInProgress = false
-                onActivationChanged?(false)
-                rotateRecognition()
+                presentActivation(false)
                 publishPartial("")
                 onDeactivation?()
                 onStatus?(isRunning ? "Say “Hey Mouse”" : "Microphone off")
             }
         }
+    }
+
+    private func resetUtterance() {
+        cancelFinalPass()
+        snapshotFloor = transcript.audioEnd
+        resetCaptureFloor = Self.now
+        transcript.discard(through: transcript.audioEnd)
+        session.beginRecognition(preservingPending: false)
+        trimHistory()
+        publishPartial("")
+    }
+
+    private func trimHistory() {
+        let keepFrom = transcript.text.isEmpty && transcript.candidate == nil
+            ? max(transcript.consumedThrough - 0.6, transcript.audioEnd - 8)
+            : max(0, transcript.consumedThrough - 0.6)
+        history.removeAll { $0.startSeconds < snapshotFloor || $0.endSeconds <= keepFrom }
+    }
+
+    private func cancelFinalPass() {
+        finalTask?.cancel(); finalTask = nil; finalTaskID = nil
+        transcript.invalidateFinalization()
     }
 
     private func publishPartial(_ text: String) {
@@ -287,135 +372,30 @@ final class VoiceInput {
         onPartial?(text)
     }
 
-    private func rotateRecognition() {
-        guard isRunning, recoveryTask == nil else { return }
-        do {
-            try beginRecognition(preservingPending: true)
-        } catch {
-            recover(rebuildAudio: false)
-        }
+    private func presentActivation(_ active: Bool) {
+        guard active != presentedActive else { return }
+        presentedActive = active
+        onActivationChanged?(active)
     }
 
-    /// Recognition may stop at its duration limit or after prolonged silence.
-    /// Bounded backoff avoids a failure loop; route changes rebuild the input tap.
-    private func recover(rebuildAudio: Bool, quiet: Bool = false) {
-        guard isRunning else { return }
-        if rebuildAudio {
-            // A disconnected microphone can truncate a sentence. Keep activation
-            // unchanged, but require the user to repeat its unfinished contents.
-            session.beginRecognition(preservingPending: false)
-            publishPartial("")
-        }
-        if recoveryTask != nil {
-            // A route notification must still replace the obsolete engine even if
-            // a recognizer retry was already scheduled.
-            if rebuildAudio { endAudioEngine() }
-            return
-        }
-        endRecognition()
-        if rebuildAudio { endAudioEngine() }
-        if !quiet { onStatus?(rebuildAudio ? "Reconnecting microphone…" : "Restarting local speech…") }
-        let expectedLifecycle = lifecycle
-        recoveryTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            while self.isRunning && self.lifecycle == expectedLifecycle && !Task.isCancelled {
-                let delay = quiet && self.recoveryAttempts == 0 ? 0.05 : min(4.0, 0.25 * pow(2, Double(self.recoveryAttempts)))
-                try? await Task.sleep(for: .seconds(delay))
-                guard self.isRunning, self.lifecycle == expectedLifecycle, !Task.isCancelled else { return }
-                do {
-                    if self.engine == nil { try self.startAudioEngine() }
-                    try self.beginRecognition(preservingPending: true)
-                    self.recoveryTask = nil
-                    self.onStatus?(self.session.isExecuting ? "Working · say “stop” to sleep" : self.session.isActive ? "Listening…" : "Say “Hey Mouse”")
-                    return
-                } catch {
-                    self.recoveryAttempts += 1
-                    if self.recoveryAttempts >= 6 {
-                        self.fail(error.localizedDescription)
-                        return
-                    }
-                }
-            }
-        }
+    private func ensureCurrent(_ id: UUID) throws {
+        try Task.checkCancellation()
+        guard lifecycle == id else { throw CancellationError() }
     }
 
-    /// Losing voice input while a task is running also removes its hands-free
-    /// interruption path. Notify the owner after teardown so it can cancel work.
-    private func fail(_ message: String) {
+    private func fail(_ message: String, lifecycle id: UUID) {
+        guard lifecycle == id else { return }
         stop()
         onFailure?(message)
         onStatus?(message)
     }
 
     private static var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
-
     private static func microphoneAuthorization() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: return true
         case .notDetermined: return await AVCaptureDevice.requestAccess(for: .audio)
         default: return false
         }
-    }
-
-    private static func speechAuthorization() async -> Bool {
-        switch SFSpeechRecognizer.authorizationStatus() {
-        case .authorized: return true
-        case .notDetermined:
-            return await withCheckedContinuation { continuation in
-                SFSpeechRecognizer.requestAuthorization { status in
-                    continuation.resume(returning: status == .authorized)
-                }
-            }
-        default: return false
-        }
-    }
-}
-
-/// The audio-render thread never touches actor-isolated application state.
-/// A short lock protects request swaps and the latest meter snapshot.
-private final class VoiceAudioRelay: @unchecked Sendable {
-    private let lock = NSLock()
-    private var request: SFSpeechAudioBufferRecognitionRequest?
-    private var rms = 0.0
-    private var lastSpeechAt: TimeInterval = 0
-
-    func setRequest(_ next: SFSpeechAudioBufferRecognitionRequest?) {
-        lock.lock()
-        let previous = request
-        request = next
-        previous?.endAudio()
-        lock.unlock()
-    }
-
-    func append(_ buffer: AVAudioPCMBuffer) {
-        var energy = 0.0
-        if let channels = buffer.floatChannelData, buffer.frameLength > 0 {
-            let samples = channels[0]
-            for index in 0..<Int(buffer.frameLength) {
-                let value = Double(samples[index])
-                energy += value * value
-            }
-            energy = sqrt(energy / Double(buffer.frameLength))
-        }
-        lock.lock()
-        rms = energy
-        // Conservative acoustic gate; transcript changes also reset the endpoint
-        // timer, so quieter speech still gets a complete 700 ms trailing window.
-        if energy > 0.008 { lastSpeechAt = ProcessInfo.processInfo.systemUptime }
-        request?.append(buffer)
-        lock.unlock()
-    }
-
-    func meter() -> (rms: Double, lastSpeechAt: TimeInterval) {
-        lock.lock()
-        defer { lock.unlock() }
-        return (rms, lastSpeechAt)
-    }
-
-    func resetMeter() {
-        lock.lock()
-        rms = 0
-        lastSpeechAt = ProcessInfo.processInfo.systemUptime
-        lock.unlock()
     }
 }

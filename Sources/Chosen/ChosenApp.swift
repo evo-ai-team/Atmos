@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Speech
+import AVFoundation
 #if SWIFT_PACKAGE
 import ChosenCore
 #endif
@@ -23,8 +24,9 @@ enum ChosenEntry {
             print("Screen Recording: \(native.screenRecordingGranted)")
             print("Accessibility: \(native.accessibilityGranted)")
             print("Model: gpt-6-luna / Fast / low reasoning")
-            print("On-device English speech: \(SFSpeechRecognizer(locale: Locale(identifier: "en-US"))?.supportsOnDeviceRecognition ?? false)")
-            print("Speech authorization: \(SFSpeechRecognizer.authorizationStatus().rawValue)")
+            print("Speech engine: Apple SpeechAnalyzer / SpeechTranscriber (on-device)")
+            print("SpeechTranscriber available: \(SpeechTranscriber.isAvailable)")
+            print("Microphone authorization: \(AVCaptureDevice.authorizationStatus(for: .audio).rawValue)")
             exit(0)
         }
         if let index = CommandLine.arguments.firstIndex(of: "--voice-check") {

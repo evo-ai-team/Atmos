@@ -54,13 +54,14 @@ struct ChosenView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(model.active ? "Mouse is active" : model.listening ? "Ready for “Hey Mouse”" : "Voice is paused")
+                    Text(model.startingVoice ? "Preparing voice…" : model.active ? "Mouse is active" : model.listening ? "Ready for “Hey Mouse”" : "Voice is paused")
                         .font(.headline)
-                    Text(model.active ? "Speak your next command." : "Say “Hey Mouse” to begin.").font(.callout).foregroundStyle(.secondary)
+                    Text(model.startingVoice ? model.status : model.active ? "Speak your next command." : "Say “Hey Mouse” to begin.").font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button(model.listening ? "Pause microphone" : "Enable voice") { model.toggleListening() }
                     .buttonStyle(.glass).controlSize(.small)
+                    .disabled(model.startingVoice)
             }
             Text("Once activated, Mouse stays ready between commands. Say “stop” to return to standby.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -74,7 +75,7 @@ struct ChosenView: View {
             Divider()
             permission("Accessibility", detail: "Click, type, and use keyboard shortcuts", symbol: "cursorarrow", allowed: model.accessibilityAllowed) { model.requestAccessibility() }
             Divider()
-            permission("Microphone & speech", detail: "Voice recognition stays on this Mac", symbol: "mic", allowed: model.voiceAuthorized) { if !model.listening { model.toggleListening() } }
+            permission("Microphone", detail: "Voice recognition stays on this Mac", symbol: "mic", allowed: model.voiceAuthorized) { if !model.listening { model.toggleListening() } }
         }.padding(16).background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 18))
     }
 

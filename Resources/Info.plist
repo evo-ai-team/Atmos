@@ -16,6 +16,5 @@
 <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>Mouse listens for Hey Mouse and your spoken computer commands. Voice recognition stays on this Mac.</string>
-<key>NSSpeechRecognitionUsageDescription</key><string>Mouse uses on-device speech recognition for your wake phrase and commands.</string>
 <key>NSScreenCaptureUsageDescription</key><string>Mouse captures your screen during a command so the model can locate controls.</string>
 </dict></plist>

@@ -42,11 +42,11 @@ final class CommandIntentTests: XCTestCase {
     }
 
     func testExactControlsAreSeparateFromComputerCommands() {
-        for text in ["stop", "cancel", "cancel that", "Mouse stop", "Hey Mouse stop", "please stop", "stop Mouse", "can you stop", "stop the current action"] {
+        for text in ["cancel", "cancel that", "Mouse cancel", "Hey Mouse cancel", "please cancel", "cancel Mouse", "can you cancel", "cancel the current action"] {
             XCTAssertEqual(CommandIntent.control(text), .stop, text)
             XCTAssertFalse(CommandIntent.isClearCommand(text), text)
         }
-        for text in ["stop listening", "go to sleep", "sleep Mouse", "sleep Chosen", "please stop listening", "Mouse go to sleep", "stop listening please"] {
+        for text in ["stop", "stop now", "stop that", "Mouse stop", "Hey Mouse stop", "please stop", "stop Mouse", "can you stop", "stop the current action", "stop listening", "go to sleep", "sleep Mouse", "sleep Chosen", "please stop listening", "Mouse go to sleep", "stop listening please"] {
             XCTAssertEqual(CommandIntent.control(text), .sleep, text)
             XCTAssertFalse(CommandIntent.isClearCommand(text), text)
         }

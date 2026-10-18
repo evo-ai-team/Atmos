@@ -62,7 +62,7 @@ struct ChosenView: View {
                 Button(model.listening ? "Pause microphone" : "Enable voice") { model.toggleListening() }
                     .buttonStyle(.glass).controlSize(.small)
             }
-            Text("Once activated, Mouse stays ready between commands. Say “stop” to cancel an action, or “stop listening” to return to standby.")
+            Text("Once activated, Mouse stays ready between commands. Say “stop” to return to standby, or “cancel” to cancel only the current action.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }

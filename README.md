@@ -38,8 +38,8 @@ Spoken stop and sleep controls are matched as complete phrases at the existing s
 | Speaking a clear command | The live transcript wraps at a constrained width and grows downward. |
 | Acting | The panel shrinks smoothly to one short description for the current operation. |
 | Finished | The panel returns to the small active indicator, ready for another command. |
-| “Stop” or “cancel” | Cancels queued actions and retains activation. Earlier clicks or typing are not undone. |
-| “Stop listening” or “go to sleep” | Cancels the current action and returns to wake-word standby. |
+| “Stop”, “stop listening”, or “go to sleep” | Cancels the current action and returns to wake-word standby. Say “Hey Mouse” to activate again. |
+| “Cancel” | Cancels queued actions and retains activation. Earlier clicks or typing are not undone. |
 | **Pause microphone** in the menu | Stops microphone capture and wake-word monitoring. |
 
 The notch has no buttons. The menu provides activation, sleep, cancellation, Settings, microphone pause, and quit. Typed commands and recent activity are available under **Testing & recent activity** in Settings. Settings hides during execution without reopening after every task.

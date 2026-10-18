@@ -9,12 +9,12 @@ public enum CommandIntent {
         guard !isQuoted(text) else { return nil }
         let words = requestWords(in: text)
         switch words.joined(separator: " ") {
-        case "stop", "stop now", "stop that", "stop task", "stop the task",
-             "stop action", "stop the action", "stop current action", "stop the current action",
-             "cancel", "cancel that", "cancel task", "cancel the task",
+        case "cancel", "cancel that", "cancel task", "cancel the task",
              "cancel action", "cancel the action", "cancel current action", "cancel the current action":
             return .stop
-        case "stop listening", "go to sleep", "sleep", "sleep mouse", "sleep chosen":
+        case "stop", "stop now", "stop that", "stop task", "stop the task",
+             "stop action", "stop the action", "stop current action", "stop the current action",
+             "stop listening", "go to sleep", "sleep", "sleep mouse", "sleep chosen":
             return .sleep
         default:
             return nil

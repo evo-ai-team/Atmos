@@ -82,7 +82,7 @@ final class VoiceInput {
             isRunning = true
             try beginRecognition(preservingPending: false)
             startTimer()
-            onStatus?(alreadyExecuting ? "Working · say “stop” to interrupt" : "Say “Hey Mouse”")
+            onStatus?(alreadyExecuting ? "Working · say “cancel” to interrupt" : "Say “Hey Mouse”")
         } catch {
             stop()
             throw error
@@ -112,7 +112,7 @@ final class VoiceInput {
     func activate() {
         guard isRunning else { return }
         if session.isExecuting {
-            onStatus?("Working · say “stop” to interrupt")
+            onStatus?("Working · say “cancel” to interrupt")
             return
         }
         handle(session.activate(at: Self.now))
@@ -127,7 +127,7 @@ final class VoiceInput {
         executionInProgress = executing
         session.setExecuting(executing, at: Self.now)
         guard isRunning else { return }
-        onStatus?(executing ? "Working · say “stop” to interrupt" : session.isActive ? "Listening…" : "Say “Hey Mouse”")
+        onStatus?(executing ? "Working · say “cancel” to interrupt" : session.isActive ? "Listening…" : "Say “Hey Mouse”")
     }
 
     private func startAudioEngine() throws {
@@ -333,7 +333,7 @@ final class VoiceInput {
                     if self.engine == nil { try self.startAudioEngine() }
                     try self.beginRecognition(preservingPending: true)
                     self.recoveryTask = nil
-                    self.onStatus?(self.session.isExecuting ? "Working · say “stop” to interrupt" : self.session.isActive ? "Listening…" : "Say “Hey Mouse”")
+                    self.onStatus?(self.session.isExecuting ? "Working · say “cancel” to interrupt" : self.session.isActive ? "Listening…" : "Say “Hey Mouse”")
                     return
                 } catch {
                     self.recoveryAttempts += 1

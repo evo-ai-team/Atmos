@@ -41,16 +41,24 @@ public struct ScreenshotFrame: Sendable {
 public struct ComputerCall: Sendable {
     public var callID: String
     public var actions: [ComputerAction]
+    public var description: String
     public var safetyChecks: [String]
-    public init(callID: String, actions: [ComputerAction], safetyChecks: [String] = []) { self.callID = callID; self.actions = actions; self.safetyChecks = safetyChecks }
+    public init(callID: String, actions: [ComputerAction], description: String, safetyChecks: [String] = []) {
+        self.callID = callID; self.actions = actions; self.description = description; self.safetyChecks = safetyChecks
+    }
 }
 public struct ModelTurn: Sendable {
     public var id: String
     public var calls: [ComputerCall]
     public var message: String
+    /// A request for user input or review; never accompanied by executable actions.
+    public var pauseReason: String?
     public var inputTokens: Int
     public var outputTokens: Int
-    public init(id: String, calls: [ComputerCall], message: String = "", inputTokens: Int = 0, outputTokens: Int = 0) { self.id = id; self.calls = calls; self.message = message; self.inputTokens = inputTokens; self.outputTokens = outputTokens }
+    public init(id: String, calls: [ComputerCall], message: String = "", pauseReason: String? = nil, inputTokens: Int = 0, outputTokens: Int = 0) {
+        self.id = id; self.calls = calls; self.message = message; self.pauseReason = pauseReason
+        self.inputTokens = inputTokens; self.outputTokens = outputTokens
+    }
 }
 public enum ChosenError: LocalizedError, Equatable {
     case invalidAction(String), permission(String), api(String), configuration(String), limit(String)

@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 import Combine
 import ServiceManagement
+import Speech
+import AVFoundation
 #if SWIFT_PACKAGE
 import ChosenCore
 #endif
@@ -18,13 +20,16 @@ struct Activity: Identifiable {
 final class AppModel: ObservableObject {
     @Published var listening = false
     @Published var working = false
-    @Published var status = "Ready when you are"
+    @Published var active = false
+    @Published var voiceAuthorized = false
+    @Published var status = "Waiting for Hey Mouse"
     @Published var transcript = ""
     @Published var audioLevel = 0.0
     @Published var command = ""
     @Published var error: String?
     @Published var activity: [Activity] = []
     @Published var hasKey = false
+    @Published var hasSavedKey = false
     @Published var screenAllowed = false
     @Published var accessibilityAllowed = false
     @Published var budget = DemoBudget()
@@ -40,7 +45,10 @@ final class AppModel: ObservableObject {
     private var previousApplication: NSRunningApplication?
     private var workspaceObserver: NSObjectProtocol?
     private var permissionTimer: Timer?
-    private var hiddenWindows: [NSWindow] = []
+    private let notch = MouseNotchController()
+    private var noticeTask: Task<Void, Never>?
+    private var started = false
+    private var startingVoice = false
     private let budgetURL: URL
     private var canPersistUsage = true
 
@@ -70,37 +78,91 @@ final class AppModel: ObservableObject {
             Task { @MainActor in self?.previousApplication = app }
         }
         voice.onCommand = { [weak self] text in self?.submit(text) }
-        voice.onPartial = { [weak self] text in self?.transcript = text }
+        voice.onPartial = { [weak self] text in
+            guard let self, !self.working else { return }
+            self.transcript = text
+            self.noticeTask?.cancel()
+            if self.active { self.notch.show(text.isEmpty ? .active : .transcribing(text)) }
+        }
         voice.onLevel = { [weak self] level in self?.audioLevel = level }
         voice.onStatus = { [weak self] state in guard self?.working == false else { return }; self?.status = state }
         voice.onStop = { [weak self] in self?.cancel() }
+        voice.onActivationChanged = { [weak self] active in
+            guard let self else { return }
+            self.active = active
+            self.noticeTask?.cancel()
+            if !self.working { self.showRestingState() }
+        }
+        voice.onDeactivation = { [weak self] in
+            guard let self else { return }
+            self.cancel(silent: true)
+            self.transcript = ""
+            self.status = "Waiting for Hey Mouse"
+            self.showRestingState()
+        }
+        voice.onFailure = { [weak self] message in
+            guard let self else { return }
+            self.cancel(silent: true)
+            self.listening = false
+            self.error = message
+            self.status = "Voice needs attention"
+            self.log(message, detail: "Voice stopped", symbol: "mic.slash")
+            self.showNotice("Voice paused · check Mouse settings")
+        }
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshPermissions() } }
     }
 
     func refreshPermissions() {
-        hasKey = KeychainStore.exists()
+        hasSavedKey = KeychainStore.exists()
+        hasKey = (try? KeychainStore.load()) != nil
         screenAllowed = computer.screenRecordingGranted
         accessibilityAllowed = computer.accessibilityGranted
         listening = voice.isRunning
+        voiceAuthorized = SFSpeechRecognizer.authorizationStatus() == .authorized && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
+    var needsSetup: Bool { !hasKey || !screenAllowed || !accessibilityAllowed || !voiceAuthorized }
+
+    /// Launch into local wake-word monitoring without opening a main window.
+    func startStandby() {
+        guard !started else { return }
+        started = true
+        refreshPermissions()
+        if voiceAuthorized { startVoice() }
     }
 
     func toggleListening() {
-        if listening { voice.stop(); listening = false; status = "Microphone off"; audioLevel = 0; return }
+        if listening {
+            cancel(silent: true)
+            voice.stop(); listening = false; active = false
+            status = "Microphone paused"; audioLevel = 0; transcript = ""
+            notch.hide()
+            return
+        }
+        startVoice()
+    }
+
+    private func startVoice(activate: Bool = false) {
+        guard !startingVoice else { return }
+        startingVoice = true
         Task {
-            do { try await voice.start(); listening = voice.isRunning; error = nil }
-            catch { self.error = error.localizedDescription; listening = false; status = "Voice needs attention" }
+            defer { startingVoice = false; refreshPermissions() }
+            do {
+                if !voice.isRunning { try await voice.start() }
+                listening = voice.isRunning; error = nil
+                if activate { voice.activate() }
+                else { showRestingState() }
+            } catch {
+                self.error = error.localizedDescription; listening = false
+                status = "Voice needs attention"
+                showNotice("Check voice permissions")
+            }
         }
     }
 
-    func listenNow() {
-        Task {
-            do {
-                if !voice.isRunning { try await voice.start() }
-                listening = voice.isRunning
-                voice.activate()
-            } catch { self.error = error.localizedDescription }
-        }
-    }
+    func listenNow() { startVoice(activate: true) }
+
+    func sleep() { voice.deactivate(); active = false; cancel(silent: true); transcript = ""; showRestingState() }
 
     func requestScreen() { _ = computer.requestScreenRecordingPermission(); refreshPermissions() }
     func requestAccessibility() { _ = computer.requestAccessibilityPermission(); refreshPermissions() }
@@ -108,7 +170,11 @@ final class AppModel: ObservableObject {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(suffix)") { NSWorkspace.shared.open(url) }
     }
     func saveKey(_ key: String) {
-        do { try KeychainStore.save(key); hasKey = true; error = nil } catch { self.error = error.localizedDescription }
+        do { try KeychainStore.save(key); refreshPermissions(); error = nil } catch { self.error = error.localizedDescription }
+    }
+    func reconnectKey() {
+        do { try KeychainStore.authorizeSavedKey(); refreshPermissions(); error = nil }
+        catch { self.error = error.localizedDescription }
     }
     func setLogin(_ enabled: Bool) {
         do {
@@ -120,26 +186,28 @@ final class AppModel: ObservableObject {
     func submit(_ value: String? = nil) {
         let text = (value ?? command).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        if ["stop", "cancel", "stop chosen", "cancel that"].contains(text.lowercased()) { cancel(); return }
+        if ["stop listening", "go to sleep", "sleep mouse", "sleep chosen"].contains(text.lowercased()) { sleep(); return }
+        if ["stop", "cancel", "stop mouse", "stop chosen", "cancel that"].contains(text.lowercased()) { cancel(); return }
         cancel(silent: true)
         command = ""; transcript = text; error = nil; lastDuration = nil
         let token = UUID(); generation = token
         working = true; status = "Looking at your screen"; voice.setExecuting(true)
+        notch.show(.working("Getting started…"))
         let started = Date()
         log(text, detail: "Command", symbol: "waveform")
         runningTask = Task {
             do {
-                guard screenAllowed else { throw ChosenError.permission("Allow Screen Recording so Chosen can see the app you want to control.") }
-                guard accessibilityAllowed else { throw ChosenError.permission("Allow Accessibility so Chosen can click and type.") }
+                guard screenAllowed else { throw ChosenError.permission("Allow Screen Recording in Mouse Settings to see the app you want to control.") }
+                guard accessibilityAllowed else { throw ChosenError.permission("Allow Accessibility in Mouse Settings to click and type.") }
                 guard let key = try KeychainStore.load() else { throw ChosenError.configuration("Add your OpenAI API key in Settings.") }
                 let client = OpenAIComputerClient(apiKey: key)
-                // Typed commands temporarily move focus into Chosen. Restore the target app before capturing.
+                // Typed commands temporarily move focus into Settings. Restore the target app before capturing.
                 if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
                     previousApplication?.activate(options: [])
                     try await Task.sleep(for: .milliseconds(220))
                 }
-                hiddenWindows = NSApp.windows.filter { $0.isVisible && ($0.canBecomeMain || $0.canBecomeKey) }
-                hiddenWindows.forEach { $0.orderOut(nil) }
+                // The click-through notch cannot become key/main and stays visible.
+                NSApp.windows.filter { $0.isVisible && ($0.canBecomeMain || $0.canBecomeKey) }.forEach { $0.orderOut(nil) }
                 computer.resetDisplay()
                 var frame = try await computer.capture()
                 try check(token)
@@ -149,9 +217,18 @@ final class AppModel: ObservableObject {
                 for step in 0..<DemoBudget.stepsPerCommand {
                     try check(token)
                     record(turn)
+                    if let reason = turn.pauseReason {
+                        error = reason
+                        status = "Needs your input"
+                        conversationContext = String("Previous user command: \(text)\nPaused: \(reason)".suffix(2000))
+                        log(reason, detail: "Needs your input", symbol: "questionmark.circle")
+                        finish(token)
+                        showNotice(reason, duration: 12)
+                        return
+                    }
                     if turn.calls.isEmpty {
                         let result = turn.message.isEmpty ? "Done" : turn.message
-                        status = "Ready for your next command"
+                        status = active ? "Ready for your next command" : "Waiting for Hey Mouse"
                         log(result, detail: "Response", symbol: "text.bubble")
                         conversationContext = String("Previous user command: \(text)\nResult: \(result)".suffix(2000))
                         lastDuration = Date().timeIntervalSince(started)
@@ -162,14 +239,16 @@ final class AppModel: ObservableObject {
                     let allActions = turn.calls.flatMap(\.actions)
                     guard !allActions.isEmpty, allActions.count <= 12 else { throw ChosenError.invalidAction("The model returned an empty or oversized action batch.") }
                     guard turn.calls.allSatisfy({ $0.safetyChecks.isEmpty }) else {
-                        throw ChosenError.permission("The model requested a safety check. Chosen paused before acting. Review the screen and give a new, explicit instruction.")
+                        throw ChosenError.permission("The model requested a safety check. Mouse paused before acting. Review the screen and give a new, explicit instruction.")
                     }
                     for action in allActions { try computer.validateAction(action, frame: frame) }
                     var outputs: [(callID: String, frame: ScreenshotFrame)] = []
                     for call in turn.calls {
+                        try check(token)
+                        status = call.description
+                        notch.show(.working(call.description))
                         for action in call.actions {
                             try check(token)
-                            status = actionTitle(action)
                             try await computer.execute(action, frame: frame)
                         }
                         try await Task.sleep(for: .milliseconds(350))
@@ -177,7 +256,7 @@ final class AppModel: ObservableObject {
                         frame = try await computer.capture()
                         outputs.append((callID: call.callID, frame: frame))
                     }
-                    log("Step \(step + 1)", detail: allActions.map { $0.type.replacingOccurrences(of: "_", with: " ") }.joined(separator: " · "), symbol: "cursorarrow.click")
+                    log(turn.calls.map(\.description).joined(separator: " · "), detail: "Step \(step + 1)", symbol: "cursorarrow.click")
                     countRequest()
                     status = "Checking the result"
                     turn = try await client.continueTurn(responseID: turn.id, outputs: outputs)
@@ -189,6 +268,9 @@ final class AppModel: ObservableObject {
                 self.error = error.localizedDescription
                 status = "Paused"
                 log(error.localizedDescription, detail: "Needs attention", symbol: "exclamationmark.circle")
+                finish(token)
+                showNotice("Paused · check Mouse settings")
+                return
             }
             finish(token)
         }
@@ -196,14 +278,32 @@ final class AppModel: ObservableObject {
 
     func cancel(silent: Bool = false) {
         let wasWorking = working
+        noticeTask?.cancel()
         generation = UUID(); runningTask?.cancel(); runningTask = nil
         working = false; voice.setExecuting(false)
-        restoreWindows()
+        transcript = ""
         if !silent { status = "Stopped"; if wasWorking { log("Stopped immediately", detail: "Queued actions cancelled", symbol: "stop.circle") } }
+        showRestingState()
     }
     private func check(_ token: UUID) throws { try Task.checkCancellation(); guard generation == token else { throw CancellationError() } }
-    private func finish(_ token: UUID) { guard generation == token else { return }; working = false; voice.setExecuting(false); runningTask = nil; restoreWindows() }
-    private func restoreWindows() { hiddenWindows.forEach { $0.orderFront(nil) }; hiddenWindows.removeAll() }
+    private func finish(_ token: UUID) {
+        guard generation == token else { return }
+        working = false; voice.setExecuting(false); runningTask = nil; transcript = ""
+        showRestingState()
+    }
+    private func showRestingState() {
+        guard !working else { return }
+        notch.show(active && voice.isRunning ? .active : .standby)
+    }
+    private func showNotice(_ message: String, duration: Double = 5) {
+        noticeTask?.cancel()
+        notch.show(.notice(message))
+        noticeTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(duration)) } catch { return }
+            guard let self, !self.working else { return }
+            self.showRestingState()
+        }
+    }
     private func countRequest() {
         budget.reserve()
         persistUsage()
@@ -223,16 +323,5 @@ final class AppModel: ObservableObject {
     private func log(_ title: String, detail: String, symbol: String) {
         activity.insert(Activity(title: title, detail: detail, symbol: symbol), at: 0)
         if activity.count > 20 { activity.removeLast(activity.count - 20) }
-    }
-    private func actionTitle(_ action: ComputerAction) -> String {
-        switch action.type {
-        case "click", "double_click": return "Clicking"
-        case "type": return "Typing"
-        case "keypress": return "Pressing \(action.keys?.joined(separator: " + ") ?? "a key")"
-        case "scroll": return "Scrolling"
-        case "drag": return "Dragging"
-        case "wait": return "Waiting for the app"
-        default: return "Checking your screen"
-        }
     }
 }

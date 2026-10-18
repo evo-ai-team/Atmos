@@ -8,17 +8,8 @@ import ChosenCore
 @MainActor enum APICheck {
     static func run(apiKey: String? = nil) async throws {
         guard let key = try apiKey ?? KeychainStore.load() else { throw ChosenError.configuration("No API key is configured.") }
-        let image = NSImage(size: NSSize(width: 480, height: 320))
-        image.lockFocus()
-        NSColor.white.setFill(); NSRect(x: 0, y: 0, width: 480, height: 320).fill()
-        NSColor.systemBlue.setFill(); NSBezierPath(roundedRect: NSRect(x: 140, y: 130, width: 200, height: 60), xRadius: 12, yRadius: 12).fill()
-        let label = "TEST" as NSString
-        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 24, weight: .bold), .foregroundColor: NSColor.white]
-        let size = label.size(withAttributes: attributes)
-        label.draw(at: NSPoint(x: 240 - size.width / 2, y: 160 - size.height / 2), withAttributes: attributes)
-        image.unlockFocus()
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw ChosenError.configuration("Could not create API test image.") }
-        let frame = ScreenshotFrame(data: try NativeComputer.encodeJPEG(cgImage), width: cgImage.width, height: cgImage.height, pointWidth: 480, pointHeight: 320)
+        let frame = try fixtureFrame(completed: false)
+        let completedFrame = try fixtureFrame(completed: true)
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Chosen", isDirectory: true)
         let usageURL = directory.appendingPathComponent("usage.json")
         var canPersistUsage = true
@@ -26,17 +17,30 @@ import ChosenCore
         let start = Date()
         let client = OpenAIComputerClient(apiKey: key)
         countRequest(&budget, at: usageURL, canPersist: &canPersistUsage)
-        var turn = try await client.begin(command: "Click the center of the blue TEST button exactly once. Use the computer tool.", frame: frame, context: "This is a generated test screen. You may request a screenshot before clicking. Do not type or use any other action.")
+        var turn = try await client.begin(command: "Click the center of the blue TEST button exactly once using execute_actions. Only report done after the next screenshot shows the green DONE button.", frame: frame, context: "This is a generated test screen. You may request a screenshot before clicking. Do not type or use any other action.")
         var inputTokens = 0
         var outputTokens = 0
+        var clicked = false
         for requestNumber in 1...3 {
             budget.record(turn)
             persistUsage(budget, at: usageURL, canPersist: &canPersistUsage)
             inputTokens += turn.inputTokens
             outputTokens += turn.outputTokens
             let actions = turn.calls.flatMap(\.actions)
-            guard turn.calls.allSatisfy({ $0.safetyChecks.isEmpty }) else {
-                throw failure("The fixture requested a safety check.", turn: turn)
+            guard turn.pauseReason == nil, turn.calls.allSatisfy({ $0.safetyChecks.isEmpty }) else {
+                throw failure("The fixture requested user input or review.", turn: turn)
+            }
+            if clicked {
+                guard turn.calls.isEmpty, !turn.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw failure("The model did not finish after observing the completed fixture.", turn: turn)
+                }
+                print("PASS: Luna returned a grounded structured click and completed after the function-result screenshot.")
+                print("No desktop input was executed. No real screen content was sent.")
+                print("Requests: \(requestNumber). Tokens: \(inputTokens) input, \(outputTokens) output. Duration: \(String(format: "%.2f", Date().timeIntervalSince(start)))s.")
+                return
+            }
+            guard turn.calls.allSatisfy({ !$0.description.isEmpty && $0.description.count <= 64 }) else {
+                throw failure("The fixture is missing a short action description.", turn: turn)
             }
             guard !actions.isEmpty, actions.allSatisfy({ $0.type == "screenshot" || $0.type == "click" }) else {
                 throw failure("The model returned no click or requested an unexpected fixture action.", turn: turn)
@@ -44,26 +48,39 @@ import ChosenCore
             let clicks = actions.filter { $0.type == "click" }
             if !clicks.isEmpty {
                 guard clicks.count == 1, let action = clicks.first,
-                      action.button == nil || action.button == "left",
+                      action.button == "left", action.keys?.isEmpty == true,
                       let x = action.x, let y = action.y,
                       let point = try? frame.screenPoint(x: x, y: y),
                       (140..<340).contains(point.x), (130..<190).contains(point.y) else {
                     throw failure("The model did not return exactly one left click inside the test button.", turn: turn)
                 }
-                print("PASS: Luna returned a correctly grounded click on the generated test button.")
-                print("No desktop input was executed. No real screen content was sent.")
-                print("Requests: \(requestNumber). Tokens: \(inputTokens) input, \(outputTokens) output. Duration: \(String(format: "%.2f", Date().timeIntervalSince(start)))s.")
-                return
+                clicked = true
             }
-            // A native computer turn can begin by requesting only a screenshot.
-            // Return the fixture for every call without capturing or changing the desktop.
+            // Return generated screens only. The second fixture simulates the button's
+            // changed state so this check also verifies image-bearing function results.
             guard requestNumber < 3 else {
-                throw failure("The model requested screenshots but no click within three requests.", turn: turn)
+                throw failure("The model did not finish the fixture within three requests.", turn: turn)
             }
-            let outputs = turn.calls.map { (callID: $0.callID, frame: frame) }
+            let nextFrame = clicked ? completedFrame : frame
+            let outputs = turn.calls.map { (callID: $0.callID, frame: nextFrame) }
             countRequest(&budget, at: usageURL, canPersist: &canPersistUsage)
             turn = try await client.continueTurn(responseID: turn.id, outputs: outputs)
         }
+    }
+
+    private static func fixtureFrame(completed: Bool) throws -> ScreenshotFrame {
+        let image = NSImage(size: NSSize(width: 480, height: 320))
+        image.lockFocus()
+        NSColor.white.setFill(); NSRect(x: 0, y: 0, width: 480, height: 320).fill()
+        (completed ? NSColor.systemGreen : NSColor.systemBlue).setFill()
+        NSBezierPath(roundedRect: NSRect(x: 140, y: 130, width: 200, height: 60), xRadius: 12, yRadius: 12).fill()
+        let label = (completed ? "DONE" : "TEST") as NSString
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 24, weight: .bold), .foregroundColor: NSColor.white]
+        let size = label.size(withAttributes: attributes)
+        label.draw(at: NSPoint(x: 240 - size.width / 2, y: 160 - size.height / 2), withAttributes: attributes)
+        image.unlockFocus()
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw ChosenError.configuration("Could not create API test image.") }
+        return ScreenshotFrame(data: try NativeComputer.encodeJPEG(cgImage), width: cgImage.width, height: cgImage.height, pointWidth: 480, pointHeight: 320)
     }
 
     private static func loadUsage(at url: URL, canPersist: inout Bool) -> DemoBudget {

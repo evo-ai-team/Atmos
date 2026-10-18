@@ -31,7 +31,7 @@ enum VoiceFileCheck {
         var errorDescription: String? {
             switch self {
             case .invalidFile: return "Voice check needs a readable local audio file."
-            case .notAuthorized(let status): return "Speech authorization is \(status). Enable Voice in Chosen first; this check never requests permission."
+            case .notAuthorized(let status): return "Speech authorization is \(status). Enable Microphone in Mouse first; this check never requests permission."
             case .unavailable: return "On-device en-US speech recognition is unavailable."
             case .timedOut: return "Local speech recognition did not finish within 30 seconds."
             case .emptyTranscript: return "Local speech recognition returned no transcript."
@@ -40,7 +40,7 @@ enum VoiceFileCheck {
         }
     }
 
-    /// Expected fixture: "Hey Chosen, open Chrome." No microphone capture,
+    /// Expected fixture: "Hey Mouse, open Chrome." (Legacy "Hey Chosen" also works.) No microphone capture,
     /// permission prompt, screen access, input event, credential, or API request.
     static func run(url: URL) async throws -> Report {
         try Task.checkCancellation()
@@ -135,7 +135,7 @@ enum VoiceFileCheck {
                     request.shouldReportPartialResults = false
                     request.addsPunctuation = false
                     request.taskHint = .dictation
-                    request.contextualStrings = ["Hey Chosen", "Chosen"]
+                    request.contextualStrings = ["Hey Mouse", "Mouse", "Hey Chosen", "Chosen"]
                     task = recognizer.recognitionTask(with: request) { [weak self] result, error in
                         let transcript = result?.bestTranscription.formattedString
                         let isFinal = result?.isFinal == true

@@ -18,7 +18,7 @@ enum ChosenEntry {
         }
         if CommandLine.arguments.contains("--diagnostics") {
             let native = NativeComputer()
-            print("Chosen native demo")
+            print("Mouse native interface")
             print("Key configured: \(KeychainStore.exists())")
             print("Screen Recording: \(native.screenRecordingGranted)")
             print("Accessibility: \(native.accessibilityGranted)")
@@ -56,6 +56,30 @@ enum ChosenEntry {
             NSApplication.shared.run()
             return
         }
+        if let index = CommandLine.arguments.firstIndex(of: "--notch-preview") {
+            let state = index + 1 < CommandLine.arguments.count ? CommandLine.arguments[index + 1] : "active"
+            _ = NSApplication.shared
+            NSApp.setActivationPolicy(.accessory)
+            let overlay = MouseNotchController()
+            Task { @MainActor in
+                let transcript = "Go to Chrome, open up YouTube and then go search Linus Tech Tips, go to his channel, and click on his store link in his profile"
+                switch state {
+                case "standby": overlay.show(.standby)
+                case "transcript": overlay.show(.transcribing(transcript))
+                case "action": overlay.show(.working("Opening store…"))
+                case "notice": overlay.show(.notice("Which channel did you mean?"))
+                case "cycle":
+                    let states: [MouseOverlayState] = [.active, .transcribing("Go to Chrome"), .transcribing(transcript), .working("Going to Chrome…"), .working("Searching YouTube…"), .working("Searching Linus Tech Tips…"), .working("Opening channel…"), .working("Opening store…"), .active]
+                    for item in states {
+                        overlay.show(item)
+                        try? await Task.sleep(for: .seconds(2))
+                    }
+                default: overlay.show(.active)
+                }
+            }
+            NSApp.run()
+            return
+        }
         ChosenApplication.main()
     }
 }
@@ -63,44 +87,58 @@ enum ChosenEntry {
 struct ChosenApplication: App {
     @StateObject private var model = AppModel()
     var body: some Scene {
-        WindowGroup("Chosen", id: "main") {
+        Window("Mouse Settings", id: "settings") {
             ChosenView(model: model)
-                .frame(minWidth: 480, idealWidth: 520, maxWidth: 680, minHeight: 620, idealHeight: 700)
-                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in model.cancel(silent: true); model.voice.stop() }
+                .frame(width: 490, height: 650)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-        .defaultSize(width: 520, height: 700)
-        .commands {
-            CommandGroup(after: .appInfo) {
-                Button("Chosen Settings…") { model.showSettings = true }.keyboardShortcut(",")
-            }
-            CommandMenu("Voice") {
-                Button(model.listening ? "Turn Microphone Off" : "Enable Hey Chosen") { model.toggleListening() }
-                Button("Listen Now") { model.listenNow() }.keyboardShortcut(" ", modifiers: [.command, .shift])
-                Button("Stop") { model.cancel() }.keyboardShortcut(".", modifiers: .command)
-            }
-        }
+        .defaultSize(width: 490, height: 650)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
         MenuBarExtra {
-            ChosenMenu(model: model)
+            MouseMenu(model: model)
         } label: {
-            Label("Chosen", systemImage: model.working ? "cursorarrow.rays" : model.listening ? "waveform" : "waveform.slash")
+            MouseMenuLabel(model: model)
         }
         .menuBarExtraStyle(.menu)
     }
 }
 
-private struct ChosenMenu: View {
+private struct MouseMenuLabel: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+    @State private var didLaunch = false
+    var body: some View {
+        Image(systemName: model.listening ? "cursorarrow" : "mic.slash")
+            .accessibilityLabel("Mouse")
+            .onAppear {
+                guard !didLaunch else { return }
+                didLaunch = true
+                model.startStandby()
+                if model.needsSetup { openWindow(id: "settings"); NSApp.activate() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                model.cancel(silent: true)
+                model.voice.stop()
+            }
+    }
+}
+
+private struct MouseMenu: View {
     @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Text(model.status)
+        Text(model.working ? model.status : model.active ? "Mouse is active" : model.listening ? "Waiting for Hey Mouse" : "Microphone paused")
         Divider()
-        Button(model.listening ? "Microphone Off" : "Enable Hey Chosen") { model.toggleListening() }
-        Button("Listen Now") { model.listenNow() }
-        Button("Stop Current Action") { model.cancel() }.disabled(!model.working)
+        Button(model.active ? "Sleep Mouse" : "Activate Mouse") {
+            if model.active { model.sleep() } else { model.listenNow() }
+        }
+        Button("Cancel current action") { model.cancel() }.disabled(!model.working)
         Divider()
-        Button("Open Chosen") { openWindow(id: "main"); NSApp.activate() }
-        Button("Quit Chosen") { model.cancel(); model.voice.stop(); NSApp.terminate(nil) }
+        Button("Settings…") { openWindow(id: "settings"); NSApp.activate() }.keyboardShortcut(",")
+        Button(model.listening ? "Pause microphone" : "Resume microphone") { model.toggleListening() }
+        Divider()
+        Button("Quit Mouse") { model.cancel(silent: true); model.voice.stop(); NSApp.terminate(nil) }.keyboardShortcut("q")
     }
 }

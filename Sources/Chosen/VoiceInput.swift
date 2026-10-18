@@ -12,6 +12,10 @@ final class VoiceInput {
     var onLevel: ((Double) -> Void)?
     var onStatus: ((String) -> Void)?
     var onStop: (() -> Void)?
+    var onActivationChanged: ((Bool) -> Void)?
+    var onDeactivation: (() -> Void)?
+    var onFailure: ((String) -> Void)?
+    var isActive: Bool { session.isActive }
     private(set) var isRunning = false
 
     enum InputError: LocalizedError {
@@ -19,11 +23,11 @@ final class VoiceInput {
 
         var errorDescription: String? {
             switch self {
-            case .microphoneDenied: return "Allow Chosen microphone access in System Settings → Privacy & Security."
-            case .speechDenied: return "Allow Chosen speech recognition in System Settings → Privacy & Security."
+            case .microphoneDenied: return "Allow Mouse microphone access in System Settings → Privacy & Security."
+            case .speechDenied: return "Allow Mouse speech recognition in System Settings → Privacy & Security."
             case .unavailable: return "On-device English speech recognition is unavailable. Enable English dictation in System Settings, then try again."
             case .noMicrophone: return "No microphone is available. Connect one, then try again."
-            case .missingUsageDescriptions: return "Launch the packaged Chosen app to enable microphone permissions."
+            case .missingUsageDescriptions: return "Launch the packaged Mouse app to enable microphone permissions."
             }
         }
     }
@@ -45,8 +49,8 @@ final class VoiceInput {
     private var lastLevel = 0.0
     private let silenceDuration: TimeInterval = 0.7
 
-    /// Call only from the user's explicit Enable Voice action. No permissions are
-    /// requested by init(), activate(), background timers, or application launch.
+    /// Call after an explicit Enable Microphone action, or on launch when both
+    /// permissions are already authorized. Other lifecycle methods never prompt.
     func start() async throws {
         guard !isRunning, !isStarting else { return }
         isStarting = true
@@ -69,6 +73,7 @@ final class VoiceInput {
         // their interruption state while resetting the newly opened wake stream.
         let alreadyExecuting = executionInProgress
         session = WakeSession()
+        onActivationChanged?(false)
         session.setExecuting(alreadyExecuting, at: Self.now)
         recoveryAttempts = 0
         do {
@@ -76,7 +81,7 @@ final class VoiceInput {
             isRunning = true
             try beginRecognition(preservingPending: false)
             startTimer()
-            onStatus?(alreadyExecuting ? "Working · say “stop” to interrupt" : "Say “Hey Chosen”")
+            onStatus?(alreadyExecuting ? "Working · say “stop” to interrupt" : "Say “Hey Mouse”")
         } catch {
             stop()
             throw error
@@ -94,13 +99,14 @@ final class VoiceInput {
         endAudioEngine()
         recognizer = nil
         session = WakeSession()
+        onActivationChanged?(false)
         lastLevel = 0
         onLevel?(0)
         onPartial?("")
         onStatus?("Voice off")
     }
 
-    /// Begins a command window without a wake phrase. Enabling the microphone is
+    /// Activates until explicitly put to sleep, without a wake phrase. Enabling the microphone is
     /// deliberately a separate, explicit user action through start().
     func activate() {
         guard isRunning else { return }
@@ -111,11 +117,16 @@ final class VoiceInput {
         handle(session.activate(at: Self.now))
     }
 
+    /// Returns to local wake-word monitoring while leaving the microphone enabled.
+    func deactivate() {
+        handle(session.deactivate())
+    }
+
     func setExecuting(_ executing: Bool) {
         executionInProgress = executing
         session.setExecuting(executing, at: Self.now)
         guard isRunning else { return }
-        onStatus?(executing ? "Working · say “stop” to interrupt" : session.isActive ? "Listening for a follow-up" : "Say “Hey Chosen”")
+        onStatus?(executing ? "Working · say “stop” to interrupt" : session.isActive ? "Listening…" : "Say “Hey Mouse”")
     }
 
     private func startAudioEngine() throws {
@@ -166,7 +177,7 @@ final class VoiceInput {
         request.shouldReportPartialResults = true
         request.addsPunctuation = false
         request.taskHint = .dictation
-        request.contextualStrings = ["Hey Chosen", "Chosen"]
+        request.contextualStrings = ["Hey Mouse", "Mouse", "Hey Chosen", "Chosen", "stop listening", "go to sleep"]
         let token = UUID()
         generation = token
         recognitionStartedAt = Self.now
@@ -188,8 +199,7 @@ final class VoiceInput {
                 if hadError && !isFinal {
                     self.recoveryAttempts += 1
                     if self.recoveryAttempts >= 6 {
-                        self.stop()
-                        self.onStatus?(InputError.unavailable.localizedDescription)
+                        self.fail(InputError.unavailable.localizedDescription)
                         return
                     }
                 }
@@ -223,13 +233,12 @@ final class VoiceInput {
         let meter = audio.meter()
         lastLevel = lastLevel * 0.65 + min(1, meter.rms * 14) * 0.35
         onLevel?(lastLevel)
-        handle(session.expire(at: now))
         guard recoveryTask == nil else { return }
         guard engine?.isRunning == true else {
             recover(rebuildAudio: true)
             return
         }
-        if !session.pendingCommand.isEmpty, let changed = session.lastChangeAt,
+        if let changed = session.lastChangeAt,
            now - max(changed, meter.lastSpeechAt) >= silenceDuration {
             handle(session.finishUtterance(at: now))
         }
@@ -245,6 +254,7 @@ final class VoiceInput {
         for event in events {
             switch event {
             case .activated:
+                onActivationChanged?(true)
                 onPartial?("")
                 onStatus?("Listening…")
             case .partial(let text):
@@ -255,13 +265,19 @@ final class VoiceInput {
                 rotateRecognition()
                 onCommand?(text)
             case .stopped:
-                rotateRecognition()
+                executionInProgress = false
+                // Keep this cumulative stream until silence: "stop" may still
+                // become "stop listening" in the next recognition partial.
                 onPartial?("")
                 onStop?()
-                onStatus?("Stopped · say “Hey Chosen”")
-            case .expired:
+                onStatus?(session.isActive ? "Listening…" : "Say “Hey Mouse”")
+            case .deactivated:
+                executionInProgress = false
+                onActivationChanged?(false)
+                rotateRecognition()
                 onPartial?("")
-                onStatus?("Say “Hey Chosen”")
+                onDeactivation?()
+                onStatus?(isRunning ? "Say “Hey Mouse”" : "Microphone off")
             }
         }
     }
@@ -280,8 +296,8 @@ final class VoiceInput {
     private func recover(rebuildAudio: Bool, quiet: Bool = false) {
         guard isRunning else { return }
         if rebuildAudio {
-            // A disconnected microphone can truncate a sentence. Keep the command
-            // window open, but require the user to repeat its unfinished contents.
+            // A disconnected microphone can truncate a sentence. Keep activation
+            // unchanged, but require the user to repeat its unfinished contents.
             session.beginRecognition(preservingPending: false)
             onPartial?("")
         }
@@ -305,19 +321,25 @@ final class VoiceInput {
                     if self.engine == nil { try self.startAudioEngine() }
                     try self.beginRecognition(preservingPending: true)
                     self.recoveryTask = nil
-                    self.onStatus?(self.session.isExecuting ? "Working · say “stop” to interrupt" : self.session.isActive ? "Listening…" : "Say “Hey Chosen”")
+                    self.onStatus?(self.session.isExecuting ? "Working · say “stop” to interrupt" : self.session.isActive ? "Listening…" : "Say “Hey Mouse”")
                     return
                 } catch {
                     self.recoveryAttempts += 1
                     if self.recoveryAttempts >= 6 {
-                        let message = error.localizedDescription
-                        self.stop()
-                        self.onStatus?(message)
+                        self.fail(error.localizedDescription)
                         return
                     }
                 }
             }
         }
+    }
+
+    /// Losing voice input while a task is running also removes its hands-free
+    /// interruption path. Notify the owner after teardown so it can cancel work.
+    private func fail(_ message: String) {
+        stop()
+        onFailure?(message)
+        onStatus?(message)
     }
 
     private static var now: TimeInterval { ProcessInfo.processInfo.systemUptime }

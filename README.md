@@ -1,8 +1,8 @@
-# Chosen
+# Mouse
 
-A native Mac demo that turns spoken or typed commands into clicks, typing, and scrolling. The interface embeds SwiftUI content in macOS 26's native `NSGlassEffectView`, with a transparent window backing and system glass controls. Computer control uses OpenAI Responses with GPT-6 Luna, Fast service, and low reasoning.
+A native Mac voice interface for clicking, typing, scrolling, and navigating apps. Mouse lives in the menu bar; its everyday interface expands directly from the notch using native Liquid Glass, a black-to-glass gradient, and filled upper corners. The panel does not take keyboard focus or intercept clicks.
 
-Requires an Apple silicon Mac running macOS 26 or later, full Xcode 27 to build, and an OpenAI API key with access to the model and computer tool. The local build environment uses Xcode 27.1. Voice mode requires on-device English (US) speech recognition.
+Requires an Apple silicon Mac running macOS 26 or later, full Xcode 27 to build, and an OpenAI API key with access to GPT-6 Luna. Voice uses on-device English (US) speech recognition. The model configuration remains GPT-6 Luna, Fast service, and low reasoning.
 
 ## Build and open
 
@@ -13,58 +13,71 @@ From this folder:
 open ../Chosen.app
 ```
 
-The default destination is `../Chosen.app`—the `Chosen.app` alongside this source folder. To choose another destination, pass its path:
+The app displays as **Mouse**. Its existing bundle identity, executable name, support directory, and default build destination remain `Chosen` for continuity. To choose another destination, pass an `.app` path to the build script.
 
-```sh
-./Scripts/build.sh /path/to/Chosen.app
-```
+The scripts respect `DEVELOPER_DIR`, otherwise use the selected full Xcode or `/Applications/Xcode.app`. They do not change global `xcode-select` settings. Build products use the workspace's `work/` folder when available, otherwise a temporary directory. Override with `CHOSEN_BUILD_DIR` or `CHOSEN_TEST_BUILD_DIR`.
 
-The scripts respect `DEVELOPER_DIR`, otherwise use the selected full Xcode or fall back to `/Applications/Xcode.app`. They do not change global `xcode-select` settings. Build products go into the workspace’s `work/` folder when available, otherwise a temporary directory. Set `CHOSEN_BUILD_DIR` to choose a derived-data directory.
+## Setup and use
 
-## First use
+Open **Settings…** from Mouse's menu-bar icon. Settings also opens on launch when setup is incomplete.
 
-1. Open **Settings** using the sliders button. Enter your API key in the secure field and select **Save key**. The key is stored in macOS Keychain, not a configuration file.
-2. Select **Allow** for **See your screen** and **Click and type**. Enable Chosen under **System Settings → Privacy & Security → Screen Recording** (or **Screen & System Audio Recording**) and **Accessibility**. Quit and reopen Chosen if macOS asks.
-3. For voice control, select **Enable Hey Chosen** and grant **Microphone** and **Speech Recognition** access. If local recognition is unavailable, enable English dictation in System Settings or use typed commands.
+1. Enter your OpenAI API key and select **Save key**. The key stays in macOS Keychain. If an updated build shows **Needs authorization**, select **Reconnect saved key** and approve macOS's Keychain authorization prompt, or supply another key.
+2. Use **Allow** to grant Screen Recording and Accessibility in System Settings. Reopen Mouse if macOS requests it.
+3. Select **Enable voice** and grant Microphone and Speech Recognition access. On subsequent launches, Mouse starts local wake-word monitoring automatically when voice permissions are already authorized. **Open Mouse at login** is optional.
 
-Type a command such as “Open Chrome” and press Return. Chosen restores the previously active app, hides its control window while acting, then brings the window back with the result. Its screenshot capture excludes Chosen’s own windows. On multiple displays, start with the pointer on the display you want to control; a command remains on that display.
+Say **“Hey Mouse, open Chrome.”** The legacy **“Hey Chosen”** phrase also works. Activation persists between commands until you explicitly put Mouse to sleep; silence does not expire the session.
 
-Say **“Hey Chosen, open Chrome”** to start a voice command. Follow-up commands work without the wake phrase during a 20-second session; the follow-up window starts again after an action finishes. **Listen Now** starts a session directly. Say **“stop”** or **“cancel”** while voice is enabled, or use **Stop Current Action** in the menu bar. Stopping cancels queued actions; it does not undo earlier clicks or typing. **Pause listening** turns the microphone off. Launch at login is optional in Settings.
+| State or command | Behavior |
+|---|---|
+| Standby | No overlay; local wake-word monitoring continues. |
+| Active | A slightly expanded, empty gradient notch indicates readiness. |
+| Speaking | The live transcript wraps at a constrained width and grows downward. |
+| Acting | The panel shrinks smoothly to one short description for the current operation. |
+| Finished | The panel returns to the small active indicator, ready for another command. |
+| “Stop” or “cancel” | Cancels queued actions and retains activation. Earlier clicks or typing are not undone. |
+| “Stop listening” or “go to sleep” | Cancels the current action and returns to wake-word standby. |
+| **Pause microphone** in the menu | Stops microphone capture and wake-word monitoring. |
 
-Voice uses Apple’s on-device `SFSpeechRecognizer` with local recognition required. It continuously recognizes speech while listening is enabled; it is not a dedicated low-power wake-word engine. No model requests run while idle. Commands and screenshots are sent to OpenAI only while a command is running; microphone audio is not sent to OpenAI. A screenshot can include other visible apps on the selected display.
+The notch has no buttons. The menu provides activation, sleep, cancellation, Settings, microphone pause, and quit. Typed commands and recent activity are available under **Testing & recent activity** in Settings. Settings hides during execution without reopening after every task.
 
-## Usage counter and checks
+Voice runs through Apple's on-device `SFSpeechRecognizer`; it is continuous local recognition, not a dedicated low-power wake detector. Idle monitoring uses no OpenAI requests. Only submitted commands and screenshots are sent to OpenAI, never microphone audio. Captures exclude Mouse's own windows but can include other visible apps.
 
-Chosen has **no cumulative request limit**. Its test counter persists request totals and input and output token totals across launches in `~/Library/Application Support/Chosen/usage.json`, and displays an estimated cost. Requests are counted before networking, including failed and cancelled attempts. Token totals reflect usage returned by the API; the cost estimate uses those recorded tokens. Your OpenAI project controls actual billing and provider limits.
+## Action protocol and capture
 
-Accounting read or write failures do not block requests. If history cannot be loaded, counting starts from zero; if it cannot be saved, totals continue in memory for the current run.
+The Responses API uses a strict custom `execute_actions` function with required `description` and `actions` fields. Each response describes one operation and contains 1–12 actions. A short label such as “Searching Linus Tech Tips…” stays visible while that batch executes. Actions are validated before desktop events are posted. The next request returns a fresh screenshot in `function_call_output`, tied to the same call ID.
 
-Each command retains an **8-model-turn execution guard** to prevent endless action loops. This guard applies separately to each command and does not limit cumulative API usage. Model requests time out after 30 seconds and are not automatically retried. Pending model safety checks pause execution before the requested actions.
+A separate `pause_for_user` function requests missing information, authorization, or review without executing actions. Invalid, incomplete, refused, mixed, or multiple operations are rejected. Completion is requested only after the model inspects the resulting screen. Requests time out after 30 seconds and are not automatically retried; each command retains an 8-model-turn execution guard.
 
-Run the offline tests with full Xcode’s toolchain:
+Screenshot sizing is unchanged: ScreenCaptureKit captures at the selected display's logical dimensions, capped at 1600 pixels wide, then encodes JPEG at 78% quality. Existing coordinate mapping converts image coordinates to display coordinates. No additional 40% scaling was introduced.
+
+This iteration focuses on the notch UI on the current Mac. Spaces, fullscreen behavior, and multiple-display overlay placement remain deferred.
+
+## Usage and verification
+
+There is **no cumulative API request cap**. The counter persists request attempts and returned input/output token totals in `~/Library/Application Support/Chosen/usage.json`. Failed and cancelled attempts count as requests. The displayed cost is an estimate that excludes cache pricing; OpenAI reports actual billing. Accounting failures do not block requests.
+
+Run offline tests with:
 
 ```sh
 ./Scripts/test.sh
 ./Scripts/test.sh --filter OpenAIClientTests
 ```
 
-Tests cover request formatting, action parsing, incomplete/refused responses, cancellation, persistent usage counting beyond 100 requests, coordinate mapping, and wake-session behavior. They use no API credentials or live requests. `CHOSEN_TEST_BUILD_DIR` can override the test build directory. A successful build or offline suite does not verify microphone quality, macOS permissions, model access, or end-to-end computer control; check those in the app on your Mac.
+Coverage includes strict schemas, description/action parsing, screenshot continuations, pause handling, cancellation, persistent activation, stop-versus-sleep behavior, usage counting, and coordinate mapping. Tests make no live API requests. A passing suite does not establish microphone quality or end-to-end Mac control.
 
-For a key import without putting the secret in shell history, Settings is preferred. The executable also accepts a key on standard input. In macOS’s default zsh:
+Preview the notch without microphone capture, API requests, or desktop input:
 
-```zsh
-read -r -s 'chosenApiKey?OpenAI API key: '
-printf '\n'
-printf '%s' "$chosenApiKey" | ../Chosen.app/Contents/MacOS/Chosen --import-key
-unset chosenApiKey
+```sh
+../Chosen.app/Contents/MacOS/Chosen --notch-preview active
+../Chosen.app/Contents/MacOS/Chosen --notch-preview transcript
+../Chosen.app/Contents/MacOS/Chosen --notch-preview action
+../Chosen.app/Contents/MacOS/Chosen --notch-preview cycle
 ```
 
-`../Chosen.app/Contents/MacOS/Chosen --diagnostics` reports whether a key and desktop permissions are configured without printing the key.
+`--diagnostics` reports key availability and permissions without printing credentials. `--voice-check /path/to/audio.aiff` locally checks a recording of “Hey Mouse, open Chrome” with existing Speech authorization; it does not execute the command.
 
-For an opt-in live API check, run `../Chosen.app/Contents/MacOS/Chosen --api-check`. This uses the Keychain key, makes up to three billable requests added to the usage counter, and checks the model’s returned click against a generated test image. Screenshot-only turns receive the same fixture. It does not capture your desktop or execute desktop events. It verifies the API connection and action response, not end-to-end Mac control.
+The opt-in `--api-check` uses the saved key and makes up to three billable requests, counted in usage. It validates a structured click against a generated TEST button, then returns a generated DONE screenshot to verify the function-result continuation. It neither captures nor controls the desktop. Quit the GUI before this check so two processes do not update the counter simultaneously.
 
-The check also accepts `--key-stdin` to read the key from standard input instead of Keychain. Never put a key in command arguments. Quit the GUI before running a CLI API check so the two processes do not update the usage counter simultaneously.
+Settings is preferred for key entry. `--import-key` accepts a key on standard input; `--api-check --key-stdin` accepts one for that check. Never put credentials in command arguments.
 
-For a local speech diagnostic, create an audio file saying “Hey Chosen, open Chrome.” and pass it to `Chosen --voice-check /path/to/audio.aiff`. The check requires existing Speech authorization, uses on-device recognition, and validates that the wake phrase produces one `open Chrome` command. It does not execute that command. CLI permission attribution can differ from a normal app launch; the app’s Enable Hey Chosen control is the authoritative microphone check.
-
-This build is ad-hoc signed for local demonstration. Rebuilding changes its signature and can require granting macOS permissions again. It is not Developer ID signed or notarized for customer distribution. A release for other users needs its own signing, notarization, and testing.
+This local build is ad-hoc signed. Rebuilds can require renewed macOS permissions or Keychain authorization. Distribution to other users requires Developer ID signing, notarization, and further testing.

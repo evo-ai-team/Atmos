@@ -41,7 +41,7 @@ import LocalAuthentication
     }
     private static func verifySavedKey(_ key: String) throws {
         guard try load() == key else {
-            throw NSError(domain: "Chosen", code: 2, userInfo: [NSLocalizedDescriptionKey: "The saved API key could not be verified. Reconnect through Chosen Settings."])
+            throw NSError(domain: "Chosen", code: 2, userInfo: [NSLocalizedDescriptionKey: "The saved API key could not be verified. Reconnect through Mouse Settings."])
         }
     }
     static func load() throws -> String? {
@@ -69,6 +69,20 @@ import LocalAuthentication
             return SecItemCopyMatching(request as CFDictionary, nil) == errSecSuccess
         }) ?? false
     }
+    /// Only called by the explicit Reconnect button. Normal reads never prompt.
+    /// macOS authorizes this build to read the existing item; its ACL is not
+    /// widened or replaced by the app, and the credential is never displayed.
+    static func authorizeSavedKey() throws {
+        var request = query
+        request[kSecReturnData as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &result)
+        guard status == errSecSuccess else { throw readFailure(status) }
+        guard let data = result as? Data, !data.isEmpty else {
+            throw NSError(domain: "Chosen", code: 2, userInfo: [NSLocalizedDescriptionKey: "No saved API key was found. Add one in Mouse Settings."])
+        }
+    }
     private static func withoutReadInteraction<T>(_ operation: () throws -> T) throws -> T {
         // The current store is the legacy Mac keychain. Its authorization dialogs
         // need this legacy switch as well as LAContext's data-protection setting.
@@ -89,7 +103,7 @@ import LocalAuthentication
     }
     private static func readFailure(_ status: OSStatus) -> NSError {
         if requiresAuthorization(status) {
-            return NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [NSLocalizedDescriptionKey: "Keychain access needs attention. Unlock your login keychain and authorize this Chosen build in Keychain Access, or reconnect through Chosen Settings."])
+            return NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [NSLocalizedDescriptionKey: "Reconnect the saved API key in Mouse Settings to authorize this updated build, or enter a new key."])
         }
         return failure(status)
     }

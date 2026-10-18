@@ -86,7 +86,6 @@ final class AppModel: ObservableObject {
         }
         voice.onLevel = { [weak self] level in self?.audioLevel = level }
         voice.onStatus = { [weak self] state in guard self?.working == false else { return }; self?.status = state }
-        voice.onStop = { [weak self] in self?.cancel() }
         voice.onActivationChanged = { [weak self] active in
             guard let self else { return }
             self.active = active
@@ -186,23 +185,20 @@ final class AppModel: ObservableObject {
     func submit(_ value: String? = nil) {
         let text = (value ?? command).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        if let control = CommandIntent.control(text) {
+        if let control = VoiceControl.match(text) {
             switch control {
             case .sleep: sleep()
-            case .stop: cancel()
             }
             return
         }
-        // This boundary also covers manually entered commands. Unclear speech
-        // cannot cancel a task, change the UI, capture the screen, or spend a request.
-        guard CommandIntent.isClearCommand(text) else { return }
+        // Luna decides intent from the complete utterance and screen context.
+        // There is no local vocabulary or command-pattern admission check.
         cancel(silent: true)
         command = ""; transcript = text; error = nil; lastDuration = nil
         let token = UUID(); generation = token
         working = true; status = "Looking at your screen"; voice.setExecuting(true)
-        notch.show(.working("Getting started…"))
+        notch.show(.transcribing(text))
         let started = Date()
-        log(text, detail: "Command", symbol: "waveform")
         runningTask = Task {
             do {
                 guard screenAllowed else { throw ChosenError.permission("Allow Screen Recording in Mouse Settings to see the app you want to control.") }
@@ -226,12 +222,12 @@ final class AppModel: ObservableObject {
                     try check(token)
                     record(turn)
                     if turn.ignored {
-                        // A command-like phrase can still be conversational. The
-                        // model's no-op fallback must not become an answer or notice.
+                        // Ignored speech produces no answer, action, or notice.
                         status = active ? "Ready for your next command" : "Waiting for Hey Mouse"
                         finish(token)
                         return
                     }
+                    if step == 0 { log(text, detail: "Command", symbol: "waveform") }
                     if let reason = turn.pauseReason {
                         error = reason
                         status = "Needs your input"

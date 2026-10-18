@@ -25,26 +25,25 @@ Open **Settings…** from Mouse's menu-bar icon. Settings also opens on launch w
 2. Use **Allow** to grant Screen Recording and Accessibility in System Settings. Reopen Mouse if macOS requests it.
 3. Select **Enable voice** and grant Microphone and Speech Recognition access. On subsequent launches, Mouse starts local wake-word monitoring automatically when voice permissions are already authorized. **Open Mouse at login** is optional.
 
-Say **“Hey Mouse, open Chrome.”** The legacy **“Hey Chosen”** phrase also works. Activation persists between commands until you explicitly put Mouse to sleep; silence does not expire the session.
+Say **“Hey Mouse, open Chrome.”** The legacy **“Hey Chosen”** phrase also works. Activation persists between commands until you say **“stop”**; silence does not expire the session.
 
-Mouse accepts clear computer instructions and silently ignores conversation, informational questions, and unclear phrases. A conservative local filter runs before transcription is displayed or a task starts. Rejected speech triggers no screen capture, API request, answer, or desktop action; Mouse remains active. “Open Chrome” and “Can you open Chrome?” are commands; “How do I open Chrome?”, “I told him to open Chrome”, and “don't open Chrome” are ignored. Unknown phrasing may need to be restated as a direct instruction.
+While active and ready, Mouse displays the live transcript and sends every completed utterance with the screen context to Luna. There is no local command vocabulary, app-name list, or grammar filter. Luna interprets natural requests such as “make this bigger” or “organize my files” and decides whether to return structured actions, ask for required task information, or silently ignore the utterance. Conversation and informational questions should produce no answer or desktop action. This intent decision happens in the normal model request, with no separate classifier call.
 
-Spoken stop and sleep controls are matched as complete phrases at the existing silence boundary (about 700 ms), so “stop by later” or “cancel my dinner reservation” does not cancel a computer task.
+The only local voice control is the complete word **“stop”**, matched at the existing silence boundary (about 700 ms). It cancels work and returns to wake-word standby without an API call. “Cancel”, “stop listening”, and “go to sleep” are not special local commands; they go to Luna like any other utterance while ready. During execution, new speech does not start parallel requests; “stop” remains available.
 
 | State or command | Behavior |
 |---|---|
 | Standby | No overlay; local wake-word monitoring continues. |
 | Active | A slightly expanded, empty gradient notch indicates readiness. |
-| Speaking a clear command | The live transcript wraps at a constrained width and grows downward. |
+| Speaking | The live transcript wraps at a constrained width and grows downward. |
 | Acting | The panel shrinks smoothly to one short description for the current operation. |
 | Finished | The panel returns to the small active indicator, ready for another command. |
-| “Stop”, “stop listening”, or “go to sleep” | Cancels the current action and returns to wake-word standby. Say “Hey Mouse” to activate again. |
-| “Cancel” | Cancels queued actions and retains activation. Earlier clicks or typing are not undone. |
+| “Stop” | Cancels the current action and returns to wake-word standby. Say “Hey Mouse” to activate again. Earlier clicks or typing are not undone. |
 | **Pause microphone** in the menu | Stops microphone capture and wake-word monitoring. |
 
-The notch has no buttons. The menu provides activation, sleep, cancellation, Settings, microphone pause, and quit. Typed commands and recent activity are available under **Testing & recent activity** in Settings. Settings hides during execution without reopening after every task.
+The notch has no buttons. The menu provides activation, stop, Settings, microphone pause, and quit. Typed requests and recent activity are available under **Testing & recent activity** in Settings. Settings hides during execution without reopening after every task.
 
-Voice runs through Apple's on-device `SFSpeechRecognizer`; it is continuous local recognition, not a dedicated low-power wake detector. Idle monitoring uses no OpenAI requests. Only submitted commands and screenshots are sent to OpenAI, never microphone audio. Captures exclude Mouse's own windows but can include other visible apps.
+Voice runs through Apple's on-device `SFSpeechRecognizer`; it is continuous local recognition, not a dedicated low-power wake detector. Wake-word standby uses no OpenAI requests. Once active, completed utterances and screenshots are sent to OpenAI for intent and action decisions, including utterances Luna ignores; microphone audio is never sent. Captures exclude Mouse's own windows but can include other visible apps.
 
 ## Action protocol and capture
 
@@ -52,7 +51,7 @@ The Responses API uses a strict custom `execute_actions` function with required 
 
 A separate `pause_for_user` function requests missing information, authorization, or review without executing actions. Invalid, incomplete, refused, mixed, or multiple operations are rejected. Completion is requested only after the model inspects the resulting screen. Requests time out after 30 seconds and are not automatically retried; each command retains an 8-model-turn execution guard.
 
-For command-like phrasing that passes the local filter, the model can return `ignore_utterance({})` as a second check on intent. This silently ends the turn without an answer or action. Ignoring cannot be combined with an action batch, clarification, or message, and earlier commands cannot turn new conversation into an instruction. This model fallback still uses the normal screenshot/request; the local filter rejects ordinary chat before either is created.
+Luna returns `ignore_utterance({})` when the utterance does not call for computer control. This silently ends the turn and returns to the active indicator without an answer or action. Ignoring cannot be combined with an action batch, clarification, or message, and earlier commands cannot turn new conversation into an instruction. An ignored utterance still uses one normal screenshot/request and counts toward usage.
 
 Screenshot sizing is unchanged: ScreenCaptureKit captures at the selected display's logical dimensions, capped at 1600 pixels wide, then encodes JPEG at 78% quality. Existing coordinate mapping converts image coordinates to display coordinates. No additional 40% scaling was introduced.
 
@@ -69,7 +68,7 @@ Run offline tests with:
 ./Scripts/test.sh --filter OpenAIClientTests
 ```
 
-Coverage includes local command intent filtering, ignored conversation, strict schemas, description/action parsing, screenshot continuations, pause/ignore handling, cancellation, persistent activation, stop-versus-sleep behavior, usage counting, and coordinate mapping. Tests make no live API requests. A passing suite does not establish microphone quality or end-to-end Mac control.
+Coverage includes unrestricted utterance forwarding, the local stop control, strict schemas, description/action parsing, screenshot continuations, pause/ignore handling, cancellation, persistent activation, usage counting, and coordinate mapping. Tests make no live API requests. A passing suite does not establish microphone quality, semantic intent accuracy, or end-to-end Mac control.
 
 Preview the notch without microphone capture, API requests, or desktop input:
 

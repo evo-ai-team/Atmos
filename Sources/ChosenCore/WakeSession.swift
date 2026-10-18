@@ -1,14 +1,13 @@
 import Foundation
 
-/// Continuous speech stays local. Only an explicit wake phrase at an utterance
-/// boundary activates Mouse, and only clear computer commands cross this boundary.
+/// Standby speech stays local. Once activated, every completed idle utterance
+/// goes to the model; only bare "stop" is interpreted locally.
 public struct WakeSession {
     public enum Event: Equatable {
         case activated
         case partial(String)
         case command(String)
         case ignored
-        case stopped
         case deactivated
     }
 
@@ -56,7 +55,7 @@ public struct WakeSession {
         let finishedExecution = isExecuting && !executing
         isExecuting = executing
         // Consume speech heard during the task before accepting a new command.
-        if executing || (finishedExecution && CommandIntent.control(pendingCommand) == nil) { clearUtterance() }
+        if executing || (finishedExecution && VoiceControl.match(pendingCommand) == nil) { clearUtterance() }
     }
 
     public mutating func receive(_ transcript: String, at time: TimeInterval) -> [Event] {
@@ -66,25 +65,23 @@ public struct WakeSession {
         previousWords = words
         let offset = min(ignoredWords.count, words.count)
         guard offset < tokens.count else { return [] }
-        let suffix = (offset == 0 ? transcript : String(transcript[tokens[offset - 1].range.upperBound...]))
-            .trimmingCharacters(in: Self.utteranceSeparators)
+        let suffix = offset == 0
+            ? transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            : Self.afterBoundary(String(transcript[tokens[offset - 1].range.upperBound...]))
         var utterance = [carriedCommand, suffix].filter { !$0.isEmpty }.joined(separator: " ")
         var events: [Event] = []
 
-        if !isExecuting {
-            let utteranceTokens = Self.tokens(in: utterance)
-            let isQuoted = ["\"", "“", "'", "‘"].contains(where: { utterance.hasPrefix($0) })
-            if !isQuoted, let wakeEnd = Self.wakeEnd(in: utteranceTokens.map(\.word)) {
-                let carriedCount = Self.tokens(in: carriedCommand).count
-                let consumedCurrentWords = max(0, wakeEnd - carriedCount)
-                ignoredWords = Array(words.prefix(offset + consumedCurrentWords))
-                carriedCommand = ""
-                utterance = String(utterance[utteranceTokens[wakeEnd - 1].range.upperBound...])
-                    .trimmingCharacters(in: Self.utteranceSeparators)
-                if !isActive {
-                    isActive = true
-                    events.append(.activated)
-                }
+        let utteranceTokens = Self.tokens(in: utterance)
+        let isQuoted = ["\"", "“", "'", "‘"].contains(where: { utterance.hasPrefix($0) })
+        if !isQuoted, let wakeEnd = Self.wakeEnd(in: utteranceTokens.map(\.word)) {
+            let carriedCount = Self.tokens(in: carriedCommand).count
+            let consumedCurrentWords = max(0, wakeEnd - carriedCount)
+            ignoredWords = Array(words.prefix(offset + consumedCurrentWords))
+            carriedCommand = ""
+            utterance = Self.afterBoundary(String(utterance[utteranceTokens[wakeEnd - 1].range.upperBound...]))
+            if !isActive && !isExecuting {
+                isActive = true
+                events.append(.activated)
             }
         }
 
@@ -92,7 +89,7 @@ public struct WakeSession {
         lastChangeAt = time
         // Controls wait for the acoustic endpoint as well: a partial "stop"
         // must not cancel a task before it becomes "stop by later".
-        let visible = isActive && !isExecuting && CommandIntent.isClearCommand(utterance) ? utterance : ""
+        let visible = isActive && !isExecuting && VoiceControl.match(utterance) == nil ? utterance : ""
         if visible != displayedPartial {
             displayedPartial = visible
             events.append(.partial(visible))
@@ -107,15 +104,8 @@ public struct WakeSession {
         clearUtterance()
         guard hadUtterance else { return [] }
         guard isActive || isExecuting else { return [] }
-        if let control = CommandIntent.control(utterance) {
-            switch control {
-            case .sleep: return deactivate()
-            case .stop:
-                isExecuting = false
-                return [.stopped]
-            }
-        }
-        guard !isExecuting, CommandIntent.isClearCommand(utterance) else { return [.ignored] }
+        if VoiceControl.match(utterance) == .sleep { return deactivate() }
+        guard !isExecuting else { return [.ignored] }
         return [.command(utterance)]
     }
 
@@ -135,6 +125,11 @@ public struct WakeSession {
     }
 
     private static let utteranceSeparators = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",:;.!?"))
+
+    private static func afterBoundary(_ text: String) -> String {
+        String(text.unicodeScalars.drop(while: { utteranceSeparators.contains($0) }))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     private static func tokens(in text: String) -> [(word: String, range: Range<String.Index>)] {
         let pattern = #"[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)?"#

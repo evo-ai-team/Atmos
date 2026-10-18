@@ -131,10 +131,9 @@ private struct MouseMenu: View {
     var body: some View {
         Text(model.working ? model.status : model.active ? "Mouse is active" : model.listening ? "Waiting for Hey Mouse" : "Microphone paused")
         Divider()
-        Button(model.active ? "Sleep Mouse" : "Activate Mouse") {
-            if model.active { model.sleep() } else { model.listenNow() }
+        Button(model.active || model.working ? "Stop Mouse" : "Activate Mouse") {
+            if model.active || model.working { model.sleep() } else { model.listenNow() }
         }
-        Button("Cancel current action") { model.cancel() }.disabled(!model.working)
         Divider()
         Button("Settings…") { openWindow(id: "settings"); NSApp.activate() }.keyboardShortcut(",")
         Button(model.listening ? "Pause microphone" : "Resume microphone") { model.toggleListening() }

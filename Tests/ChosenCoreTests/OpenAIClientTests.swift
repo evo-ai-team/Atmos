@@ -63,6 +63,44 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertEqual(turn.outputTokens, 7)
     }
 
+    func testNaturalUtterancesReachModelUnchangedAndCanBeIgnored() async throws {
+        let recorder = RequestRecorder()
+        // The mock chooses ignore deliberately: this verifies routing and the silent
+        // result contract, not the model's semantic judgment of these utterances.
+        let ignoredResponse = try responseData([function([:], name: "ignore_utterance")])
+        let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { request in
+            await recorder.add(request)
+            return (ignoredResponse, Self.response())
+        })
+        let utterances = [
+            "Make this bigger, please.",
+            "Put that over there.",
+            "Bring up Nebula Painter and show me yesterday’s sketch.",
+            "I wonder whether this would work."
+        ]
+        for utterance in utterances {
+            let turn = try await client.begin(command: utterance, frame: frame, context: "Previous task finished.")
+            XCTAssertTrue(turn.ignored)
+            XCTAssertTrue(turn.calls.isEmpty)
+            XCTAssertTrue(turn.message.isEmpty)
+            XCTAssertNil(turn.pauseReason)
+        }
+        let requests = await recorder.requests
+        // Classification shares the existing request; there is no extra API stage.
+        XCTAssertEqual(requests.count, utterances.count)
+        for (request, utterance) in zip(requests, utterances) {
+            let body = try json(request)
+            let input = try XCTUnwrap(body["input"] as? [[String: Any]])
+            let content = try XCTUnwrap(input.first?["content"] as? [[String: String]])
+            XCTAssertEqual(content.first?["text"], "Current utterance: \(utterance)\n\nPrior context (background only): Previous task finished.\nScreenshot size: 1280 × 800 pixels.")
+            let instructions = try XCTUnwrap(body["instructions"] as? String)
+            XCTAssertTrue(instructions.contains("no fixed command syntax or app-name allowlist"))
+            XCTAssertTrue(instructions.contains("make this bigger"))
+            XCTAssertTrue(instructions.contains("put that over there"))
+            XCTAssertTrue(instructions.contains("Ignore casual chat, informational"))
+        }
+    }
+
     func testContinuationReturnsScreenshotToMatchingFunctionCall() async throws {
         let recorder = RequestRecorder()
         let client = OpenAIComputerClient(apiKey: "test-only-value", model: "requested-model", serviceTier: "auto", transport: { request in

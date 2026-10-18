@@ -10,12 +10,12 @@ From this folder:
 
 ```sh
 ./Scripts/build.sh
-open ../Chosen.app
+open ../Mouse.app
 ```
 
-The app displays as **Mouse**. Its existing bundle identity, executable name, support directory, and default build destination remain `Chosen` for continuity. To choose another destination, pass an `.app` path to the build script.
+The app, executable, Xcode project, and Swift package are named **Mouse**. The default build destination is `Mouse.app`; pass another `.app` path to the build script to change it. The existing bundle identifier and Keychain service remain stable to preserve the saved connection. Usage history is copied into Mouse's support directory on first launch without overwriting an existing counter.
 
-The scripts respect `DEVELOPER_DIR`, otherwise use the selected full Xcode or `/Applications/Xcode.app`. They do not change global `xcode-select` settings. Build products use the workspace's `work/` folder when available, otherwise a temporary directory. Override with `CHOSEN_BUILD_DIR` or `CHOSEN_TEST_BUILD_DIR`.
+The scripts respect `DEVELOPER_DIR`, otherwise use the selected full Xcode or `/Applications/Xcode.app`. They do not change global `xcode-select` settings. Build products use the workspace's `work/` folder when available, otherwise a temporary directory. Override with `MOUSE_BUILD_DIR` or `MOUSE_TEST_BUILD_DIR`.
 
 ## Setup and use
 
@@ -25,7 +25,7 @@ Open **Settings…** from Mouse's menu-bar icon. Settings also opens on launch w
 2. Use **Allow** to grant Screen Recording and Accessibility in System Settings. Reopen Mouse if macOS requests it.
 3. Select **Enable voice** and grant Microphone access. Mouse prepares Apple's speech model and downloads its assets if needed, showing setup status. The newer engine does not require the legacy Speech Recognition permission. On subsequent launches, Mouse starts local wake-word monitoring automatically when microphone access is already authorized. **Open Mouse at login** is optional.
 
-Say **“Hey Mouse, open Chrome.”** The legacy **“Hey Chosen”** phrase also works. Activation persists between commands until you say **“stop”**; silence does not expire the session.
+Say **“Hey Mouse, open Chrome.”** The only wake phrase is **“Hey Mouse”**. Activation persists between commands until you say **“stop”**; silence does not expire the session.
 
 While active and ready, Mouse displays the live transcript and sends every completed utterance with the screen context to Luna. There is no local command vocabulary, app-name list, or grammar filter. Luna interprets natural requests such as “make this bigger” or “organize my files” and decides whether to return structured actions, ask for required task information, or silently ignore the utterance. Conversation and informational questions should produce no answer or desktop action. This intent decision happens in the normal model request, with no separate classifier call.
 
@@ -61,7 +61,7 @@ This iteration focuses on the notch UI on the current Mac. Spaces, fullscreen be
 
 ## Usage and verification
 
-There is **no cumulative API request cap**. The counter persists request attempts and returned input/output token totals in `~/Library/Application Support/Chosen/usage.json`. Failed and cancelled attempts count as requests. The displayed cost is an estimate that excludes cache pricing; OpenAI reports actual billing. Accounting failures do not block requests.
+There is **no cumulative API request cap**. The counter persists request attempts and returned input/output token totals in `~/Library/Application Support/Mouse/usage.json`. Failed and cancelled attempts count as requests. The displayed cost is an estimate that excludes cache pricing; OpenAI reports actual billing. Accounting failures do not block requests.
 
 Run offline tests with:
 
@@ -75,10 +75,10 @@ Coverage includes unrestricted utterance forwarding, the local stop control, tra
 Preview the notch without microphone capture, API requests, or desktop input:
 
 ```sh
-../Chosen.app/Contents/MacOS/Chosen --notch-preview active
-../Chosen.app/Contents/MacOS/Chosen --notch-preview transcript
-../Chosen.app/Contents/MacOS/Chosen --notch-preview action
-../Chosen.app/Contents/MacOS/Chosen --notch-preview cycle
+../Mouse.app/Contents/MacOS/Mouse --notch-preview active
+../Mouse.app/Contents/MacOS/Mouse --notch-preview transcript
+../Mouse.app/Contents/MacOS/Mouse --notch-preview action
+../Mouse.app/Contents/MacOS/Mouse --notch-preview cycle
 ```
 
 `--diagnostics` reports key availability, permissions, and the speech engine without printing credentials. `--voice-check /path/to/audio.aiff` locally checks a recording of “Hey Mouse, open Chrome” using the newer SpeechTranscriber and installed model assets. It waits for finalized text and reports the engine, locale, assets, and timing; it does not capture microphone audio, request permissions, call OpenAI, or execute the command.

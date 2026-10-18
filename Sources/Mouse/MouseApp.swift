@@ -3,11 +3,11 @@ import SwiftUI
 import Speech
 import AVFoundation
 #if SWIFT_PACKAGE
-import ChosenCore
+import MouseCore
 #endif
 
 @main
-enum ChosenEntry {
+enum MouseEntry {
     @MainActor static func main() {
         if CommandLine.arguments.contains("--import-key") {
             do {
@@ -31,7 +31,7 @@ enum ChosenEntry {
         }
         if let index = CommandLine.arguments.firstIndex(of: "--voice-check") {
             guard index + 1 < CommandLine.arguments.count else {
-                fputs("Usage: Chosen --voice-check /path/to/audio-file\n", stderr); exit(1)
+                fputs("Usage: Mouse --voice-check /path/to/audio-file\n", stderr); exit(1)
             }
             let url = URL(fileURLWithPath: CommandLine.arguments[index + 1])
             _ = NSApplication.shared
@@ -82,15 +82,15 @@ enum ChosenEntry {
             NSApp.run()
             return
         }
-        ChosenApplication.main()
+        MouseApplication.main()
     }
 }
 
-struct ChosenApplication: App {
+struct MouseApplication: App {
     @StateObject private var model = AppModel()
     var body: some Scene {
         Window("Mouse Settings", id: "settings") {
-            ChosenView(model: model)
+            MouseView(model: model)
                 .frame(width: 490, height: 650)
         }
         .windowStyle(.hiddenTitleBar)

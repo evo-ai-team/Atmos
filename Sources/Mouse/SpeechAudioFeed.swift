@@ -170,7 +170,7 @@ enum SpeechUtteranceFinalizer {
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [], attributeOptions: [.audioTimeRange])
         let analyzer = SpeechAnalyzer(modules: [transcriber], options: .init(priority: .userInitiated, modelRetention: .processLifetime))
         let context = AnalysisContext()
-        context.contextualStrings[.general] = ["Hey Mouse", "Hey Chosen", "Mouse", "Chosen"]
+        context.contextualStrings[.general] = ["Hey Mouse", "Mouse"]
         try await analyzer.setContext(context)
         let results = Task {
             var text: [String] = []

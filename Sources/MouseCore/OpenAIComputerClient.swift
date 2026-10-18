@@ -107,7 +107,7 @@ public actor OpenAIComputerClient {
 
     public func begin(command: String, frame: ScreenshotFrame, context: String) async throws -> ModelTurn {
         guard !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ChosenError.configuration("Enter a command before starting.")
+            throw MouseError.configuration("Enter a command before starting.")
         }
         try validate(frame)
         let input: [[String: Any]] = [[
@@ -124,7 +124,7 @@ public actor OpenAIComputerClient {
         guard !responseID.isEmpty, !outputs.isEmpty,
               outputs.allSatisfy({ !$0.callID.isEmpty }),
               Set(outputs.map(\.callID)).count == outputs.count else {
-            throw ChosenError.configuration("A response and distinct computer call outputs are required to continue.")
+            throw MouseError.configuration("A response and distinct computer call outputs are required to continue.")
         }
         let input: [[String: Any]] = try outputs.map { output in
             try validate(output.frame)
@@ -142,13 +142,13 @@ public actor OpenAIComputerClient {
 
     private func validate(_ frame: ScreenshotFrame) throws {
         guard frame.width > 0, frame.height > 0, !frame.data.isEmpty else {
-            throw ChosenError.configuration("A nonempty screenshot is required.")
+            throw MouseError.configuration("A nonempty screenshot is required.")
         }
     }
 
     private func send(input: [[String: Any]], previousResponseID: String?) async throws -> ModelTurn {
         try Task.checkCancellation()
-        guard !apiKey.isEmpty else { throw ChosenError.configuration("Add an OpenAI API key in Settings.") }
+        guard !apiKey.isEmpty else { throw MouseError.configuration("Add an OpenAI API key in Settings.") }
         var body: [String: Any] = [
             "model": model,
             "service_tier": serviceTier,
@@ -174,18 +174,18 @@ public actor OpenAIComputerClient {
             throw CancellationError()
         } catch let error as URLError {
             if error.code == .cancelled { throw CancellationError() }
-            if error.code == .timedOut { throw ChosenError.api("OpenAI did not respond within 30 seconds. The request was not retried.") }
-            throw ChosenError.api("Could not reach OpenAI. Check your internet connection. The request was not retried.")
+            if error.code == .timedOut { throw MouseError.api("OpenAI did not respond within 30 seconds. The request was not retried.") }
+            throw MouseError.api("Could not reach OpenAI. Check your internet connection. The request was not retried.")
         } catch {
-            throw ChosenError.api("The OpenAI request failed. The request was not retried.")
+            throw MouseError.api("The OpenAI request failed. The request was not retried.")
         }
         try Task.checkCancellation()
-        guard let http = response as? HTTPURLResponse else { throw ChosenError.api("OpenAI returned an invalid HTTP response.") }
+        guard let http = response as? HTTPURLResponse else { throw MouseError.api("OpenAI returned an invalid HTTP response.") }
         guard (200...299).contains(http.statusCode) else { throw Self.httpError(http.statusCode) }
         return try Self.parseResponse(data)
     }
 
-    private static func httpError(_ status: Int) -> ChosenError {
+    private static func httpError(_ status: Int) -> MouseError {
         switch status {
         case 401: return .api("OpenAI rejected the API key. Update it in Settings.")
         case 403: return .api("This OpenAI project does not have permission for the requested model or tool.")
@@ -199,16 +199,16 @@ public actor OpenAIComputerClient {
     static func parseResponse(_ data: Data) throws -> ModelTurn {
         let response: ResponseEnvelope
         do { response = try JSONDecoder().decode(ResponseEnvelope.self, from: data) }
-        catch { throw ChosenError.api("OpenAI returned a response that could not be read. No new actions were executed.") }
-        guard response.error == nil else { throw ChosenError.api("OpenAI could not complete the response. No new actions were executed.") }
+        catch { throw MouseError.api("OpenAI returned a response that could not be read. No new actions were executed.") }
+        guard response.error == nil else { throw MouseError.api("OpenAI could not complete the response. No new actions were executed.") }
         guard response.status == "completed" else {
             if response.incompleteDetails?.reason == "max_output_tokens" {
-                throw ChosenError.api("The model reached its response limit. No new actions were executed.")
+                throw MouseError.api("The model reached its response limit. No new actions were executed.")
             }
-            throw ChosenError.api("The model response did not complete. No new actions were executed.")
+            throw MouseError.api("The model response did not complete. No new actions were executed.")
         }
         guard let id = response.id, !id.isEmpty, let output = response.output else {
-            throw ChosenError.api("OpenAI returned an incomplete response structure. No new actions were executed.")
+            throw MouseError.api("OpenAI returned an incomplete response structure. No new actions were executed.")
         }
         var calls: [ComputerCall] = []
         var messages: [String] = []
@@ -290,7 +290,7 @@ public actor OpenAIComputerClient {
                          inputTokens: response.usage?.inputTokens ?? 0, outputTokens: response.usage?.outputTokens ?? 0)
     }
 
-    private static func invalidResponse(_ reason: String) -> ChosenError {
+    private static func invalidResponse(_ reason: String) -> MouseError {
         .api(reason + " No new actions were executed.")
     }
 

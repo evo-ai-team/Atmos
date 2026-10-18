@@ -120,7 +120,7 @@ public struct WakeSession {
     private static func wakeEnd(in words: [String]) -> Int? {
         let prefixCount = words.prefix(while: { ["okay", "ok", "please"].contains($0) }).count
         guard prefixCount <= 2, words.count >= prefixCount + 2,
-              words[prefixCount] == "hey", ["mouse", "chosen"].contains(words[prefixCount + 1]) else { return nil }
+              words[prefixCount] == "hey", words[prefixCount + 1] == "mouse" else { return nil }
         return prefixCount + 2
     }
 

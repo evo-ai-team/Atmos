@@ -31,7 +31,7 @@ final class GlassHostingView<Content: View>: NSGlassEffectView {
         style = .regular
         cornerRadius = 28
         host.sizingOptions = []
-        // ChosenView supplies its own traffic-light clearance. Avoid applying
+        // MouseView supplies its own traffic-light clearance. Avoid applying
         // the title-bar safe area a second time inside this nested host.
         host.safeAreaRegions = []
         contentView = host

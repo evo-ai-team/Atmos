@@ -1,19 +1,19 @@
 import AppKit
 #if SWIFT_PACKAGE
-import ChosenCore
+import MouseCore
 #endif
 
 /// Explicit opt-in smoke test: sends a generated fixture, never the user's screen,
 /// and validates the model's click without posting any desktop events.
 @MainActor enum APICheck {
     static func run(apiKey: String? = nil) async throws {
-        guard let key = try apiKey ?? KeychainStore.load() else { throw ChosenError.configuration("No API key is configured.") }
+        guard let key = try apiKey ?? KeychainStore.load() else { throw MouseError.configuration("No API key is configured.") }
         let frame = try fixtureFrame(completed: false)
         let completedFrame = try fixtureFrame(completed: true)
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Chosen", isDirectory: true)
-        let usageURL = directory.appendingPathComponent("usage.json")
+        let storage = UsageStorage()
+        let usageURL = storage.usageURL
         var canPersistUsage = true
-        var budget = loadUsage(at: usageURL, canPersist: &canPersistUsage)
+        var budget = loadUsage(from: storage, canPersist: &canPersistUsage)
         let start = Date()
         let client = OpenAIComputerClient(apiKey: key)
         countRequest(&budget, at: usageURL, canPersist: &canPersistUsage)
@@ -79,13 +79,14 @@ import ChosenCore
         let size = label.size(withAttributes: attributes)
         label.draw(at: NSPoint(x: 240 - size.width / 2, y: 160 - size.height / 2), withAttributes: attributes)
         image.unlockFocus()
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw ChosenError.configuration("Could not create API test image.") }
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw MouseError.configuration("Could not create API test image.") }
         return ScreenshotFrame(data: try NativeComputer.encodeJPEG(cgImage), width: cgImage.width, height: cgImage.height, pointWidth: 480, pointHeight: 320)
     }
 
-    private static func loadUsage(at url: URL, canPersist: inout Bool) -> DemoBudget {
+    private static func loadUsage(from storage: UsageStorage, canPersist: inout Bool) -> DemoBudget {
+        let url = storage.usageURL
         do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try storage.prepare()
             guard FileManager.default.fileExists(atPath: url.path) else { return DemoBudget() }
             do {
                 return try JSONDecoder().decode(DemoBudget.self, from: Data(contentsOf: url))
@@ -116,7 +117,7 @@ import ChosenCore
         }
     }
 
-    private static func failure(_ reason: String, turn: ModelTurn) -> ChosenError {
+    private static func failure(_ reason: String, turn: ModelTurn) -> MouseError {
         let types = turn.calls.flatMap(\.actions).map(\.type).joined(separator: ", ")
         let message = turn.message.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         print("Fixture action types: \(types.isEmpty ? "(none)" : types)")

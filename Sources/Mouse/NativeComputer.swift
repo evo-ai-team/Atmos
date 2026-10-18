@@ -6,7 +6,7 @@ import ImageIO
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 #if SWIFT_PACKAGE
-import ChosenCore
+import MouseCore
 #endif
 
 /// All coordinates use Quartz's global, top-left origin, including displays above
@@ -56,18 +56,18 @@ final class NativeComputer {
     func capture() async throws -> ScreenshotFrame {
         try Task.checkCancellation()
         guard screenRecordingGranted else {
-            throw ChosenError.permission("Allow Chosen in System Settings → Privacy & Security → Screen & System Audio Recording, then retry.")
+            throw MouseError.permission("Allow Mouse in System Settings → Privacy & Security → Screen & System Audio Recording, then retry.")
         }
         if selectedDisplayID == nil { resetDisplay() }
         let displayID = selectedDisplayID ?? CGMainDisplayID()
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         try Task.checkCancellation()
         guard let display = content.displays.first(where: { $0.displayID == displayID }), CGDisplayIsActive(displayID) != 0 else {
-            throw ChosenError.configuration("The selected display is no longer available. Start a new command on a connected display.")
+            throw MouseError.configuration("The selected display is no longer available. Start a new command on a connected display.")
         }
         let bounds = CGDisplayBounds(displayID)
         guard bounds.width.isFinite, bounds.height.isFinite, bounds.width > 0, bounds.height > 0 else {
-            throw ChosenError.configuration("The selected display has invalid dimensions.")
+            throw MouseError.configuration("The selected display has invalid dimensions.")
         }
         let ownApplications = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
         let filter = SCContentFilter(display: display, excludingApplications: ownApplications, exceptingWindows: [])
@@ -86,7 +86,7 @@ final class NativeComputer {
         try Task.checkCancellation()
         // Do not return a stale mapping if a monitor was rearranged during capture.
         guard CGDisplayIsActive(displayID) != 0, CGDisplayBounds(displayID) == bounds else {
-            throw ChosenError.configuration("The display arrangement changed during capture. Retry the command.")
+            throw MouseError.configuration("The display arrangement changed during capture. Retry the command.")
         }
         return ScreenshotFrame(data: try Self.encodeJPEG(image), width: image.width, height: image.height,
                                originX: bounds.minX, originY: bounds.minY,
@@ -102,11 +102,11 @@ final class NativeComputer {
     static func encodeJPEG(_ image: CGImage) throws -> Data {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {
-            throw ChosenError.configuration("Could not create the screenshot encoder.")
+            throw MouseError.configuration("Could not create the screenshot encoder.")
         }
         CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.78] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
-            throw ChosenError.configuration("Could not encode the screenshot.")
+            throw MouseError.configuration("Could not encode the screenshot.")
         }
         return data as Data
     }
@@ -124,10 +124,10 @@ final class NativeComputer {
             return
         default:
             guard accessibilityGranted else {
-                throw ChosenError.permission("Allow Chosen in System Settings → Privacy & Security → Accessibility, then retry.")
+                throw MouseError.permission("Allow Mouse in System Settings → Privacy & Security → Accessibility, then retry.")
             }
         }
-        guard eventSource != nil else { throw ChosenError.configuration("Could not create the native input event source.") }
+        guard eventSource != nil else { throw MouseError.configuration("Could not create the native input event source.") }
         switch validated {
         case let .click(point, button, count, modifiers):
             try await withModifiers(modifiers) { flags in
@@ -142,7 +142,7 @@ final class NativeComputer {
             try await withModifiers(modifiers) { flags in
                 let move = try self.mouseEvent(.mouseMoved, point: point, button: .left, flags: flags)
                 guard let scroll = CGEvent(scrollWheelEvent2Source: self.eventSource, units: .pixel, wheelCount: 2, wheel1: -y, wheel2: -x, wheel3: 0) else {
-                    throw ChosenError.configuration("Could not create a scroll event.")
+                    throw MouseError.configuration("Could not create a scroll event.")
                 }
                 scroll.location = point
                 scroll.flags = flags
@@ -198,55 +198,55 @@ final class NativeComputer {
             let point = try actionPoint(action, frame: frame)
             guard let x = action.scrollX, let y = action.scrollY, x.isFinite, y.isFinite,
                   abs(x) <= 100_000, abs(y) <= 100_000 else {
-                throw ChosenError.invalidAction("A scroll requires finite scroll_x and scroll_y values within 100,000 pixels.")
+                throw MouseError.invalidAction("A scroll requires finite scroll_x and scroll_y values within 100,000 pixels.")
             }
             return .scroll(point, Int32(x.rounded()), Int32(y.rounded()), try mouseModifiers(action.keys))
         case "drag":
             guard let path = action.path, (2...1_000).contains(path.count) else {
-                throw ChosenError.invalidAction("A drag requires a path containing 2 to 1,000 points.")
+                throw MouseError.invalidAction("A drag requires a path containing 2 to 1,000 points.")
             }
             try validateDisplay(frame)
             let points = try path.map { try screenPoint(x: $0.x, y: $0.y, frame: frame) }
             guard action.button == nil || action.button?.lowercased() == "left" else {
-                throw ChosenError.invalidAction("A drag currently supports only the left mouse button.")
+                throw MouseError.invalidAction("A drag currently supports only the left mouse button.")
             }
             return .drag(points, try mouseModifiers(action.keys))
         case "type":
             try rejectExtraKeys(action)
             guard let text = action.text, text.utf16.count <= 100_000 else {
-                throw ChosenError.invalidAction("A typing action requires text of at most 100,000 UTF-16 characters.")
+                throw MouseError.invalidAction("A typing action requires text of at most 100,000 UTF-16 characters.")
             }
             return .type(try typingTokens(text))
         case "keypress":
             guard let names = action.keys, !names.isEmpty, names.count <= 5 else {
-                throw ChosenError.invalidAction("A keypress requires one key and up to four modifiers.")
+                throw MouseError.invalidAction("A keypress requires one key and up to four modifiers.")
             }
             let keys = try names.map(key)
             guard Set(keys.map(\.code)).count == keys.count, keys.filter({ $0.modifier.isEmpty }).count <= 1 else {
-                throw ChosenError.invalidAction("A shortcut can contain each modifier once and at most one non-modifier key.")
+                throw MouseError.invalidAction("A shortcut can contain each modifier once and at most one non-modifier key.")
             }
             return .keypress(keys.sorted { !$0.modifier.isEmpty && $1.modifier.isEmpty })
         case "wait": try rejectExtraKeys(action); return .wait
         case "screenshot": try rejectExtraKeys(action); return .screenshot
-        default: throw ChosenError.invalidAction("Unsupported computer action: \(action.type).")
+        default: throw MouseError.invalidAction("Unsupported computer action: \(action.type).")
         }
     }
 
     private func mouseModifiers(_ names: [String]?) throws -> [Key] {
         guard let names else { return [] }
         guard names.count <= 4 else {
-            throw ChosenError.invalidAction("A mouse action supports at most four modifier keys.")
+            throw MouseError.invalidAction("A mouse action supports at most four modifier keys.")
         }
         let modifiers = try names.map(key)
         guard modifiers.allSatisfy({ !$0.modifier.isEmpty }), Set(modifiers.map(\.code)).count == modifiers.count else {
-            throw ChosenError.invalidAction("Mouse action keys must be distinct Command, Control, Option, or Shift modifiers.")
+            throw MouseError.invalidAction("Mouse action keys must be distinct Command, Control, Option, or Shift modifiers.")
         }
         return modifiers
     }
 
     private func rejectExtraKeys(_ action: ComputerAction) throws {
         guard action.keys?.isEmpty != false else {
-            throw ChosenError.invalidAction("The \(action.type) action does not support held keys.")
+            throw MouseError.invalidAction("The \(action.type) action does not support held keys.")
         }
     }
 
@@ -254,17 +254,17 @@ final class NativeComputer {
         guard frame.width > 0, frame.height > 0, frame.originX.isFinite, frame.originY.isFinite,
               frame.pointWidth.isFinite, frame.pointHeight.isFinite, frame.pointWidth > 0, frame.pointHeight > 0,
               frame.displayID != 0, CGDisplayIsActive(frame.displayID) != 0 else {
-            throw ChosenError.invalidAction("The screenshot has no valid connected display.")
+            throw MouseError.invalidAction("The screenshot has no valid connected display.")
         }
         let captured = CGRect(x: frame.originX, y: frame.originY, width: frame.pointWidth, height: frame.pointHeight)
         guard CGDisplayBounds(frame.displayID) == captured else {
-            throw ChosenError.invalidAction("The display arrangement changed. Capture a new screenshot before acting.")
+            throw MouseError.invalidAction("The display arrangement changed. Capture a new screenshot before acting.")
         }
     }
 
     private func actionPoint(_ action: ComputerAction, frame: ScreenshotFrame) throws -> CGPoint {
         guard let x = action.x, let y = action.y else {
-            throw ChosenError.invalidAction("This action requires both x and y coordinates.")
+            throw MouseError.invalidAction("This action requires both x and y coordinates.")
         }
         try validateDisplay(frame)
         return try screenPoint(x: x, y: y, frame: frame)
@@ -272,7 +272,7 @@ final class NativeComputer {
 
     private func screenPoint(x: Double, y: Double, frame: ScreenshotFrame) throws -> CGPoint {
         let point = try frame.screenPoint(x: x, y: y)
-        guard point.x.isFinite, point.y.isFinite else { throw ChosenError.invalidAction("Invalid screen coordinates.") }
+        guard point.x.isFinite, point.y.isFinite else { throw MouseError.invalidAction("Invalid screen coordinates.") }
         return CGPoint(x: point.x, y: point.y)
     }
 
@@ -283,13 +283,13 @@ final class NativeComputer {
         case "middle", "wheel": return MouseButton(button: .center, down: .otherMouseDown, up: .otherMouseUp)
         case "back": return MouseButton(button: CGMouseButton(rawValue: 3)!, down: .otherMouseDown, up: .otherMouseUp)
         case "forward": return MouseButton(button: CGMouseButton(rawValue: 4)!, down: .otherMouseDown, up: .otherMouseUp)
-        default: throw ChosenError.invalidAction("Unsupported mouse button: \(name).")
+        default: throw MouseError.invalidAction("Unsupported mouse button: \(name).")
         }
     }
 
     private func mouseEvent(_ type: CGEventType, point: CGPoint, button: CGMouseButton, flags: CGEventFlags = []) throws -> CGEvent {
         guard let event = CGEvent(mouseEventSource: eventSource, mouseType: type, mouseCursorPosition: point, mouseButton: button) else {
-            throw ChosenError.configuration("Could not create a mouse event.")
+            throw MouseError.configuration("Could not create a mouse event.")
         }
         event.flags = flags
         event.setIntegerValueField(.mouseEventButtonNumber, value: Int64(button.rawValue))
@@ -312,7 +312,7 @@ final class NativeComputer {
     }
 
     private func drag(_ points: [CGPoint], flags: CGEventFlags) async throws {
-        guard let first = points.first else { throw ChosenError.invalidAction("The drag path is empty.") }
+        guard let first = points.first else { throw MouseError.invalidAction("The drag path is empty.") }
         let down = try mouseEvent(.leftMouseDown, point: first, button: .left, flags: flags)
         let up = try mouseEvent(.leftMouseUp, point: first, button: .left, flags: flags)
         // Allocate every event before pressing, so failure cannot strand a button.
@@ -358,7 +358,7 @@ final class NativeComputer {
 
     private func keyboardEvent(_ code: CGKeyCode, down: Bool) throws -> CGEvent {
         guard let event = CGEvent(keyboardEventSource: eventSource, virtualKey: code, keyDown: down) else {
-            throw ChosenError.configuration("Could not create a keyboard event.")
+            throw MouseError.configuration("Could not create a keyboard event.")
         }
         event.flags = []
         event.setIntegerValueField(.keyboardEventAutorepeat, value: 0)
@@ -422,7 +422,7 @@ final class NativeComputer {
             if scalar == "\n" { flush(); result.append(.key(36)); continue }
             if scalar == "\t" { flush(); result.append(.key(48)); continue }
             guard scalar.value >= 0x20, !(0x7F...0x9F).contains(scalar.value) else {
-                throw ChosenError.invalidAction("Typed text contains an unsupported control character.")
+                throw MouseError.invalidAction("Typed text contains an unsupported control character.")
             }
             let units = Array(String(scalar).utf16)
             if buffer.count + units.count > 20 { flush() }
@@ -453,11 +453,11 @@ final class NativeComputer {
         ]
         if let code = special[value] { return Key(code: code) }
         if name == " " { return Key(code: 49) }
-        guard value.count == 1 else { throw ChosenError.invalidAction("Unsupported key: \(name).") }
+        guard value.count == 1 else { throw MouseError.invalidAction("Unsupported key: \(name).") }
         // Resolve printable shortcut keys against the current ASCII-capable layout
         // instead of assuming the user's keyboard has US physical key positions.
         if let found = printableKey(value) { return found }
-        throw ChosenError.invalidAction("The current keyboard layout has no supported key for \(name).")
+        throw MouseError.invalidAction("The current keyboard layout has no supported key for \(name).")
     }
 
     private func printableKey(_ character: String) -> Key? {

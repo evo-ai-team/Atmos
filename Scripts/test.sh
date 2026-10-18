@@ -1,13 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-chosenProjectDir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-chosenWorkspaceDir="$(cd "$chosenProjectDir/../.." && pwd)"
+mouseProjectDir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+mouseWorkspaceDir="$(cd "$mouseProjectDir/../.." && pwd)"
 
 if [[ -z "${DEVELOPER_DIR:-}" ]]; then
-    chosenSelectedDeveloper="$(/usr/bin/xcode-select -p 2>/dev/null || true)"
-    if [[ "$chosenSelectedDeveloper" == *.app/Contents/Developer && -x "$chosenSelectedDeveloper/usr/bin/xcodebuild" ]]; then
-        export DEVELOPER_DIR="$chosenSelectedDeveloper"
+    mouseSelectedDeveloper="$(/usr/bin/xcode-select -p 2>/dev/null || true)"
+    if [[ "$mouseSelectedDeveloper" == *.app/Contents/Developer && -x "$mouseSelectedDeveloper/usr/bin/xcodebuild" ]]; then
+        export DEVELOPER_DIR="$mouseSelectedDeveloper"
     else
         export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
     fi
@@ -17,15 +17,15 @@ if [[ ! -x "$DEVELOPER_DIR/usr/bin/xcodebuild" ]]; then
     exit 1
 fi
 
-if [[ -n "${CHOSEN_TEST_BUILD_DIR:-}" ]]; then
-    chosenTestBuildDir="$CHOSEN_TEST_BUILD_DIR"
-elif [[ -d "$chosenWorkspaceDir/work" ]]; then
-    chosenTestBuildDir="$chosenWorkspaceDir/work/chosen-tests"
+if [[ -n "${MOUSE_TEST_BUILD_DIR:-}" ]]; then
+    mouseTestBuildDir="$MOUSE_TEST_BUILD_DIR"
+elif [[ -d "$mouseWorkspaceDir/work" ]]; then
+    mouseTestBuildDir="$mouseWorkspaceDir/work/mouse-tests"
 else
-    chosenTestBuildDir="$(mktemp -d "${TMPDIR:-/tmp}/chosen-tests.XXXXXX")"
+    mouseTestBuildDir="$(mktemp -d "${TMPDIR:-/tmp}/mouse-tests.XXXXXX")"
 fi
 
 exec /usr/bin/xcrun swift test \
-    --package-path "$chosenProjectDir" \
-    --scratch-path "$chosenTestBuildDir" \
+    --package-path "$mouseProjectDir" \
+    --scratch-path "$mouseTestBuildDir" \
     "$@"

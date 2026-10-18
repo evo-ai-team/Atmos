@@ -1,5 +1,5 @@
 import XCTest
-@testable import ChosenCore
+@testable import MouseCore
 
 final class WakeSessionTests: XCTestCase {
     func testStandbyIgnoresOrdinaryReportedAndQuotedSpeech() {
@@ -19,12 +19,26 @@ final class WakeSessionTests: XCTestCase {
         XCTAssertEqual(session.finishUtterance(at: 3), [.command("open Chrome")])
     }
 
-    func testWakeRequiresStartButAllowsExplicitPolitePrefixAndLegacyAlias() {
-        for text in ["Hey Mouse", "okay hey Mouse", "please hey Mouse", "Hey Chosen"] {
+    func testWakeRequiresStartButAllowsExplicitPolitePrefix() {
+        for text in ["Hey Mouse", "okay hey Mouse", "please hey Mouse"] {
             var session = WakeSession()
             XCTAssertEqual(session.receive(text, at: 0), [.activated], text)
             XCTAssertEqual(session.finishUtterance(at: 1), [], text)
             XCTAssertTrue(session.isActive, text)
+        }
+    }
+
+    func testFormerWakeNameDoesNotActivateOrStripOrdinarySpeech() {
+        for text in ["Hey Chosen", "Hey Chosen, open Chrome", "okay hey Chosen open Chrome"] {
+            var standby = WakeSession()
+            XCTAssertEqual(standby.receive(text, at: 0), [], text)
+            XCTAssertEqual(standby.finishUtterance(at: 1), [], text)
+            XCTAssertFalse(standby.isActive, text)
+
+            var active = WakeSession()
+            _ = active.activate(at: 0)
+            XCTAssertEqual(active.receive(text, at: 1), [.partial(text)], text)
+            XCTAssertEqual(active.finishUtterance(at: 2), [.command(text)], text)
         }
     }
 

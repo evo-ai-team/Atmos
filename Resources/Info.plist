@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleDevelopmentRegion</key><string>en</string>
-<key>CFBundleExecutable</key><string>Chosen</string>
+<key>CFBundleExecutable</key><string>Mouse</string>
 <key>CFBundleIdentifier</key><string>com.chosen.mac</string>
 <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-<key>CFBundleIconFile</key><string>Chosen</string>
+<key>CFBundleIconFile</key><string>Mouse</string>
 <key>CFBundleName</key><string>Mouse</string>
 <key>CFBundleDisplayName</key><string>Mouse</string>
 <key>LSUIElement</key><true/>

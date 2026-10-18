@@ -1,10 +1,10 @@
 import XCTest
-@testable import ChosenCore
+@testable import MouseCore
 
 final class SpeechTranscriptStateTests: XCTestCase {
     func testVolatileRevisionReplacesWordsInsteadOfDuplicatingThem() {
         var state = SpeechTranscriptState()
-        state.replace(start: 0, end: 1, with: [.init(start: 0, end: 1, text: "Hey Chosen")], at: 1)
+        state.replace(start: 0, end: 1, with: [.init(start: 0, end: 1, text: "Hey Mouse")], at: 1)
         state.replace(start: 0, end: 1.5, with: [.init(start: 0, end: 1.5, text: "Hey Mouse open Chrome")], at: 1.5)
         XCTAssertEqual(state.text, "Hey Mouse open Chrome")
     }

@@ -1,5 +1,5 @@
 import XCTest
-@testable import ChosenCore
+@testable import MouseCore
 
 final class CoordinateTests: XCTestCase {
     private func frame(width: Int = 1_600, height: Int = 900, originX: Double = 0, originY: Double = 0,

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Secondary setup and preferences. The notch is the everyday interface.
-struct ChosenView: View {
+struct MouseView: View {
     @ObservedObject var model: AppModel
     @State private var keyInput = ""
     @State private var editingKey = false

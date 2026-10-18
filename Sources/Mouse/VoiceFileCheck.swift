@@ -3,7 +3,7 @@ import Foundation
 import CoreMedia
 import Speech
 #if SWIFT_PACKAGE
-import ChosenCore
+import MouseCore
 #endif
 
 /// Transcribes a supplied file with the same modern on-device model used by
@@ -47,7 +47,7 @@ enum VoiceFileCheck {
         }
     }
 
-    /// Expected fixture: "Hey Mouse, open Chrome." (Legacy "Hey Chosen" also works.)
+    /// Expected fixture: "Hey Mouse, open Chrome."
     /// File analysis requires neither microphone nor legacy Speech authorization.
     /// Install model assets separately unless this invocation explicitly permits it.
     static func run(url: URL, allowsDownload: Bool = false) async throws -> Report {

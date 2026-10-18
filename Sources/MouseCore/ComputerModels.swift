@@ -33,7 +33,7 @@ public struct ScreenshotFrame: Sendable {
         self.data = data; self.width = width; self.height = height; self.originX = originX; self.originY = originY; self.pointWidth = pointWidth; self.pointHeight = pointHeight; self.displayID = displayID
     }
     public func screenPoint(x: Double, y: Double) throws -> ActionPoint {
-        guard width > 0, height > 0, originX.isFinite, originY.isFinite, pointWidth.isFinite, pointHeight.isFinite, pointWidth > 0, pointHeight > 0, x.isFinite, y.isFinite, x >= 0, y >= 0, x < Double(width), y < Double(height) else { throw ChosenError.invalidAction("Coordinates are outside the captured display.") }
+        guard width > 0, height > 0, originX.isFinite, originY.isFinite, pointWidth.isFinite, pointHeight.isFinite, pointWidth > 0, pointHeight > 0, x.isFinite, y.isFinite, x >= 0, y >= 0, x < Double(width), y < Double(height) else { throw MouseError.invalidAction("Coordinates are outside the captured display.") }
         return ActionPoint(x: originX + x * pointWidth / Double(width), y: originY + y * pointHeight / Double(height))
     }
     public var dataURL: String { "data:image/jpeg;base64," + data.base64EncodedString() }
@@ -62,7 +62,7 @@ public struct ModelTurn: Sendable {
         self.inputTokens = inputTokens; self.outputTokens = outputTokens
     }
 }
-public enum ChosenError: LocalizedError, Equatable {
+public enum MouseError: LocalizedError, Equatable {
     case invalidAction(String), permission(String), api(String), configuration(String), limit(String)
     public var errorDescription: String? {
         switch self { case .invalidAction(let s), .permission(let s), .api(let s), .configuration(let s), .limit(let s): return s }

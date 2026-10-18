@@ -1,13 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-chosenProjectDir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-chosenWorkspaceDir="$(cd "$chosenProjectDir/../.." && pwd)"
+mouseProjectDir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+mouseWorkspaceDir="$(cd "$mouseProjectDir/../.." && pwd)"
 
 if [[ -z "${DEVELOPER_DIR:-}" ]]; then
-    chosenSelectedDeveloper="$(/usr/bin/xcode-select -p 2>/dev/null || true)"
-    if [[ "$chosenSelectedDeveloper" == *.app/Contents/Developer && -x "$chosenSelectedDeveloper/usr/bin/xcodebuild" ]]; then
-        export DEVELOPER_DIR="$chosenSelectedDeveloper"
+    mouseSelectedDeveloper="$(/usr/bin/xcode-select -p 2>/dev/null || true)"
+    if [[ "$mouseSelectedDeveloper" == *.app/Contents/Developer && -x "$mouseSelectedDeveloper/usr/bin/xcodebuild" ]]; then
+        export DEVELOPER_DIR="$mouseSelectedDeveloper"
     else
         export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
     fi
@@ -17,39 +17,39 @@ if [[ ! -x "$DEVELOPER_DIR/usr/bin/xcodebuild" ]]; then
     exit 1
 fi
 
-if [[ -n "${CHOSEN_BUILD_DIR:-}" ]]; then
-    chosenBuildDir="$CHOSEN_BUILD_DIR"
-elif [[ -d "$chosenWorkspaceDir/work" ]]; then
-    chosenBuildDir="$chosenWorkspaceDir/work/chosen-build"
+if [[ -n "${MOUSE_BUILD_DIR:-}" ]]; then
+    mouseBuildDir="$MOUSE_BUILD_DIR"
+elif [[ -d "$mouseWorkspaceDir/work" ]]; then
+    mouseBuildDir="$mouseWorkspaceDir/work/mouse-build"
 else
-    chosenBuildDir="$(mktemp -d "${TMPDIR:-/tmp}/chosen-build.XXXXXX")"
+    mouseBuildDir="$(mktemp -d "${TMPDIR:-/tmp}/mouse-build.XXXXXX")"
 fi
-mkdir -p "$chosenBuildDir"
-chosenBuildDir="$(cd "$chosenBuildDir" && pwd)"
+mkdir -p "$mouseBuildDir"
+mouseBuildDir="$(cd "$mouseBuildDir" && pwd)"
 
-chosenOutputApp="${1:-$chosenProjectDir/../Chosen.app}"
-if [[ $# -gt 1 || "$chosenOutputApp" != *.app ]]; then
-    printf 'Usage: %s [path/to/Chosen.app]\n' "$0" >&2
+mouseOutputApp="${1:-$mouseProjectDir/../Mouse.app}"
+if [[ $# -gt 1 || "$mouseOutputApp" != *.app ]]; then
+    printf 'Usage: %s [path/to/Mouse.app]\n' "$0" >&2
     exit 1
 fi
-mkdir -p "$(dirname "$chosenOutputApp")"
-chosenOutputApp="$(cd "$(dirname "$chosenOutputApp")" && pwd)/$(basename "$chosenOutputApp")"
+mkdir -p "$(dirname "$mouseOutputApp")"
+mouseOutputApp="$(cd "$(dirname "$mouseOutputApp")" && pwd)/$(basename "$mouseOutputApp")"
 
 /usr/bin/xcodebuild -quiet \
-    -project "$chosenProjectDir/Chosen.xcodeproj" \
-    -scheme Chosen \
+    -project "$mouseProjectDir/Mouse.xcodeproj" \
+    -scheme Mouse \
     -destination 'platform=macOS,arch=arm64' \
     -configuration Release \
-    -derivedDataPath "$chosenBuildDir" \
+    -derivedDataPath "$mouseBuildDir" \
     build
 
-chosenBuiltApp="$chosenBuildDir/Build/Products/Release/Chosen.app"
-if [[ ! -d "$chosenBuiltApp" ]]; then
-    printf 'Build finished without the expected Chosen.app.\n' >&2
+mouseBuiltApp="$mouseBuildDir/Build/Products/Release/Mouse.app"
+if [[ ! -d "$mouseBuiltApp" ]]; then
+    printf 'Build finished without the expected Mouse.app.\n' >&2
     exit 1
 fi
-if [[ "$chosenBuiltApp" != "$chosenOutputApp" ]]; then
-    /usr/bin/ditto "$chosenBuiltApp" "$chosenOutputApp"
+if [[ "$mouseBuiltApp" != "$mouseOutputApp" ]]; then
+    /usr/bin/ditto "$mouseBuiltApp" "$mouseOutputApp"
 fi
-/usr/bin/codesign --verify --strict "$chosenOutputApp"
-printf 'Built local demo: %s\n' "$chosenOutputApp"
+/usr/bin/codesign --verify --strict "$mouseOutputApp"
+printf 'Built local demo: %s\n' "$mouseOutputApp"

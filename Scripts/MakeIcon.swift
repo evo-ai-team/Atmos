@@ -10,10 +10,10 @@ let project = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deleti
 let workspace = project.deletingLastPathComponent().deletingLastPathComponent()
 let iconset = CommandLine.arguments.count > 1
     ? URL(fileURLWithPath: CommandLine.arguments[1])
-    : workspace.appendingPathComponent("work/Chosen.iconset", isDirectory: true)
+    : workspace.appendingPathComponent("work/Mouse.iconset", isDirectory: true)
 let destination = CommandLine.arguments.count > 2
     ? URL(fileURLWithPath: CommandLine.arguments[2])
-    : project.appendingPathComponent("Resources/Chosen.icns")
+    : project.appendingPathComponent("Resources/Mouse.icns")
 
 func color(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat, _ alpha: CGFloat = 1) -> NSColor {
     NSColor(srgbRed: red, green: green, blue: blue, alpha: alpha)
@@ -30,7 +30,7 @@ func render(size: Int) throws -> Data {
                                        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
                                        isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
           let graphics = NSGraphicsContext(bitmapImageRep: bitmap) else {
-        throw NSError(domain: "ChosenIcon", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to create icon drawing context."])
+        throw NSError(domain: "MouseIcon", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to create icon drawing context."])
     }
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = graphics
@@ -150,7 +150,7 @@ func render(size: Int) throws -> Data {
     upperRim.stroke()
 
     guard let png = bitmap.representation(using: .png, properties: [:]) else {
-        throw NSError(domain: "ChosenIcon", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unable to encode icon PNG."])
+        throw NSError(domain: "MouseIcon", code: 2, userInfo: [NSLocalizedDescriptionKey: "Unable to encode icon PNG."])
     }
     return png
 }
@@ -169,6 +169,6 @@ iconutil.arguments = ["-c", "icns", iconset.path, "-o", destination.path]
 try iconutil.run()
 iconutil.waitUntilExit()
 guard iconutil.terminationStatus == 0 else {
-    throw NSError(domain: "ChosenIcon", code: Int(iconutil.terminationStatus), userInfo: [NSLocalizedDescriptionKey: "iconutil could not package the iconset."])
+    throw NSError(domain: "MouseIcon", code: Int(iconutil.terminationStatus), userInfo: [NSLocalizedDescriptionKey: "iconutil could not package the iconset."])
 }
 print("Created \(destination.path)")

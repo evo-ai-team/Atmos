@@ -1,5 +1,5 @@
 import XCTest
-@testable import ChosenCore
+@testable import MouseCore
 
 final class DemoBudgetTests: XCTestCase {
     func testRequestsContinueBeyondOneHundredAcrossLaunches() throws {

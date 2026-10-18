@@ -3,7 +3,7 @@ import CoreMedia
 import Foundation
 import Speech
 #if SWIFT_PACKAGE
-import ChosenCore
+import MouseCore
 #endif
 
 @MainActor
@@ -97,7 +97,7 @@ final class VoiceInput {
         guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber], considering: naturalFormat) else { throw InputError.formatUnavailable }
         let analyzer = SpeechAnalyzer(modules: [transcriber], options: .init(priority: .userInitiated, modelRetention: .processLifetime))
         let context = AnalysisContext()
-        context.contextualStrings[.general] = ["Hey Mouse", "Hey Chosen", "Mouse", "Chosen"]
+        context.contextualStrings[.general] = ["Hey Mouse", "Mouse"]
         try await analyzer.setContext(context)
         try await analyzer.prepareToAnalyze(in: format)
         try ensureCurrent(startID)

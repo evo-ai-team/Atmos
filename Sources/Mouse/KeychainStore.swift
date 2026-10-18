@@ -3,10 +3,11 @@ import Security
 import LocalAuthentication
 
 @MainActor enum KeychainStore {
+    // Keep the original service identifier so the rename preserves the saved key.
     private static var query: [String: Any] { [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.chosen.mac.openai", kSecAttrAccount as String: "api-key"] }
     static func save(_ key: String) throws {
         let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard key.hasPrefix("sk-"), key.count > 30 else { throw NSError(domain: "Chosen", code: 1, userInfo: [NSLocalizedDescriptionKey: "Enter an OpenAI API key."]) }
+        guard key.hasPrefix("sk-"), key.count > 30 else { throw NSError(domain: "Mouse", code: 1, userInfo: [NSLocalizedDescriptionKey: "Enter an OpenAI API key."]) }
         let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: Data(key.utf8)] as CFDictionary)
         if status == errSecItemNotFound {
             try add(key)
@@ -22,7 +23,7 @@ import LocalAuthentication
                   let status = OSStatus(exactly: securityError.code),
                   requiresAuthorization(status) else { throw error }
             // Updating data preserves the old build's ACL. An explicit Save can
-            // recreate only Chosen's exact item, using the newly supplied key.
+            // recreate only Mouse's exact item, using the newly supplied key.
             // No existing secret is needed, and the default ACL trusts this build.
             let deleteStatus = SecItemDelete(query as CFDictionary)
             guard deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound else {
@@ -41,7 +42,7 @@ import LocalAuthentication
     }
     private static func verifySavedKey(_ key: String) throws {
         guard try load() == key else {
-            throw NSError(domain: "Chosen", code: 2, userInfo: [NSLocalizedDescriptionKey: "The saved API key could not be verified. Reconnect through Mouse Settings."])
+            throw NSError(domain: "Mouse", code: 2, userInfo: [NSLocalizedDescriptionKey: "The saved API key could not be verified. Reconnect through Mouse Settings."])
         }
     }
     static func load() throws -> String? {
@@ -80,7 +81,7 @@ import LocalAuthentication
         let status = SecItemCopyMatching(request as CFDictionary, &result)
         guard status == errSecSuccess else { throw readFailure(status) }
         guard let data = result as? Data, !data.isEmpty else {
-            throw NSError(domain: "Chosen", code: 2, userInfo: [NSLocalizedDescriptionKey: "No saved API key was found. Add one in Mouse Settings."])
+            throw NSError(domain: "Mouse", code: 2, userInfo: [NSLocalizedDescriptionKey: "No saved API key was found. Add one in Mouse Settings."])
         }
     }
     private static func withoutReadInteraction<T>(_ operation: () throws -> T) throws -> T {

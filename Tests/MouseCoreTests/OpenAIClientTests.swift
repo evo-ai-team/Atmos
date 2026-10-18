@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import ChosenCore
+@testable import MouseCore
 
 final class OpenAIClientTests: XCTestCase {
     private let frame = ScreenshotFrame(data: Data([1, 2, 3]), width: 1280, height: 800, pointWidth: 1280, pointHeight: 800)
@@ -289,7 +289,7 @@ final class OpenAIClientTests: XCTestCase {
         ]
         for fixture in fixtures {
             XCTAssertThrowsError(try OpenAIComputerClient.parseResponse(Data(fixture.utf8))) { error in
-                XCTAssertTrue(error is ChosenError)
+                XCTAssertTrue(error is MouseError)
                 XCTAssertFalse(error.localizedDescription.contains("private-"))
             }
         }
@@ -307,7 +307,7 @@ final class OpenAIClientTests: XCTestCase {
             do {
                 _ = try await client.continueTurn(responseID: "resp_previous", outputs: outputs)
                 XCTFail("Expected invalid continuation")
-            } catch { XCTAssertTrue(error is ChosenError) }
+            } catch { XCTAssertTrue(error is MouseError) }
         }
         let requests = await recorder.requests
         XCTAssertTrue(requests.isEmpty)
@@ -351,7 +351,7 @@ final class OpenAIClientTests: XCTestCase {
 
     private func assertBlocked(_ output: [[String: Any]], file: StaticString = #filePath, line: UInt = #line) throws {
         XCTAssertThrowsError(try OpenAIComputerClient.parseResponse(responseData(output)), file: file, line: line) { error in
-            XCTAssertTrue(error is ChosenError, file: file, line: line)
+            XCTAssertTrue(error is MouseError, file: file, line: line)
             XCTAssertTrue(error.localizedDescription.contains("No new actions were executed."), file: file, line: line)
             XCTAssertFalse(error.localizedDescription.contains("private-"), file: file, line: line)
         }

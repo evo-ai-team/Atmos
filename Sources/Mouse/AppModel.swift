@@ -4,7 +4,7 @@ import Combine
 import ServiceManagement
 import AVFoundation
 #if SWIFT_PACKAGE
-import ChosenCore
+import MouseCore
 #endif
 
 struct Activity: Identifiable {
@@ -52,10 +52,11 @@ final class AppModel: ObservableObject {
     private var canPersistUsage = true
 
     init() {
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Chosen", isDirectory: true)
-        budgetURL = directory.appendingPathComponent("usage.json")
+        let storage = UsageStorage()
+        budgetURL = storage.usageURL
+        let directory = budgetURL.deletingLastPathComponent()
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try storage.prepare()
             if FileManager.default.fileExists(atPath: budgetURL.path) {
                 do {
                     budget = try JSONDecoder().decode(DemoBudget.self, from: Data(contentsOf: budgetURL))
@@ -201,9 +202,9 @@ final class AppModel: ObservableObject {
         let started = Date()
         runningTask = Task {
             do {
-                guard screenAllowed else { throw ChosenError.permission("Allow Screen Recording in Mouse Settings to see the app you want to control.") }
-                guard accessibilityAllowed else { throw ChosenError.permission("Allow Accessibility in Mouse Settings to click and type.") }
-                guard let key = try KeychainStore.load() else { throw ChosenError.configuration("Add your OpenAI API key in Settings.") }
+                guard screenAllowed else { throw MouseError.permission("Allow Screen Recording in Mouse Settings to see the app you want to control.") }
+                guard accessibilityAllowed else { throw MouseError.permission("Allow Accessibility in Mouse Settings to click and type.") }
+                guard let key = try KeychainStore.load() else { throw MouseError.configuration("Add your OpenAI API key in Settings.") }
                 let client = OpenAIComputerClient(apiKey: key)
                 // Typed commands temporarily move focus into Settings. Restore the target app before capturing.
                 if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
@@ -246,11 +247,11 @@ final class AppModel: ObservableObject {
                         finish(token)
                         return
                     }
-                    guard step + 1 < DemoBudget.stepsPerCommand else { throw ChosenError.limit("Paused at the demo’s step limit. Give the next instruction to continue.") }
+                    guard step + 1 < DemoBudget.stepsPerCommand else { throw MouseError.limit("Paused at the demo’s step limit. Give the next instruction to continue.") }
                     let allActions = turn.calls.flatMap(\.actions)
-                    guard !allActions.isEmpty, allActions.count <= 12 else { throw ChosenError.invalidAction("The model returned an empty or oversized action batch.") }
+                    guard !allActions.isEmpty, allActions.count <= 12 else { throw MouseError.invalidAction("The model returned an empty or oversized action batch.") }
                     guard turn.calls.allSatisfy({ $0.safetyChecks.isEmpty }) else {
-                        throw ChosenError.permission("The model requested a safety check. Mouse paused before acting. Review the screen and give a new, explicit instruction.")
+                        throw MouseError.permission("The model requested a safety check. Mouse paused before acting. Review the screen and give a new, explicit instruction.")
                     }
                     for action in allActions { try computer.validateAction(action, frame: frame) }
                     var outputs: [(callID: String, frame: ScreenshotFrame)] = []

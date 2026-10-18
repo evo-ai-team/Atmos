@@ -36,13 +36,13 @@ final class MouseNotchController {
 
         if nextState == .standby {
             surface.setText("", font: .systemFont(ofSize: 17), cameraHeight: geometry.cameraHeight,
-                            horizontalInset: 24, animate: false)
+                            horizontalInset: 24, wraps: false, animate: false)
             guard panel.isVisible else { return }
+            panel.alphaValue = 1
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = duration
                 context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                 panel.animator().setFrame(geometry.collapsedFrame, display: true)
-                panel.animator().alphaValue = 0
             } completionHandler: { [weak self] in
                 Task { @MainActor in
                     guard let self, self.transitionID == currentTransition else { return }
@@ -59,11 +59,12 @@ final class MouseNotchController {
         if case .transcribing = nextState { isTranscribing = true } else { isTranscribing = false }
         surface.setText(presentation.text, font: presentation.font, cameraHeight: geometry.cameraHeight,
                         horizontalInset: presentation.horizontalInset,
+                        wraps: presentation.wraps,
                         animate: !reduceMotion && !(wasTranscribing && isTranscribing))
         surface.applyAccessibilityPreferences()
 
         if !panel.isVisible {
-            panel.alphaValue = reduceMotion ? 1 : 0
+            panel.alphaValue = 1
             panel.setFrame(geometry.collapsedFrame, display: false)
             // orderFrontRegardless does not activate the app. The panel cannot
             // become key, and mouse events pass to the application underneath.
@@ -73,7 +74,6 @@ final class MouseNotchController {
             context.duration = duration
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.8, 0.25, 1)
             panel.animator().setFrame(geometry.frame(size: presentation.size), display: true)
-            panel.animator().alphaValue = 1
         }
     }
 
@@ -144,6 +144,7 @@ private struct MouseNotchPresentation {
     let text: String
     let font: NSFont
     let horizontalInset: CGFloat
+    let wraps: Bool
     let size: NSSize
 
     init(state: MouseOverlayState, geometry: MouseNotchGeometry) {
@@ -153,12 +154,14 @@ private struct MouseNotchPresentation {
             text = ""
             font = .systemFont(ofSize: 17, weight: .regular)
             horizontalInset = 24
+            wraps = false
             size = NSSize(width: min(geometry.cameraWidth + 40, availableWidth),
                           height: max(30, geometry.cameraHeight + 18))
         case .transcribing(let transcript), .notice(let transcript):
             text = transcript
-            font = .systemFont(ofSize: 18, weight: .regular)
+            font = .systemFont(ofSize: 17, weight: .regular)
             horizontalInset = 24
+            wraps = true
             let width = min(460, availableWidth)
             let textHeight = Self.textHeight(transcript, font: font, width: width - 52)
             size = NSSize(width: width,
@@ -167,8 +170,9 @@ private struct MouseNotchPresentation {
             // Status is kept to one line. The model's description is already
             // constrained to a short phrase; the label truncates as a fallback.
             text = description.replacingOccurrences(of: "\n", with: " ")
-            font = .systemFont(ofSize: 17, weight: .medium)
+            font = .systemFont(ofSize: 16, weight: .medium)
             horizontalInset = 24
+            wraps = false
             let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
             size = NSSize(width: min(max(geometry.cameraWidth + 68, textWidth + 48), min(460, availableWidth)),
                           height: geometry.cameraHeight + 49)
@@ -216,8 +220,8 @@ private final class MouseNotchSurface: NSView {
         content.extraTopInset = radius
     }
 
-    func setText(_ text: String, font: NSFont, cameraHeight: CGFloat, horizontalInset: CGFloat, animate: Bool) {
-        content.setText(text, font: font, cameraHeight: cameraHeight, horizontalInset: horizontalInset, animate: animate)
+    func setText(_ text: String, font: NSFont, cameraHeight: CGFloat, horizontalInset: CGFloat, wraps: Bool, animate: Bool) {
+        content.setText(text, font: font, cameraHeight: cameraHeight, horizontalInset: horizontalInset, wraps: wraps, animate: animate)
     }
 
     func applyAccessibilityPreferences() {
@@ -271,7 +275,7 @@ private final class MouseNotchContent: NSView {
 
     override func layout() {
         super.layout()
-        let top = bounds.height - extraTopInset - cameraHeight - 14
+        let top = bounds.height - extraTopInset - cameraHeight - 10
         let width = max(0, bounds.width - horizontalInset * 2)
         let measured = label.attributedStringValue.boundingRect(
             with: NSSize(width: max(1, width - 4), height: .greatestFiniteMagnitude),
@@ -286,21 +290,21 @@ private final class MouseNotchContent: NSView {
         needsDisplay = true
     }
 
-    func setText(_ text: String, font: NSFont, cameraHeight: CGFloat, horizontalInset: CGFloat, animate: Bool) {
+    func setText(_ text: String, font: NSFont, cameraHeight: CGFloat, horizontalInset: CGFloat, wraps: Bool, animate: Bool) {
         textRevision += 1
         let revision = textRevision
         self.cameraHeight = cameraHeight
         self.horizontalInset = horizontalInset
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 3
-        paragraph.lineBreakMode = font.pointSize > 17 ? .byWordWrapping : .byTruncatingTail
-        paragraph.alignment = font.pointSize > 17 ? .left : .center
+        paragraph.lineBreakMode = wraps ? .byWordWrapping : .byTruncatingTail
+        paragraph.alignment = wraps ? .left : .center
         let attributed = NSAttributedString(string: text, attributes: [
             .font: font, .foregroundColor: NSColor.white, .paragraphStyle: paragraph
         ])
         let updateText = { [weak self] in
             guard let self, self.textRevision == revision else { return }
-            self.label.maximumNumberOfLines = font.pointSize > 17 ? 0 : 1
+            self.label.maximumNumberOfLines = wraps ? 0 : 1
             self.label.attributedStringValue = attributed
             self.label.setAccessibilityLabel(text)
             self.needsLayout = true

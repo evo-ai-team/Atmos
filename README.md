@@ -4,7 +4,7 @@ Mouse is a native Mac voice interface for clicking, typing, scrolling, and navig
 
 **This is the canonical project README.** It covers current behavior, setup, architecture, data handling, verification, limitations, and proposed work. The proposals at the end are not implemented behavior. Source review date: **2026-10-20**. The descriptive history is in [CHANGELOG.md](CHANGELOG.md).
 
-The app to open is **`/Users/sameemsaleem/Product/outputs/Mouse.app`**. This source project is **`/Users/sameemsaleem/Product/outputs/Mouse`**. Bundles under `work/`, including the old `Mouse-Morph.app`, are test/build artifacts, not the canonical app.
+The app to open is **`/Users/sameemsaleem/Product/outputs/Mouse.app`**. This source project is **`/Users/sameemsaleem/Product/outputs/Mouse`**. `work/` holds generated build products and diagnostic reports; it is not another source project or app to open. Superseded build artifacts are disposable; source, fixtures, and the canonical app are kept separately.
 
 ## Requirements
 
@@ -13,7 +13,7 @@ The app to open is **`/Users/sameemsaleem/Product/outputs/Mouse.app`**. This sou
 | Mac | Apple silicon, macOS 26 or later |
 | Build tools | Full Xcode 27; Command Line Tools alone are insufficient |
 | Speech | Apple's on-device `SpeechAnalyzer` / `SpeechTranscriber`, with supported English (US) model assets |
-| Computer-control models | OpenAI API key with access to `gpt-6-luna` through Responses, using `fast` service and `low` reasoning. No Decisions request or thinking-model handoff. |
+| Computer-control models | OpenAI API key with access to Decisions and Responses. Both endpoints currently use the model ID `gpt-6-luna`. Decisions selects known operations; Responses retains free-form action planning and text-only speech screening. |
 | Permissions | Microphone for voice; Screen Recording and Accessibility for computer control |
 
 Local speech transcription needs no OpenAI key or API usage fees. The key is used for interpreting completed utterances and deciding computer actions. Apple speech assets may need to be downloaded during setup.
@@ -54,9 +54,9 @@ On subsequent launches, Mouse starts local wake-phrase monitoring automatically 
 
 Say **“Hey Mouse, open Chrome.”** The wake phrase is **“Hey Mouse”**, at the beginning of the utterance. Brief prefixes such as “please” or “okay” are accepted. “Hey Chosen” is not a wake phrase.
 
-Activation persists between commands until you say **“stop”** or choose **Stop Mouse** from the menu. Silence does not expire the session. Each finalized spoken utterance first goes to a separate **text-only Luna check**, which extracts a clearly directed computer command or amendment and ignores surrounding chatter. There is no fixed command vocabulary, app-name list, or grammar filter.
+Activation persists between commands until you say **“stop”** or choose **Stop Mouse** from the menu. Silence does not expire the session. Each finalized spoken utterance first goes to a separate **text-only speech check**, which extracts a clearly directed computer command or amendment and ignores surrounding chatter. There is no fixed command vocabulary, app-name list, or grammar filter.
 
-Only extracted command text reaches the action request, with a screenshot and accepted-command context. Luna then interprets requests such as “make this bigger” or “organize my files” and returns structured computer actions or requests required information or authorization. The speech check is instructed to ignore conversation, informational questions, ambiguous intent, quoted instructions, and hypothetical commands. It does not identify the speaker, and model judgments can still be wrong.
+Only extracted command text reaches action inference, with a screenshot, the foreground app’s accessibility tree, and accepted-command context. Decisions selects a concrete native accessibility action when one fits. Otherwise a generative Responses request supplies the needed mouse/keyboard operation, revised goal, or clarification. Requests such as “make this bigger” and “organize my files” keep their natural phrasing; they are not reduced to a fixed command list. The speech check is instructed to ignore conversation, informational questions, ambiguous intent, quoted instructions, and hypothetical commands. It does not identify the speaker, and model judgments can still be wrong.
 
 | State or control | Visible behavior and effect |
 |---|---|
@@ -84,14 +84,17 @@ Microphone → normal audio input → live transcript
     ├─ “Hey Mouse” → activate immediately
     └─ 500 ms quiet endpoint
          ├─ accurate second transcription pass
-         └─ speculative screenshot in parallel, only while idle
-              → finalized text → separate text-only Luna check
+         └─ speculative screenshot + AX observation while idle
+              → finalized text → separate text-only speech check
                    ├─ ignore or failed check → leave current task alone
                    └─ extracted command → interrupt old work and await input cleanup
-                        → fresh/validated screenshot + extracted command → Luna Responses
-                             ├─ revision/replacement + actions + short description → execute
-                             │    → wait 1000 ms → fresh screenshot → same Responses chain
-                             └─ ignore, verified completion, or request user input
+                        → fresh/validated screenshot + AX tree + explicit task context
+                        → Decisions selects one offered operation
+                             ├─ native AX action → revalidate target → execute
+                             ├─ generate → Responses plans one operation → validate → execute
+                             ├─ review → Responses supplies a pause reason; no action allowed
+                             └─ ignore new speech, or visually verified completion
+                        after execution → wait 1000 ms → fresh observation → Decisions
 ```
 
 ### Live speech and final text
@@ -132,11 +135,11 @@ The live analyzer and accurate replay pass maintain independent audio boundaries
 
 `SpeechBoundarySynchronizer` advances the live analyzer through Mouse's consumed-audio boundary after commits, resets, and discards. It serializes finalization calls, combines pending requests into the newest boundary, and retires with its analyzer lifecycle so late callbacks cannot affect a replacement stream. A boundary-finalization failure enters the bounded recovery path. The strict old-audio filter remains intact, and repeated identical preview text is not republished.
 
-This boundary fix supports growing live previews across consumed boundaries. The newer endpoint, parallel capture, session command history, and immediate Stop changes are separate mechanisms described here; the historical preview benchmark below does not measure those changes.
+This boundary fix supports growing live previews across consumed boundaries. Endpoint timing, parallel capture, session memory, and immediate Stop are separate mechanisms; a preview test does not measure their end-to-end behavior.
 
 ### Capture and focus
 
-While idle, **capture starts alongside the accurate second transcription pass** at an active utterance's quiet endpoint. The image remains local during text-only screening; ignored speech never sends it to the filter. The result is reusable only for the same finalization-candidate ID and command generation, the same foreground process, unchanged display geometry, and an age of at most **1.5 seconds**. Revisions, cancellation, changed focus, an expired capture, or a failed capture cause it to be discarded; Mouse captures again before action inference. Speculative capture is skipped while a task is running and when Mouse itself is frontmost. An accepted redirect waits for interrupted input cleanup and then captures a fresh screen.
+While idle, **observation capture starts alongside the accurate second transcription pass** at an active utterance's quiet endpoint. Mouse takes the screenshot and then reads the foreground accessibility tree against its geometry. Both remain local during text-only screening; ignored speech never sends either to the filter. The observation is reusable only for the same finalization-candidate ID and command generation, the same foreground process, unchanged display geometry, and an age of at most **1.5 seconds**. Revisions, cancellation, changed focus, an expired capture, or a failed capture cause it to be discarded; Mouse captures again before action inference. Speculative capture is skipped while a task is running and when Mouse itself is frontmost. An accepted redirect waits for interrupted input cleanup and then captures a fresh screen.
 
 If a typed request has put Mouse Settings in front, `AppModel` attempts to reactivate the previously active application and waits 220 ms. It hides Mouse's visible key/main windows. The nonactivating, click-through notch can remain visible, but ScreenCaptureKit excludes all windows owned by Mouse from the image sent to the model.
 
@@ -144,28 +147,48 @@ At the start of a command, `NativeComputer` chooses the display under the pointe
 
 Screenshot coordinates map back to global display coordinates, including scaled screens and negative display origins. Display geometry and the foreground process are checked before actions. Capture also checks that the foreground process did not change while the screenshot was gathered, with one fresh attempt if it did. These checks do not prove that the same app's content or internal keyboard focus stayed unchanged during inference.
 
-After each action batch, Mouse waits a nominal **1000 ms**, then captures a fresh screenshot before asking Luna for the next step. Scheduling may make the wait longer, and capture, network, and model time are additional; the full step is not promised to finish in one second. This replaces the earlier 350 ms wait and deliberately adds settling time between steps. The wait is cancellable by Stop or an accepted new command, not raw speech alone. The model is instructed to end a batch after navigation or a screen transition so it can inspect another image before continuing. Screen content can still change after the fixed delay. **Every action-inference turn includes a screenshot; speech screening never does.** Selective image omission from action requests is not implemented.
+After each native operation or generated action batch, Mouse waits a nominal **1000 ms**, then captures a fresh screenshot and AX tree before asking Decisions for the next step. Scheduling may make the wait longer, and capture, network, and model time are additional; the full step is not promised to finish in one second. The wait is cancellable by Stop or an accepted new command, not raw speech alone. The model is instructed to end a batch after navigation or a screen transition so it can inspect another image before continuing. Screen content can still change after the fixed delay. **Every action-inference turn includes a screenshot; speech screening never does.** Selective image omission from action requests is not implemented.
 
-Mouse does not currently read an accessibility tree, offer native AX target choices, or send accessibility labels/values to the model. macOS **Accessibility permission remains required** to post mouse and keyboard input. The screenshot supplies visual context; returned coordinates determine where input is sent. There is no browser DOM integration or operating-system app catalog.
+### Accessibility capture and native actions
+
+`AccessibilityController` reads the foreground app’s focused/main window and menu bar, then walks their descendants breadth-first. It exposes snapshot-local IDs, parent/child links, roles, labels, bounded values/help, enabled state, supported actions, and screen/screenshot bounds. This is the app’s accessibility representation, not a browser DOM or an OS-wide catalog of installed apps.
+
+The read runs on its own actor with a **750 ms capture budget**, **50 ms per-message timeout**, and limits of **220 nodes**, **48 children per node**, **14 levels**, and **320 characters per exposed text attribute**. The snapshot explicitly reports unavailable data and truncation. Large or slow app trees can therefore be incomplete. Offscreen elements may appear in the tree, but only enabled, non-secure controls with valid visible screenshot bounds can become native action choices. A missing element does not prove that no such control exists.
+
+Secure text fields expose no text or action choices, and their descendants are not traversed. Other readable values can contain private content and are sent as UI evidence. Screenshots can still show sensitive information. Native action labels use control names or generic role names, never field values or help text.
+
+A native choice maps to exactly one of **`AXPress`**, **`AXShowMenu`**, **`AXIncrement`**, or **`AXDecrement`** on a retained native handle. Immediately before dispatch, Mouse checks the snapshot, foreground process/window, target identity, role, label, geometry, enabled state, and supported operation. A failed or ambiguous AX operation is not blindly retried as a mouse click because its effect may already have occurred. Mouse/keyboard input remains available through the generative fallback.
 
 ### Model protocol and execution
 
-`SpeechIntentFilter` first screens finalized speech through a separate text-only Responses request using `gpt-6-luna`, Fast service, and low reasoning. Its structured result either supplies an extracted command or ignores the utterance; it cannot execute actions. `OpenAIComputerClient` then sends accepted extracted text, the app session's accepted-command history, and a screenshot to the same model/service configuration. The action client uses strict custom function schemas. There is no Decisions API selection pass, AX-target route, Astra escalation, or general shell/scripting tool.
+The three request types have separate jobs:
 
-| Model result | Meaning |
+| Request | Input and output |
+|---|---|
+| Speech screening: `SpeechIntentFilter` → Responses | Text only. Extract a directed command/amendment or ignore surrounding speech. No screenshot, AX tree, or executable actions. |
+| Selection: `DecisionsClient` → Decisions | Screenshot, AX tree, accepted goal/progress, and session history. Choose one offered native action, generation, review, completion, or ignore for a new utterance. |
+| Generative fallback: `OpenAIComputerClient` → Responses | The same observation plus explicit task context. Generate one structured mouse/keyboard operation, complete updated goal, or user-facing clarification. |
+
+**Both endpoints currently use the identifier `gpt-6-luna`; their capabilities and request schemas differ.** Decisions is a closed-choice classifier and cannot invent coordinates, typing text, a new goal, or a clarification question. It has no `fast` service-tier flag, reasoning-effort flag, or tool-generation schema. Responses uses the existing `fast` service tier and `low` reasoning for screening and generative operations.
+
+`ComputerDecisionOptions` offers at most 249 concrete native operations, plus fixed routes, within Decisions’ 255-choice limit. Snapshot-qualified question names and exact choice validation reject stale, mismatched, refused, or invented selections. Continued tasks have no ignore option because there is no new utterance to classify. Unsupported operations and uncertain targets go to generation instead of being approximated by an unrelated native click. New amendments to an accepted task also disable native and completion choices: generation must produce the complete revised/replacement goal, preserving unaffected requirements and dispatched progress.
+
+A **review** selection remains distinct from ordinary generation. Its Responses request must return `pause_for_user`; executable actions are forbidden and rejected. This obtains a precise reason without treating review as permission to proceed.
+
+| Generative result | Meaning |
 |---|---|
 | `execute_actions` | One coherent operation with required `task_update`, short `description`, and 1–12 actions. |
 | `pause_for_user` | Required target information, authorization, authentication, or review is missing. Includes `task_update`; no actions run with the question. |
-| `ignore_utterance({})` | Silently finish a non-action utterance. No answer, notice, or desktop action. |
+| `ignore_utterance({})` | Silently reject a new non-action utterance without a conversational reply or desktop action. |
 | Final message | Report completion after inspecting the resulting screen. |
 
-Generated descriptions aim for 3–6 words, at most 64 characters, such as “Searching Linus Tech Tips…”. Descriptions represent the current operation rather than claiming completion. The parser rejects malformed, incomplete, refused, mixed, or multiple operations. The controller validates every generated action in a batch before posting its first desktop event.
+Generated descriptions aim for 3–6 words and at most 64 characters, such as “Searching Linus Tech Tips…”. Native operations use short local descriptions. Both describe work in progress. The generative parser rejects malformed, incomplete, refused, mixed, or multiple operations, and the controller validates every action in a batch before posting its first desktop event.
 
-Supported actions are click, double-click, pointer move, scroll, drag, Unicode typing, keypress, wait, and screenshot. Pointer actions support Command, Control, Option/Alt, and Shift modifiers. Keypress supports common navigation keys, Enter, Escape, Space, Tab, F1–F20, and supported printable keys. Unsupported keys, invalid fields, nonfinite/out-of-bounds coordinates, and invalid action sizes fail explicitly. Typing uses Unicode keyboard events and does not change the clipboard.
+The fallback retains click, double-click, pointer move, scroll, drag, Unicode typing, keypress, wait, and screenshot actions. Pointer actions support Command, Control, Option/Alt, and Shift modifiers. Keypress supports common navigation keys, Enter, Escape, Space, Tab, F1–F20, and supported printable keys. Invalid fields, unsupported keys, nonfinite/out-of-bounds coordinates, and invalid action sizes fail explicitly. Typing uses Unicode events without changing the clipboard. There is no shell or scripting tool.
 
-After an executed batch and the 1000 ms wait, Mouse returns the fresh screenshot as `function_call_output`, tied to the same call ID, and continues through `previous_response_id`. The original task and the earlier operations remain in that Responses chain. Requests time out after 30 seconds and are not replayed automatically. **There is no per-command step limit and no cumulative request cap.** The loop ends on completion, a request for user input, an error, or cancellation.
+After one generated operation, the app returns to **Decisions with a fresh observation and explicit context**. The live action loop no longer uses a `previous_response_id` Responses chain; native operations between generative calls would make that chain incomplete. The Responses continuation helper remains for the isolated API diagnostic only. Requests time out after 30 seconds and are not automatically replayed. **There is no per-command step limit or cumulative request cap.** The loop ends on verified completion, a request for user input, an error, or cancellation.
 
-Model instructions treat screen text as untrusted data and require pauses before unauthorized sensitive or irreversible actions and authentication/security prompts. These are instructions to the model, not a guarantee that it will always recognize a sensitive situation. Local validation checks the structure and executability of returned actions.
+Both model prompts treat screen and AX text as untrusted evidence and require review before unauthorized sensitive or irreversible actions and authentication/security prompts. Prompt instructions and structural validation do not guarantee correct intent, correct targets, or safe application behavior.
 
 ### Cancellation
 
@@ -177,17 +200,17 @@ Already posted input cannot be recalled: previous clicks, text, scrolling, or ap
 
 ### What Mouse remembers
 
-Within an uninterrupted task, Luna Responses preserves its conversation through the previous response ID, including the original command, operations, and returned screenshots. A newly screened command starts a fresh action-response chain with explicit active-task context; Luna decides whether to revise that task or start a different one. Accepted amendments are also recorded in session history. Superseded history entries are marked paused with a revision/replacement outcome, not completed. Speech screening has no previous-response chain.
+Mouse supplies explicit accepted-goal, amendment, and dispatched-action context on each Decisions request and each generative fallback. There is no live server-side Responses chain. Native dispatch records describe the semantic operation and target; old snapshot IDs are not reused as future targets. A newly screened amendment receives the accepted goal and progress, and generation determines revision versus replacement without replaying completed work. Superseded history entries are marked paused with a revision/replacement outcome, not completed. Speech screening is independently stateless apart from its supplied text context.
 
 Between commands, Mouse keeps **every command the action model accepts during the current app session**, in order and with its full extracted text. Background words removed by screening do not enter this history. Each record tracks whether the task is running, completed, paused, stopped, or failed, together with the available result, pause reason, or interruption/error information. Each new action request receives the complete history of prior accepted commands as background context. The current extracted command is supplied separately.
 
 Admission happens only after the action model returns a valid response accepting computer-action intent; passing speech screening alone does not add a history entry. Ignored utterances, and requests cancelled or failed before action-model admission, are not added. If an accepted task later stops or fails, its record remains with that outcome; it is not presented as completed. This is a record of accepted computer commands, not a transcript of everything heard. Luna's intent judgment can still be wrong.
 
-History lives **only in the running app's memory**. Stop, sleep, and microphone pause preserve it; quitting or restarting Mouse clears it. Mouse does not write a command-history text file or restore commands from disk. This history does not replay actions or skip Luna calls. Earlier instructions are background, not new commands or fresh authorization; Luna may use them to resolve a follow-up target only after current action intent is clear.
+History lives **only in the running app's memory**. Stop, sleep, and microphone pause preserve it; quitting or restarting Mouse clears it. Mouse does not write a command-history text file or restore commands from disk. This history does not replay actions or skip model calls. Earlier instructions are background, not new commands or fresh authorization; the models may use them to resolve a follow-up target only after current action intent is clear.
 
 There is no local command-count cap, character truncation, or automatic summary. Longer sessions therefore send more input text and can increase token usage and latency. Provider context limits still apply; Mouse does not silently trim history to fit them.
 
-The separate activity list holds up to 20 entries in memory, and Settings shows the most recent entries. That display limit does not limit the accepted-command history sent to Luna. Neither is restored after quitting. Screenshots and the complete operation-by-operation Responses transcript are not copied into the cross-command history.
+The separate activity list holds up to 20 entries in memory, and Settings shows the most recent entries. That display limit does not limit the accepted-command history sent to the models. Neither is restored after quitting. Screenshots, AX snapshots, and raw API responses are not copied into the cross-command history.
 
 ### Data boundaries
 
@@ -196,9 +219,10 @@ The separate activity list holds up to 20 entries in memory, and Settings shows 
 | Microphone audio | Processed locally by Apple's speech engine; bounded in-memory queues and retained utterance audio. Mouse does not save recordings or send microphone audio to OpenAI. |
 | Apple speech assets | Prepared through Apple's `AssetInventory`; a model download may occur during setup. |
 | Standby speech | Used locally for wake-phrase detection; no OpenAI request. |
-| Completed active utterance | Sent to the text-only OpenAI speech check, including speech it ultimately ignores. Only an extracted command is forwarded to action inference with the accepted-command history and screenshot. Ignored background words are not added to that history. |
+| Completed active utterance | Sent to the text-only OpenAI speech check, including speech it ultimately ignores. Only an extracted command is forwarded to action inference with accepted-command context, screenshot, and AX tree. Ignored background words are not added to that history. |
 | Screenshots | Captured and JPEG-encoded in memory; sent to OpenAI for action inference, never speech screening. Idle speculative captures may be taken before intent is known but remain local unless reused for an accepted command. Mouse's own windows are excluded; other visible apps can be included. Mouse does not write these captures to disk. |
-| Accessibility permission | Used for mouse/keyboard control. Mouse does not gather or transmit an accessibility tree. |
+| Accessibility tree | Foreground window/menu tree read in memory and sent to Decisions and generative fallback as UI evidence. Non-secure labels, values, help, roles, hierarchy, actions, and bounds may be included. Secure text is excluded; unavailable/truncated data is explicit. Native handles remain local. |
+| Accessibility permission | Used to read the tree, invoke offered native AX operations, and post mouse/keyboard input. |
 | API key | Stored in macOS Keychain under the stable service `com.chosen.mac.openai`; not written to the repository or usage JSON. Routine reads do not intentionally prompt; explicit reconnect can ask macOS to authorize access. |
 | Accepted-command history | Full command text, task status, and outcome kept in RAM and sent as background for later commands. Survives Stop/microphone pause; cleared when the app exits. No transcript file is written. |
 | Recent activity | Up to 20 entries in memory; cleared when the app exits. Separate from the complete accepted-command history. |
@@ -209,27 +233,29 @@ The app does not configure or promise zero retention by OpenAI. Data sent to the
 
 ### Usage accounting
 
-The persisted counter records request attempts and returned input/output token totals for both speech screening and action inference. Attempts are counted immediately before networking, so a request that subsequently fails or is cancelled still counts. Cancelling before a request reaches that stage does not create an API attempt. An ignored spoken utterance costs one text-only check and no action request or uploaded screenshot. Accepted speech adds that check before the normal action requests.
+The persisted counter records request attempts and returned input/output token totals for speech screening, Decisions selection, and generative fallback. Attempts are counted immediately before networking, so a request that subsequently fails or is cancelled still counts. Cancelling before a request reaches that stage does not create an API attempt. An utterance ignored by speech screening costs one text-only check and no action request or uploaded screenshot. Accepted speech adds that check before Decisions. A native step needs one selection request; a generative step adds a Responses request before execution. Revisions and review therefore include a generation round trip.
 
-Displayed cost uses Luna Fast constants in `DemoBudget`. Existing request/token totals and the accumulated estimate are preserved, including charges estimated during the earlier Decisions/Astra experiment; they are not reset or repriced by returning to the single-model loop. The estimate excludes cache discounts/writes and regional premiums; it is not a live pricing lookup or a billing cap. OpenAI reports actual billing. Usage migration/read/write problems do not block requests: Mouse reports a warning and continues counting in memory. An unreadable prior file is preserved in a backup when possible.
+The estimate in `DemoBudget` uses separate endpoint rates: **Decisions $0.10 per million input tokens, no output charge; Responses Fast $0.20 input / $1.00 output per million tokens**. Requests above 272,000 input tokens use the configured long-context premiums: 2× input and, for Responses, 1.5× output. Earlier totals and accumulated estimates are preserved rather than repriced when routes change. These are local constants, not a live pricing lookup; cache discounts/writes and regional premiums are excluded. The estimate is not a billing cap. OpenAI reports actual billing. Usage migration/read/write problems do not block requests: Mouse reports a warning and continues counting in memory. An unreadable prior file is preserved in a backup when possible.
 
 Counters are not coordinated between multiple running processes. Quit the GUI before running the API smoke check to avoid competing usage-file updates.
 
 ## Source map and architecture
 
-The Swift package separates testable core state/protocol logic from the native app. The Xcode app target compiles the same sources together; conditional `SWIFT_PACKAGE` imports keep both builds supported. `AppModel`, native input, and UI coordination run on the main actor. The API client uses a separate actor, and audio conversion uses a separate task.
+The Swift package separates testable core state/protocol logic from the native app. The Xcode app target compiles the same sources together; conditional `SWIFT_PACKAGE` imports keep both builds supported. `AppModel`, native input, and UI coordination run on the main actor. Network clients and AX reads use separate actors, and audio conversion uses a separate task.
 
 | File or directory | Responsibility |
 |---|---|
 | [`Sources/Mouse/MouseApp.swift`](Sources/Mouse/MouseApp.swift) | App entry point, menu-bar controls, Settings scene, diagnostic/check modes. |
-| [`Sources/Mouse/AppModel.swift`](Sources/Mouse/AppModel.swift) | Permissions/status, speech-screening and capture handoff, Luna action loop, independent screening/action cancellation, accepted-command history, activity, usage persistence. |
+| [`Sources/Mouse/AppModel.swift`](Sources/Mouse/AppModel.swift) | Permissions/status, independent speech screening, Decisions/AX/generation loop, cancellation, accepted-command history, activity, and usage persistence. |
 | [`Sources/Mouse/MouseView.swift`](Sources/Mouse/MouseView.swift) | Settings, connection/permissions, usage, typed testing, recent activity. |
 | [`Sources/Mouse/MouseNotchController.swift`](Sources/Mouse/MouseNotchController.swift) | Nonactivating notch panel, state transitions, layout and visual presentation. |
+| [`Sources/Mouse/MouseThinkingIndicator.swift`](Sources/Mouse/MouseThinkingIndicator.swift) | Six-dot loading animation, simultaneous center-out entrance, pulse/orbit, interruption handling, and Reduce Motion. |
 | [`Sources/Mouse/NativeGlassSurface.swift`](Sources/Mouse/NativeGlassSurface.swift) | Native AppKit glass surface hosting SwiftUI content. |
 | [`Sources/Mouse/VoiceInput.swift`](Sources/Mouse/VoiceInput.swift) | Normal microphone input, live previews and controls, quiet endpoint, accurate replay, capture-candidate callbacks, bounded recovery. |
 | [`Sources/Mouse/SpeechAudioFeed.swift`](Sources/Mouse/SpeechAudioFeed.swift) | Owned PCM buffers, format conversion, bounded audio queues and timing. |
 | [`Sources/Mouse/SpeechRuntimeSetup.swift`](Sources/Mouse/SpeechRuntimeSetup.swift) | Hardware/locale checks, asset reservation/download, setup progress. |
 | [`Sources/Mouse/NativeComputer.swift`](Sources/Mouse/NativeComputer.swift) | ScreenCaptureKit capture, coordinate conversion, permission preflights, action validation and CGEvent input. |
+| [`Sources/Mouse/AccessibilityController.swift`](Sources/Mouse/AccessibilityController.swift) | Bounded foreground AX-tree capture, local native handles, secure-field exclusion, stale-target revalidation, and native action dispatch. |
 | [`Sources/Mouse/KeychainStore.swift`](Sources/Mouse/KeychainStore.swift) | Save, noninteractive load, explicit authorization of the saved API key. |
 | [`Sources/Mouse/APICheck.swift`](Sources/Mouse/APICheck.swift) | Opt-in model/protocol check with generated images and no desktop input. |
 | [`Sources/Mouse/MicrophoneCheck.swift`](Sources/Mouse/MicrophoneCheck.swift) | Finite production-input diagnostic reporting signal and preview counts without saving audio/text or executing commands. |
@@ -240,7 +266,10 @@ The Swift package separates testable core state/protocol logic from the native a
 | [`Sources/MouseCore/SpeechAudioHistoryPolicy.swift`](Sources/MouseCore/SpeechAudioHistoryPolicy.swift) | 500 ms endpoint constant, speech-aware retention, and replay completeness check. |
 | [`Sources/MouseCore/SpeechRecoveryState.swift`](Sources/MouseCore/SpeechRecoveryState.swift) | Bounded restart attempts and invalidation when microphone capture is disabled. |
 | [`Sources/MouseCore/SpeechBoundarySynchronizer.swift`](Sources/MouseCore/SpeechBoundarySynchronizer.swift) | Serialized, coalescing advancement of the live analyzer's consumed boundary; lifecycle cancellation and failure handling. |
-| [`Sources/MouseCore/OpenAIComputerClient.swift`](Sources/MouseCore/OpenAIComputerClient.swift) | Responses requests, instructions, strict tool schemas, parsing, continuation, offline transport injection. |
+| [`Sources/MouseCore/AccessibilitySnapshot.swift`](Sources/MouseCore/AccessibilitySnapshot.swift) | Plain-data AX hierarchy, geometry mapping, secure-field redaction, truncation and unavailable-state reporting. |
+| [`Sources/MouseCore/DecisionsClient.swift`](Sources/MouseCore/DecisionsClient.swift) | Typed Decisions requests, optional image evidence, exact answer validation, usage, cancellation, and offline transport injection. |
+| [`Sources/MouseCore/ComputerDecision.swift`](Sources/MouseCore/ComputerDecision.swift) | Snapshot-bound native choices, completion/ignore permissions, fallback/review routes, and short local action labels. |
+| [`Sources/MouseCore/OpenAIComputerClient.swift`](Sources/MouseCore/OpenAIComputerClient.swift) | Generative Responses fallback, fresh task/AX context, strict action schemas, review-only contract, and diagnostic continuation helper. |
 | [`Sources/MouseCore/SpeechIntentFilter.swift`](Sources/MouseCore/SpeechIntentFilter.swift) | Text-only Luna screening, directed-command extraction, strict response parsing, and usage. |
 | [`Sources/MouseCore/SpeechScreeningQueue.swift`](Sources/MouseCore/SpeechScreeningQueue.swift) | Ordered utterance screening and invalidation of pending/queued results independently of action execution. |
 | [`Sources/MouseCore/TaskSteeringState.swift`](Sources/MouseCore/TaskSteeringState.swift) | Accepted goal, amendments, actual dispatched inputs, partial effects, and revision/replacement context. |
@@ -256,38 +285,18 @@ The Swift package separates testable core state/protocol logic from the native a
 
 ## Verification
 
-The **2026-10-20 speech-screening update** passed **134 offline tests with zero failures**, including text-only request construction, strict extraction parsing, serialized checks, ignored/failed results, and Stop invalidating late callbacks. Release build and signature verification succeeded at `/Users/sameemsaleem/Product/outputs/Mouse.app`. These checks use mocked responses and do not establish real-model classification accuracy or live microphone-to-desktop behavior. The app was rebuilt without launching it or changing permissions. Logs: [tests](/Users/sameemsaleem/Product/work/mouse-speech-filter-tests.log), [build](/Users/sameemsaleem/Product/work/mouse-speech-filter-build.log).
-
-The **2026-10-20 six-dot loading update** passed the Release build and signature verification at `/Users/sameemsaleem/Product/outputs/Mouse.app`, with the new indicator confirmed in the executable. Entrance/exit interruption handling was reviewed. This UI change was not checked in a live visual or microphone session; the app was not launched and privacy/Keychain permissions were not changed. Log: [build](/Users/sameemsaleem/Product/work/mouse-loading-build.log).
-
-The **2026-10-20 continuation/steering update** passed **118 offline tests with zero failures**, including the 500 ms endpoint, speech during execution, recognition boundaries, raw-audio gating, strict task-update parsing, and preservation of dispatched progress. The Release build and signature verification succeeded at `/Users/sameemsaleem/Product/outputs/Mouse.app`. This rebuild did not launch the app or change, refresh, or check any permissions or Keychain access, as requested. No live microphone-to-desktop or semantic rerouting test was performed. Logs: [tests](/Users/sameemsaleem/Product/work/mouse-steering-tests.log), [build](/Users/sameemsaleem/Product/work/mouse-steering-build.log).
-
-The session-history update was built, installed, and opened at `/Users/sameemsaleem/Product/outputs/Mouse.app` on **2026-10-20**. Its full offline suite passed **100 tests with zero failures**; the Release build and signature verification passed. Settings showed the new session-history explanation and preserved **1,198-request counter**. Mac permission and saved-key renewal were still in progress at that check, so this records successful installation, not readiness for live control. The update has not been verified with live semantic follow-ups, microphone input, or an end-to-end desktop task.
-
-The single-Luna change and 1000 ms delay were built and installed at `/Users/sameemsaleem/Product/outputs/Mouse.app` on **2026-10-19**. That version's offline suite passed **94 tests with zero failures**; the Release build and signature verification passed. Settings confirmed existing Screen Recording/Accessibility/Microphone access, the saved-key connection, and the preserved 1,099-request counter before the isolated live API check. That check added two requests; it did not run desktop actions. These recorded checks predate the 2026-10-20 session-history change.
-
-Recorded checks provide the following evidence, with their limits:
-
-| Check | Recorded result and scope |
-|---|---|
-| 2026-10-20 offline suite | **100 tests passed, zero failures.** Mocked transport and deterministic state checks; no live requests. Log: [`mouse-session-memory-tests.log`](/Users/sameemsaleem/Product/work/mouse-session-memory-tests.log). |
-| 2026-10-20 Release app | **Build and signature verification succeeded; installed and opened at the canonical app path.** Settings displayed session-history guidance and the preserved 1,198-request counter. Permission/key renewal and live operation were not established by this check. Build log: [`mouse-session-memory-build.log`](/Users/sameemsaleem/Product/work/mouse-session-memory-build.log). |
-| 2026-10-19 offline suite | **94 tests passed, zero failures.** Mocked transport; no live requests. Log: [`mouse-lean-luna-tests.log`](/Users/sameemsaleem/Product/work/mouse-lean-luna-tests.log). The earlier 111-test count included now-removed route modules. |
-| 2026-10-19 Release app | **Build and signature verification succeeded; installed at the canonical app path.** Settings showed permissions allowed and the saved key connected. This does not establish live microphone quality. |
-| Apple streaming-speech fixture | All three wake-gap cases passed: 0.25, 0.8, and 1.5 seconds. Real Apple analyzer with synthetic recorded audio; no microphone or API. |
-| 2026-10-19 live Luna Responses API | **Passed** structured image-grounded click and function-result screenshot continuation. Two requests, 5,241 input and 52 output tokens, 3.46 seconds total. Log: [`mouse-lean-luna-api-check.log`](/Users/sameemsaleem/Product/work/mouse-lean-luna-api-check.log). Generated images only; no desktop action. This fixture bypasses `AppModel`, so its duration excludes the new one-second settling pause and is not a voice-to-action benchmark. |
-| Microphone after removing voice processing | The direct signal check remained incomplete. Engine startup or permission checks alone do not establish that audible input or live recognition works. |
+The **2026-10-20 Decisions + accessibility migration** passed **176 offline tests with zero failures**. The canonical Release app built successfully and its signature verified. Logs: [tests](/Users/sameemsaleem/Product/work/mouse-decisions-tests.log) and [build](/Users/sameemsaleem/Product/work/mouse-decisions-build.log). The app was not launched; live API access, desktop control, microphone behavior, and permissions were not tested or changed. These mocked protocol/state checks do not establish real-model target selection or end-to-end operation. Earlier validation records and behavior changes are in [CHANGELOG.md](CHANGELOG.md).
 
 ### Offline tests
 
 ```sh
 ./Scripts/test.sh
-./Scripts/test.sh --filter OpenAIClientTests
+./Scripts/test.sh --filter 'DecisionsClientTests|ComputerDecisionTests|OpenAIClientTests'
 ```
 
-Tests use mocked API transport and do not make live OpenAI requests. They cover unrestricted utterance forwarding, immediate initial-word Stop and wake, transcript revisions and finalization invalidation, 500 ms endpoints, speech-aware history and replay coverage, recovery limits, accepted-command history and outcomes, capture-candidate freshness, persistent activation, strict schemas, description/action parsing, screenshot continuations, pause/ignore handling, cancellation, usage migration/counting, and coordinate mapping.
+Tests use mocked API transport and do not make live OpenAI requests. They cover unrestricted utterance forwarding, immediate initial-word Stop and wake, transcript revisions and finalization invalidation, 500 ms endpoints, speech-aware history and replay coverage, recovery limits, accepted-command history and outcomes, capture-candidate freshness, persistent activation, strict schemas, description/action parsing, native candidate bounds, stale selections, secure/disabled/offscreen exclusion, task continuation, review/pause/ignore handling, cancellation, endpoint-specific usage, and coordinate mapping.
 
-Responses transport tests check the single-model configuration, complete session-history context, strict structured output, and screenshot-bearing continuations. Boundary-synchronizer tests check coalescing, absence of overlapping finalization calls, invalid/old targets, cancellation, late completions, and failure retirement.
+Decisions transport tests check exact request/answer contracts, optional image handling, refusals, invalid probabilities, cancellation, and no retries. Router tests check the native candidate limit, exact target/action mapping, snapshot identity, and disabled completion/ignore routes. Responses tests cover fresh explicit context, review-only generation, strict structured output, and the diagnostic continuation protocol. Boundary-synchronizer tests check coalescing, absence of overlapping finalization calls, invalid/old targets, cancellation, late completions, and failure retirement.
 
 A passing suite does not establish microphone recognition quality, semantic intent accuracy, compositor appearance, or end-to-end Mac control. It also does not prove that an application will accept a posted input event.
 
@@ -303,17 +312,7 @@ This check feeds the bundled synthetic recording through the real Apple analyzer
 
 The default report is `work/live-transcript-check/results.json` in this workspace. `MOUSE_TRANSCRIPT_CHECK_DIR` changes the build/report directory; `--output /path/to/results.json` changes the report path. Each run records timings and transcript events. `--without-boundary-sync` is a diagnostic comparison mode that deliberately disables the fix and can fail the preview check; it does not change the app.
 
-The earlier speech-validation run passed all three gaps (0.25, 0.8, and 1.5 seconds), with growing provisional updates in each case. Its report is [`mouse-streaming-speech-results.json`](/Users/sameemsaleem/Product/work/mouse-streaming-speech-results.json). This verifies the synthetic streaming fixture's checks, not microphone recognition quality or total voice-to-action latency. The report explicitly records `microphoneUsed: false` and `apiUsed: false`.
-
-Historical live-preview results observed on this Mac on 2026-10-19, before the newer endpoint/capture/routing changes:
-
-| Gap after wake phrase | Fixed check | First command preview after command audio starts |
-|---|---|---|
-| 0.25 s | Pass | 0.982 s |
-| 0.8 s | Pass | 1.352 s |
-| 1.5 s | Pass | 0.657 s |
-
-With boundary synchronization disabled, the 0.25 s case failed: its first preview arrived 6.006 s after stream start, versus 2.552 s with the fix. The longer-gap baseline cases passed because the engine naturally closed the old segment. These are sample-specific measurements, not latency guarantees. The fixture uses a known wake boundary and does not test microphone endpoint detection, the complete `VoiceInput` lifecycle, notch rendering, or end-to-end voice control.
+The recorded streaming fixture passed the 0.25, 0.8, and 1.5 second wake-gap cases with growing provisional updates. This is a synthetic-audio integration check, not a microphone-quality or total voice-to-action benchmark. It uses a known wake boundary and does not test microphone endpoint detection, the complete `VoiceInput` lifecycle, notch rendering, or desktop control. Earlier behavior and validation are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ### Local UI and speech checks
 
@@ -354,7 +353,7 @@ The voice check locally transcribes a supplied recording of “Hey Mouse, open C
 
 `--api-check` uses the saved key and makes **up to three billable Responses requests**, counted in usage. It validates a structured click against a generated TEST button, then returns a generated DONE screenshot to verify the function-result continuation.
 
-The check neither captures nor controls the desktop. It verifies provider behavior against synthetic fixtures, not live microphone recognition or real app interaction. Quit the GUI before running it so only one process updates usage. Adding a check mode does not itself establish that its live API run has passed.
+This is a **Responses-only protocol diagnostic**; it does not exercise the live Decisions/AX route. It neither captures nor controls the desktop, and verifies generated fixtures rather than microphone recognition or real app interaction. Quit the GUI before running it so only one process updates usage. Adding a check mode does not itself establish that its live API run has passed.
 
 Settings is preferred for key entry. `--import-key` accepts a key on standard input and stores it in Keychain. `--api-check --key-stdin` accepts one for that check. Never put credentials in command arguments.
 
@@ -373,8 +372,8 @@ Settings is preferred for key entry. `--import-key` accepts a key on standard in
 | Live words are delayed after a wake phrase or completed command | Rebuild with the boundary-synchronization fix and run the streaming check. It distinguishes consumed-boundary suppression from the speech engine's own latency; passing it does not prove microphone or UI behavior. |
 | A command starts before the whole sentence is spoken | The 500 ms threshold is not semantic end-of-turn detection. Further speech is screened as a continuation; existing work continues until a command is accepted. Already dispatched input cannot be undone. |
 | Spoken Stop is delayed | It acts when the recognizer reports the initial word; it no longer waits for the final pass. Recognition and callback scheduling still take time. **Stop Mouse** in the menu sends a direct cancellation request. |
-| A follow-up loses earlier details | Accepted commands are retained for the current app process, with full text and outcomes. Restarting clears them; ignored utterances and requests stopped before Luna accepts them are not recorded. Luna can still fail to use the supplied context correctly. |
-| Model request fails or times out | Check the displayed error and Luna/model-service access. Requests have a 30-second timeout and are not automatically retried or routed to another model. |
+| A follow-up loses earlier details | Accepted commands are retained for the current app process, with full text and outcomes. Restarting clears them; ignored utterances and requests stopped before action-model acceptance are not recorded. The models can still fail to use supplied context correctly. |
+| Model request fails or times out | Check the displayed error and project access to both Decisions and Responses. Requests time out after 30 seconds and are not automatically retried. Generative fallback is a deliberate selection route, not an automatic retry of a failed request. |
 | Usage cannot be loaded/saved | The warning explains whether the app is counting only in memory. Requests remain enabled. Avoid running the GUI and API check together. |
 | Notch placement is wrong in another Space, fullscreen app, or display | These presentation cases remain deferred; capture's display coordinate support does not imply complete overlay-placement support. |
 
@@ -383,15 +382,15 @@ Settings is preferred for key entry. `--import-key` accepts a key on standard in
 - The app targets this Mac's native notch workflow. Spaces, fullscreen behavior, and multiple-display overlay placement need further work.
 - Speech currently targets English (US) on supported Apple silicon hardware. Wake monitoring continuously runs the local recognizer.
 - Live text and final command text have different roles. Wake and initial-word Stop use volatile recognition; ordinary computer actions still require the separate accurate final pass.
-- Standby is local. Once active, even speech ultimately ignored by Luna sends text and uses a screening request. Accepted speech adds a separate text-only round trip before action inference.
+- Standby is local. Once active, even speech ultimately ignored sends text and uses a screening request. Accepted speech adds a separate text-only round trip before action inference.
 - Speculative capture overlaps final speech only while idle and has candidate/focus/display/freshness checks. It is not sent to the speech filter. Same-app content and keyboard focus can still change during model inference; the screen is not locked.
-- Target selection is screenshot-based. There is no accessibility-tree reader, native AX-action route, DOM reader, browser extension, or OS-wide catalog of apps and clickables.
-- Follow-up context preserves every Luna-accepted command for the running app session, with full text and outcomes. There is no persistent memory, full conversational transcript, or automatic history compression. Large histories increase input size and can reach provider context limits.
+- Target selection uses screenshots and a bounded foreground AX tree. Some apps expose incomplete or inaccurate accessibility data; offscreen targets are not native choices. The generative mouse/keyboard fallback preserves operations outside the four supported AX actions. There is no DOM reader, browser extension, or OS-wide app/clickable catalog.
+- Follow-up context preserves every action-model-accepted command for the running app session, with full text and outcomes. There is no persistent memory, full conversational transcript, or automatic history compression. Large histories increase input size and can reach provider context limits.
 - Stop acts on a recognized initial word, which can create false positives such as “stop by later.” Cancellation is cooperative and cannot reverse events already sent to another app.
 - Mouse has no app-level noise suppression, Krisp integration, or speaker verification. Background voices can still produce text, and a background command may be mistaken for directed intent. The separate text check reduces unwanted interruptions; it does not authenticate the speaker.
 - A deliberate 1000 ms settling delay follows every executed batch before capture and the next action-model request. It is separate from the 500 ms speech endpoint; total latency also includes transcription, speech screening, capture, network, inference, and input.
 - Strict action validation rejects malformed input, but does not guarantee correct intent, correct targets, or safe application behavior.
-- Action batches are bounded to 12, but the number of batches and total request count are uncapped.
+- Generated action batches are bounded to 12; native selections perform one AX operation. Candidate/read budgets limit one observation, not task length. The number of steps and total request count remain uncapped.
 - This local app is ad-hoc signed and not sandboxed. Rebuilds can require renewed permissions or Keychain authorization. Distribution requires Developer ID signing, notarization, and further testing.
 
 ## Deferred or excluded work

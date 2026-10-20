@@ -27,7 +27,8 @@ public struct TaskSteeringState: Sendable {
         utterances = [command]
     }
 
-    /// Call only after Luna accepts this speech as task steering. Keep it verbatim.
+    /// Call only after the action planner accepts this speech as task steering.
+    /// Keep it verbatim even when a generated goal summarizes the combined request.
     public mutating func appendUtterance(_ utterance: String) {
         utterances.append(utterance)
     }

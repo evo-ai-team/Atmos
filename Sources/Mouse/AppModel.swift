@@ -11,8 +11,6 @@ struct Activity: Identifiable {
     let id = UUID()
     let title: String
     let detail: String
-    let symbol: String
-    let date = Date()
 }
 
 @MainActor
@@ -23,7 +21,6 @@ final class AppModel: ObservableObject {
     @Published var voiceAuthorized = false
     @Published var status = "Waiting for Hey Mouse"
     @Published var transcript = ""
-    @Published var audioLevel = 0.0
     @Published var command = ""
     @Published var error: String?
     @Published var activity: [Activity] = []
@@ -34,11 +31,14 @@ final class AppModel: ObservableObject {
     @Published var budget = DemoBudget()
     @Published var usageWarning: String?
     @Published var launchAtLogin = false
-    @Published var showSettings = false
-    @Published var lastDuration: Double?
     @Published private(set) var startingVoice = false
     let computer = NativeComputer()
     let voice = VoiceInput()
+    private let accessibility = AccessibilityController()
+    // Execution and speech screening have separate lifetimes. Background speech
+    // must finish its text-only check before it can retire an accepted task.
+    // `generation` owns UI/state changes as well as input: a cancelled request
+    // may still return, but it must never dispatch or finish its replacement.
     private var runningTask: Task<Void, Never>?
     private var generation = UUID()
     private var conversationContext = CommandContext()
@@ -69,7 +69,7 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             self.finishSpeechScreening(captureID: captureID)
             self.error = error.localizedDescription
-            self.log(error.localizedDescription, detail: "Speech check failed", symbol: "exclamationmark.circle")
+            self.log(error.localizedDescription, detail: "Speech check failed")
             if !self.working {
                 self.status = "Command not accepted · try again"
                 self.showNotice("Couldn't check command · try again")
@@ -79,6 +79,7 @@ final class AppModel: ObservableObject {
 
     private struct Observation: Sendable {
         let frame: ScreenshotFrame
+        let accessibility: AccessibilitySnapshot
         let processID: Int32
         let capturedAt: TimeInterval
     }
@@ -137,7 +138,6 @@ final class AppModel: ObservableObject {
             self.noticeTask?.cancel()
             if self.active { self.notch.show(text.isEmpty ? .active : .transcribing(text)) }
         }
-        voice.onLevel = { [weak self] level in self?.audioLevel = level }
         voice.onStatus = { [weak self] state in
             guard let self else { return }
             self.listening = self.voice.isEnabled
@@ -162,7 +162,7 @@ final class AppModel: ObservableObject {
             self.listening = false
             self.error = message
             self.status = "Voice needs attention"
-            self.log(message, detail: "Voice stopped", symbol: "mic.slash")
+            self.log(message, detail: "Voice stopped")
             self.showNotice("Voice paused · check Mouse settings")
         }
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in Task { @MainActor in self?.refreshPermissions() } }
@@ -191,7 +191,7 @@ final class AppModel: ObservableObject {
         if listening {
             cancel(silent: true)
             voice.stop(); listening = false; active = false
-            status = "Microphone paused"; audioLevel = 0; transcript = ""
+            status = "Microphone paused"; transcript = ""
             notch.hide()
             return
         }
@@ -223,9 +223,6 @@ final class AppModel: ObservableObject {
 
     func requestScreen() { _ = computer.requestScreenRecordingPermission(); refreshPermissions() }
     func requestAccessibility() { _ = computer.requestAccessibilityPermission(); refreshPermissions() }
-    func openPrivacy(_ suffix: String) {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(suffix)") { NSWorkspace.shared.open(url) }
-    }
     func saveKey(_ key: String) {
         do { try KeychainStore.save(key); refreshPermissions(); error = nil } catch { self.error = error.localizedDescription }
     }
@@ -264,16 +261,19 @@ final class AppModel: ObservableObject {
     }
 
     private func captureObservation() async throws -> Observation {
-        // Keep the screenshot and foreground app paired. Capturing this while
-        // speech finalizes does not require reading an accessibility tree.
+        // Pair visual and semantic evidence with the same foreground process.
+        // AX runs on its own actor, so a slow app cannot block speech or the notch.
+        // The pair can be prefetched while the accurate recognizer finishes.
         for _ in 0..<2 {
             try Task.checkCancellation()
             let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
             let capturedAt = ProcessInfo.processInfo.systemUptime
             let frame = try await computer.capture()
             try Task.checkCancellation()
+            let tree = try await accessibility.capture(processID: pid, frame: frame)
+            try Task.checkCancellation()
             if (NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0) == pid {
-                return Observation(frame: frame, processID: pid, capturedAt: capturedAt)
+                return Observation(frame: frame, accessibility: tree, processID: pid, capturedAt: capturedAt)
             }
         }
         throw MouseError.configuration("The foreground app changed while Mouse was observing it. Repeat the command.")
@@ -380,14 +380,12 @@ final class AppModel: ObservableObject {
         let hasNewInput = !pendingInputs.isEmpty
         let text = hasNewInput ? pendingInputs.joined(separator: "\n")
             : "Continue the already accepted active task from its recorded progress and the current screen."
-        let context = taskState?.contextText ?? ""
         let history = conversationContext.text
         let retirement = retiredWork
-        command = ""; transcript = ""; error = nil; lastDuration = nil
+        command = ""; transcript = ""; error = nil
         let token = UUID(); generation = token
         working = true; status = "Thinking…"; voice.setExecuting(true)
         notch.show(.thinking)
-        let started = Date()
         runningTask = Task {
             defer { prefetched?.task.cancel() }
             do {
@@ -424,8 +422,8 @@ final class AppModel: ObservableObject {
                 }
                 try check(token)
                 guard let observation = initial else { throw MouseError.configuration("No screen observation is available.") }
-                try await runCommand(text, hasNewInput: hasNewInput, history: history, taskContext: context,
-                                     key: key, observation: observation, token: token, started: started)
+                try await runCommand(text, hasNewInput: hasNewInput, history: history,
+                                     key: key, observation: observation, token: token)
             } catch is CancellationError {
                 // A replacement owns its own history and UI; retired tasks cannot
                 // finish or overwrite the new command's entry.
@@ -437,26 +435,72 @@ final class AppModel: ObservableObject {
                 finishHistory(status: .failed, outcome: error.localizedDescription + " Completion was not confirmed; earlier actions may already have taken effect.")
                 self.error = error.localizedDescription
                 status = "Paused"
-                log(error.localizedDescription, detail: "Needs attention", symbol: "exclamationmark.circle")
+                log(error.localizedDescription, detail: "Needs attention")
                 finish(token)
                 showNotice("Paused · check Mouse settings")
             }
         }
     }
 
-    private func runCommand(_ text: String, hasNewInput: Bool, history: String, taskContext: String,
-                            key: String, observation initial: Observation, token: UUID, started: Date) async throws {
-        let client = OpenAIComputerClient(apiKey: key)
+    private func runCommand(_ text: String, hasNewInput: Bool, history: String,
+                            key: String, observation initial: Observation, token: UUID) async throws {
+        let selector = DecisionsClient(apiKey: key)
+        let generator = OpenAIComputerClient(apiKey: key)
         var observation = initial
         var step = 0
         var firstTurn = true
-        try check(token)
-        status = "Choosing the next action…"
-        countRequest()
-        var turn = try await client.begin(command: text, frame: observation.frame, context: history, activeTask: taskContext)
         while true {
             try check(token)
-            record(turn)
+            status = "Choosing the next action…"
+            notch.show(.thinking)
+            let newInput = firstTurn && hasNewInput
+            let input = newInput ? text : (taskState?.goal ?? text)
+            // Decisions cannot rewrite a goal. An accepted amendment goes to the
+            // generator so it can preserve unaffected steps and resolve whether
+            // this is a revision or replacement. Plain AX steps need no generator.
+            let needsGoalUpdate = newInput && taskState != nil
+            let options = ComputerDecisionOptions(snapshot: observation.accessibility,
+                                                  allowNativeActions: !needsGoalUpdate,
+                                                  allowCompletion: !needsGoalUpdate,
+                                                  allowIgnore: newInput)
+            let context = DecisionContext(currentInput: input, isContinuation: !newInput,
+                                          activeTask: taskState?.contextText ?? "",
+                                          sessionHistory: history, accessibility: observation.accessibility)
+            let contextText = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
+            countRequest()
+            let decision = try await selector.decide(instructions: ComputerDecisionOptions.instructions,
+                                                    context: contextText, frame: observation.frame,
+                                                    questions: options.questions)
+            try check(token)
+            budget.record(inputTokens: decision.inputTokens, outputTokens: decision.outputTokens, rate: .decisions)
+            persistUsage()
+
+            var native: (element: AccessibilityElement, action: String)?
+            let turn: ModelTurn
+            let selection = try options.resolve(decision)
+            switch selection {
+            case let .native(element, action, description):
+                native = (element, action)
+                // This record describes what was dispatched; its snapshot ID is
+                // intentionally not reusable as a target in a later observation.
+                let record = ComputerAction(type: "accessibility", text: "\(action) on \(element.label ?? element.role)")
+                let update = TaskUpdate(kind: taskState == nil ? .replace : .revise, goal: input)
+                turn = ModelTurn(id: UUID().uuidString,
+                                 calls: [ComputerCall(callID: UUID().uuidString, actions: [record], description: description)],
+                                 taskUpdate: update)
+            case .generate, .review:
+                countRequest()
+                turn = try await generator.begin(command: input, frame: observation.frame, context: history,
+                                                 activeTask: taskState?.contextText ?? "",
+                                                 accessibility: observation.accessibility.contextText,
+                                                 continuingTask: !newInput, reviewRequired: selection == .review)
+                try check(token)
+                record(turn)
+            case .complete:
+                turn = ModelTurn(id: UUID().uuidString, calls: [], message: "Done")
+            case .ignore:
+                turn = ModelTurn(id: UUID().uuidString, calls: [], ignored: true)
+            }
             // Raw speech and an in-flight text check do not invalidate this
             // response. A confirmed redirect or immediate Stop changes its token.
             try check(token)
@@ -470,7 +514,7 @@ final class AppModel: ObservableObject {
                         return
                     }
                 }
-                finishHistory(status: .stopped, outcome: "Luna ended the task without confirming completion.")
+                finishHistory(status: .stopped, outcome: "The model ended the task without confirming completion.")
                 finish(token)
                 return
             }
@@ -490,7 +534,7 @@ final class AppModel: ObservableObject {
                 taskPausedForUser = false
                 taskClarification = nil
                 currentHistoryEntryID = conversationContext.begin(command: text)
-                log(text, detail: "Command", symbol: "waveform")
+                log(text, detail: "Command")
             }
             firstTurn = false
             if let reason = turn.pauseReason {
@@ -498,53 +542,64 @@ final class AppModel: ObservableObject {
                 finishHistory(status: .paused, outcome: reason)
                 taskPausedForUser = true
                 taskClarification = reason
-                log(reason, detail: "Needs your input", symbol: "questionmark.circle")
+                log(reason, detail: "Needs your input")
                 finish(token, keepingTask: true); showNotice(reason, duration: 12)
                 return
             }
             if turn.calls.isEmpty {
-                completeCommand(outcome: turn.message.isEmpty ? "Done" : turn.message, token: token, started: started)
+                completeCommand(outcome: turn.message.isEmpty ? "Done" : turn.message, token: token)
                 return
             }
             let actions = turn.calls.flatMap(\.actions)
             guard !actions.isEmpty, actions.count <= 12 else { throw MouseError.invalidAction("The model returned an empty or oversized action batch.") }
-            guard turn.calls.allSatisfy({ $0.safetyChecks.isEmpty }) else {
-                throw MouseError.permission("Mouse paused for the requested review. Give a new instruction when ready.")
-            }
             try validateObservation(observation)
-            for action in actions { try computer.validateAction(action, frame: observation.frame) }
-            var outputs: [(callID: String, frame: ScreenshotFrame)] = []
+            if native == nil {
+                for action in actions { try computer.validateAction(action, frame: observation.frame) }
+            }
             for call in turn.calls {
                 try check(token)
                 status = call.description; notch.show(.working(call.description))
                 for action in call.actions {
                     try check(token)
                     let dispatchID = taskState?.beginAction(action: action, description: call.description)
-                    try await computer.execute(action, frame: observation.frame)
+                    if let native {
+                        // AX revalidates the exact retained element before acting.
+                        // An ambiguous result stops here: do not blindly replay it
+                        // as a click, since the first action may have taken effect.
+                        try await accessibility.perform(action: native.action, targetID: native.element.id,
+                                                        snapshotID: observation.accessibility.id,
+                                                        processID: observation.processID)
+                    } else {
+                        try await computer.execute(action, frame: observation.frame)
+                    }
                     try check(token)
                     if let dispatchID { taskState?.finishAction(id: dispatchID) }
                 }
-                // Let the interface settle before capturing what Luna will see next.
+                // Let the interface settle before taking a fresh image/tree pair.
                 // This suspension is cancellable: Stop interrupts it immediately.
                 try await Task.sleep(for: .milliseconds(1_000))
                 try check(token)
                 observation = try await captureObservation()
-                outputs.append((callID: call.callID, frame: observation.frame))
             }
-            log(turn.calls.map(\.description).joined(separator: " · "), detail: "Step \(step + 1)", symbol: "cursorarrow.click")
+            log(turn.calls.map(\.description).joined(separator: " · "), detail: "Step \(step + 1)")
             step += 1
             try check(token)
-            countRequest(); status = "Checking the result"
-            notch.show(.thinking)
-            // The same Responses chain carries the task and prior actions forward.
-            turn = try await client.continueTurn(responseID: turn.id, outputs: outputs)
+            // Every next step returns to Decisions. Generated actions are a single
+            // fallback operation, never an unobserved plan for the rest of a task.
         }
     }
 
-    private func completeCommand(outcome: String, token: UUID, started: Date) {
+    private struct DecisionContext: Encodable {
+        let currentInput: String
+        let isContinuation: Bool
+        let activeTask: String
+        let sessionHistory: String
+        let accessibility: AccessibilitySnapshot
+    }
+
+    private func completeCommand(outcome: String, token: UUID) {
         finishHistory(status: .completed, outcome: outcome)
-        log(outcome, detail: "Response", symbol: "text.bubble")
-        lastDuration = Date().timeIntervalSince(started)
+        log(outcome, detail: "Response")
         finish(token)
     }
 
@@ -564,7 +619,7 @@ final class AppModel: ObservableObject {
         taskState = nil; pendingInputs.removeAll(); taskPausedForUser = false; taskClarification = nil
         working = false; voice.setExecuting(false)
         transcript = ""
-        if !silent { status = "Stopped"; if wasWorking { log("Stopped immediately", detail: "Queued actions cancelled", symbol: "stop.circle") } }
+        if !silent { status = "Stopped"; if wasWorking { log("Stopped immediately", detail: "Queued actions cancelled") } }
         showRestingState()
     }
     private func check(_ token: UUID) throws {
@@ -608,8 +663,8 @@ final class AppModel: ObservableObject {
             usageWarning = "Usage could not be saved. Requests remain enabled; this session counts in memory."
         }
     }
-    private func log(_ title: String, detail: String, symbol: String) {
-        activity.insert(Activity(title: title, detail: detail, symbol: symbol), at: 0)
+    private func log(_ title: String, detail: String) {
+        activity.insert(Activity(title: title, detail: detail), at: 0)
         if activity.count > 20 { activity.removeLast(activity.count - 20) }
     }
 }

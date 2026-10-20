@@ -32,9 +32,9 @@ public enum SpeechAudioHistoryPolicy {
     }
 }
 
-/// Raw microphone activity must block actions before recognition produces text.
-/// A text-free noise burst can release that block after the normal endpoint;
-/// a real utterance releases it only once its accurate transcription commits.
+/// Tracks captured audio that recognition has not consumed yet. This keeps idle
+/// transcript cleanup from racing a pending utterance; it does not pause desktop
+/// actions. Only a command accepted by speech screening can interrupt execution.
 public struct SpeechActivityGate {
     private var consumedSpeechAt: TimeInterval
     private var lastNotifiedSpeechAt: TimeInterval

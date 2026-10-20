@@ -13,14 +13,11 @@ final class VoiceInput {
     var onFinalizationInvalidated: ((UUID) -> Void)?
     var onFinalizedCommand: ((String, UUID) -> Void)?
     var onPartial: ((String) -> Void)?
-    var onSpeechActivity: (() -> Void)?
-    var onSpeechIdle: (() -> Void)?
     var onLevel: ((Double) -> Void)?
     var onStatus: ((String) -> Void)?
     var onActivationChanged: ((Bool) -> Void)?
     var onDeactivation: (() -> Void)?
     var onFailure: ((String) -> Void)?
-    var isActive: Bool { session.isActive }
     var isEnabled: Bool { recovery.isEnabled }
     /// Includes raw audio that has not yet reached the timer/recognizer.
     /// Activity alone is not permission to interrupt the current computer task.
@@ -311,9 +308,9 @@ final class VoiceInput {
         guard let feed else { return }
         let now = Self.now
         let meter = feed.meter()
-        if activityGate.observe(lastSpeechAt: meter.lastSpeechAt), session.isActive {
-            onSpeechActivity?()
-        }
+        // Track unconsumed audio for transcript/idle UI state. Raw sound no
+        // longer interrupts computer actions; only accepted speech can do that.
+        _ = activityGate.observe(lastSpeechAt: meter.lastSpeechAt)
         guard isRunning, lifecycle == id else { return }
         // Check the short endpoint frequently without increasing UI meter updates.
         if now - lastLevelUpdateAt >= 0.1 {
@@ -323,11 +320,9 @@ final class VoiceInput {
         }
         if now - meter.lastBufferAt > 3 { fail(InputError.audioStalled.localizedDescription, lifecycle: id); return }
         if transcript.observeAudio(end: transcript.audioEnd, lastSpeechAt: meter.lastSpeechAt) { cancelFinalPass() }
-        if activityGate.finishIdle(at: now, lastSpeechAt: meter.lastSpeechAt,
+        _ = activityGate.finishIdle(at: now, lastSpeechAt: meter.lastSpeechAt,
             lastResultAt: transcript.lastResultAt, hasUnfinishedText: !transcript.text.isEmpty,
-            isFinalizing: finalTask != nil), session.isActive {
-            onSpeechIdle?()
-        }
+            isFinalizing: finalTask != nil)
         guard isRunning, lifecycle == id else { return }
         guard finalTask == nil, let candidate = transcript.beginFinalization(at: now, silenceDuration: SpeechAudioHistoryPolicy.endpointSilence, latestCaptureAt: meter.lastBufferAt) else { return }
         var preview = session
@@ -393,11 +388,6 @@ final class VoiceInput {
                 self.handle(events, candidateID: candidate.id)
                 if !events.contains(where: { if case .command = $0 { return true }; return false }) {
                     self.onFinalizationInvalidated?(candidate.id)
-                    // Empty replay or a wake-only utterance has no command
-                    // callback. Notify idle observers after consuming the burst.
-                    if self.session.isActive, !self.hasUncommittedSpeech {
-                        self.onSpeechIdle?()
-                    }
                 }
                 if !self.session.isExecuting { self.publishPartial("") }
             } catch is CancellationError {

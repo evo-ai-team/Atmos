@@ -27,7 +27,7 @@ final class NativeComputer {
          accessibilityCheck: @escaping () -> Bool = { AXIsProcessTrusted() && CGPreflightPostEventAccess() }) {
         postEvent = eventPoster
         checkAccessibility = accessibilityCheck
-        // Leave physical input available so the user can interrupt a command.
+        // Leave physical input available while Mouse posts its own events.
         eventSource?.localEventsSuppressionInterval = 0
     }
 

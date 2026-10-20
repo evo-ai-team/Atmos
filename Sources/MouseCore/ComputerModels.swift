@@ -42,12 +42,12 @@ public struct ComputerCall: Sendable {
     public var callID: String
     public var actions: [ComputerAction]
     public var description: String
-    public var safetyChecks: [String]
-    public init(callID: String, actions: [ComputerAction], description: String, safetyChecks: [String] = []) {
-        self.callID = callID; self.actions = actions; self.description = description; self.safetyChecks = safetyChecks
+    public init(callID: String, actions: [ComputerAction], description: String) {
+        self.callID = callID; self.actions = actions; self.description = description
     }
 }
-/// Luna resolves a new utterance against the active task in the same response as its next action.
+/// The generative planner resolves an amendment and returns the complete updated
+/// goal alongside its next action or pause, preserving unaffected requirements.
 public struct TaskUpdate: Sendable, Equatable {
     public enum Kind: String, Sendable {
         case revise, replace

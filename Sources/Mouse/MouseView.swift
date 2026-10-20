@@ -115,7 +115,7 @@ struct MouseView: View {
             } else {
                 Button("Change API key…") { editingKey = true }.controlSize(.small)
             }
-            Text("While active, Luna checks completed speech as text. Accepted commands use screenshots and session history to act. Session history clears when Mouse quits.").font(.caption).foregroundStyle(.secondary)
+            Text("While active, Mouse checks completed speech as text. Accepted commands use screenshots, app accessibility data, and session history to act. Session history clears when Mouse quits.").font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -130,7 +130,7 @@ struct MouseView: View {
             Text("\(model.budget.inputTokens.formatted()) input · \(model.budget.outputTokens.formatted()) output tokens")
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             Text(String(format: "Approx. $%.4f · No request cap", model.budget.estimatedUSD)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            Text("Luna Fast · text-only speech checks, screenshots for actions. Pauses 1 second between steps. Estimates exclude cache pricing; OpenAI reports actual billing.")
+            Text("Decisions for selection; Responses for speech checks and generated actions. Pauses 1 second between steps. This is an estimate; OpenAI reports actual billing.")
                 .font(.caption).foregroundStyle(.secondary)
             if let warning = model.usageWarning { Text(warning).font(.caption).foregroundStyle(.orange) }
         }

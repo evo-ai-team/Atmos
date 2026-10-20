@@ -23,7 +23,7 @@ enum MouseEntry {
             print("Key configured: \(KeychainStore.exists())")
             print("Screen Recording: \(native.screenRecordingGranted)")
             print("Accessibility: \(native.accessibilityGranted)")
-            print("Model: Luna Fast / low + screenshots · 1000 ms between steps")
+            print("Models: Decisions + accessibility/screenshot · Responses fallback · 1000 ms between steps")
             print("Key readable by this build: \((try? KeychainStore.load()) != nil)")
             print("Speech engine: Apple SpeechAnalyzer / SpeechTranscriber (on-device)")
             print("SpeechTranscriber available: \(SpeechTranscriber.isAvailable)")

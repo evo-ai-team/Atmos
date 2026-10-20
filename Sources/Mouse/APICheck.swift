@@ -27,7 +27,7 @@ import MouseCore
             inputTokens += turn.inputTokens
             outputTokens += turn.outputTokens
             let actions = turn.calls.flatMap(\.actions)
-            guard turn.pauseReason == nil, turn.calls.allSatisfy({ $0.safetyChecks.isEmpty }) else {
+            guard turn.pauseReason == nil else {
                 throw failure("The fixture requested user input or review.", turn: turn)
             }
             if clicked {

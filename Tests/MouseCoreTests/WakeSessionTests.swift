@@ -2,6 +2,14 @@ import XCTest
 @testable import MouseCore
 
 final class WakeSessionTests: XCTestCase {
+    func testUnfinishedWakePrefixIsNotDiscardedAtShortEndpoint() {
+        for text in ["He", "Hey", "Hey M", "Hey Mou", "Hey Mouse", "okay hey", "please hey mo"] {
+            XCTAssertTrue(WakeSession.isPossibleWakePrefix(text), text)
+        }
+        for text in ["", "he said", "hey Mark", "open Chrome", "\"Hey Mouse\"", "Hey Mouse open Chrome"] {
+            XCTAssertFalse(WakeSession.isPossibleWakePrefix(text), text)
+        }
+    }
     func testStandbyIgnoresOrdinaryReportedAndQuotedSpeech() {
         for text in ["open Chrome", "he said hey Mouse open Chrome", "don't say hey Mouse", "they chose an excellent option", "hey mousy open Safari", "\"hey Mouse open Chrome\""] {
             var session = WakeSession()
@@ -50,13 +58,16 @@ final class WakeSessionTests: XCTestCase {
         XCTAssertEqual(session.finishUtterance(at: 2), [.command("open Chrome")])
     }
 
-    func testEveryActiveIdleUtteranceReachesModelUnchanged() {
-        for text in ["what is the weather?", "how do I open Chrome", "he said open Chrome", "don't open Chrome", "that's interesting", "stop by later", "Could you bring the spreadsheet I was just working on back?", "Put that over there", "Launch ImaginaryApp", "open", "I wonder whether this will work."] {
-            var session = WakeSession()
-            _ = session.activate(at: 0)
-            XCTAssertEqual(session.receive(text, at: 1), [.partial(text)], text)
-            XCTAssertEqual(session.finishUtterance(at: 2), [.command(text)], text)
-            XCTAssertTrue(session.isActive, text)
+    func testEveryActiveUtteranceReachesModelUnchanged() {
+        for text in ["what is the weather?", "how do I open Chrome", "he said open Chrome", "don't open Chrome", "that's interesting", "Could you bring the spreadsheet I was just working on back?", "Put that over there", "Launch ImaginaryApp", "open", "I wonder whether this will work."] {
+            for executing in [false, true] {
+                var session = WakeSession()
+                _ = session.activate(at: 0)
+                session.setExecuting(executing, at: 0)
+                XCTAssertEqual(session.receive(text, at: 1), [.partial(text)], text)
+                XCTAssertEqual(session.finishUtterance(at: 2), [.command(text)], text)
+                XCTAssertTrue(session.isActive, text)
+            }
         }
     }
 
@@ -115,20 +126,20 @@ final class WakeSessionTests: XCTestCase {
         var session = WakeSession()
         _ = session.activate(at: 0)
         session.setExecuting(true, at: 1)
-        XCTAssertEqual(session.receive("cancel", at: 2), [])
-        XCTAssertEqual(session.finishUtterance(at: 3), [.ignored])
+        XCTAssertEqual(session.receive("cancel", at: 2), [.partial("cancel")])
+        XCTAssertEqual(session.finishUtterance(at: 3), [.command("cancel")])
         XCTAssertTrue(session.isExecuting)
         XCTAssertTrue(session.isActive)
     }
 
-    func testStopSleepsAfterEndpointAndRequiresWakeForNextCommand() {
+    func testStopSleepsImmediatelyAndRequiresWakeForNextCommand() {
         for executing in [false, true] {
             var session = WakeSession()
             _ = session.activate(at: 0)
             session.setExecuting(executing, at: 1)
-            XCTAssertEqual(session.receive("stop", at: 2), [])
-            XCTAssertTrue(session.isActive)
-            XCTAssertEqual(session.finishUtterance(at: 3), [.deactivated])
+            XCTAssertEqual(session.receive("stop", at: 2), [.deactivated])
+            XCTAssertFalse(session.isActive)
+            XCTAssertEqual(session.finishUtterance(at: 3), [])
             XCTAssertFalse(session.isActive)
             XCTAssertFalse(session.isExecuting)
             session.beginRecognition()
@@ -141,39 +152,51 @@ final class WakeSessionTests: XCTestCase {
     }
 
     func testFalseControlPhrasesNeverCancelOrSleepDuringExecution() {
-        for text in ["stop by later", "don't stop", "cancel my dinner reservation", "stop listening to that story", "he said stop", "we should go to sleep soon"] {
+        for text in ["don't stop", "cancel my dinner reservation", "he said stop", "we should go to sleep soon"] {
             var session = WakeSession()
             _ = session.activate(at: 0)
             session.setExecuting(true, at: 1)
-            XCTAssertEqual(session.receive(text, at: 2), [], text)
-            XCTAssertEqual(session.finishUtterance(at: 3), [.ignored], text)
+            XCTAssertEqual(session.receive(text, at: 2), [.partial(text)], text)
+            XCTAssertEqual(session.finishUtterance(at: 3), [.command(text)], text)
             XCTAssertTrue(session.isExecuting, text)
             XCTAssertTrue(session.isActive, text)
         }
     }
 
-    func testStopPartialCanFinishAsCasualSpeechWithoutCancelling() {
+    func testStopPartialCannotBeUndoneByLaterRecognitionRevision() {
         var session = WakeSession()
         _ = session.activate(at: 0)
         session.setExecuting(true, at: 1)
-        XCTAssertEqual(session.receive("stop", at: 2), [])
+        XCTAssertEqual(session.receive("stop", at: 2), [.deactivated])
         XCTAssertEqual(session.receive("stop by later", at: 2.1), [])
-        XCTAssertEqual(session.finishUtterance(at: 3), [.ignored])
-        XCTAssertTrue(session.isExecuting)
+        XCTAssertEqual(session.finishUtterance(at: 3), [])
+        XCTAssertFalse(session.isExecuting)
+        XCTAssertFalse(session.isActive)
     }
 
-    func testStopListeningIsNotInterceptedAcrossPartialsAndRecovery() {
+    func testInitialStopSleepsEvenWhenRecognizerReturnsSeveralWordsAtOnce() {
+        for text in ["stop now", "stop listening", "stop by later", "Stop, Mouse"] {
+            var session = WakeSession()
+            _ = session.activate(at: 0)
+            XCTAssertEqual(session.receive(text, at: 1), [.deactivated], text)
+            XCTAssertEqual(session.finishUtterance(at: 2), [], text)
+            XCTAssertFalse(session.isActive)
+        }
+    }
+
+    func testFastWakeRetainsFollowingWordsForCorrectedReplay() {
         var session = WakeSession()
-        _ = session.activate(at: 0)
-        XCTAssertEqual(session.receive("stop", at: 1), [])
-        session.beginRecognition(preservingPending: true)
-        XCTAssertEqual(session.receive("listening", at: 1.2), [.partial("stop listening")])
-        XCTAssertEqual(session.finishUtterance(at: 2), [.command("stop listening")])
+        XCTAssertEqual(session.receive("Hey Mouse", at: 0), [.activated])
+        XCTAssertTrue(session.isActive)
+        XCTAssertEqual(session.receive("Hey Mouse open Crome", at: 0.2), [.partial("open Crome")])
+        session.beginRecognition()
+        XCTAssertEqual(session.receive("Hey Mouse open Chrome", at: 0.5), [.partial("open Chrome")])
+        XCTAssertEqual(session.finishUtterance(at: 0.5), [.command("open Chrome")])
         XCTAssertTrue(session.isActive)
     }
 
     func testFormerControlPhrasesAreOrdinaryModelUtterances() {
-        for text in ["cancel", "cancel that", "sleep", "go to sleep", "stop listening", "sleep Mouse", "please stop", "stop now"] {
+        for text in ["cancel", "cancel that", "sleep", "go to sleep", "sleep Mouse", "please stop"] {
             var session = WakeSession()
             _ = session.activate(at: 0)
             XCTAssertEqual(session.receive(text, at: 1), [.partial(text)], text)
@@ -184,8 +207,8 @@ final class WakeSessionTests: XCTestCase {
 
     func testWakePhraseFollowedByBareStopSleepsLocally() {
         var session = WakeSession()
-        XCTAssertEqual(session.receive("Hey Mouse stop", at: 1), [.activated])
-        XCTAssertEqual(session.finishUtterance(at: 2), [.deactivated])
+        XCTAssertEqual(session.receive("Hey Mouse stop", at: 1), [.activated, .deactivated])
+        XCTAssertEqual(session.finishUtterance(at: 2), [])
         XCTAssertFalse(session.isActive)
     }
 
@@ -193,31 +216,68 @@ final class WakeSessionTests: XCTestCase {
         var session = WakeSession()
         _ = session.activate(at: 0)
         session.setExecuting(true, at: 1)
-        XCTAssertEqual(session.receive("Hey Mouse stop", at: 2), [])
-        XCTAssertEqual(session.finishUtterance(at: 3), [.deactivated])
+        XCTAssertEqual(session.receive("Hey Mouse stop", at: 2), [.deactivated])
+        XCTAssertEqual(session.finishUtterance(at: 3), [])
         XCTAssertFalse(session.isExecuting)
         XCTAssertFalse(session.isActive)
     }
 
-    func testAmbientExecutionUtteranceIsConsumedBeforeLaterStop() {
+    func testBusyUtteranceReachesModelAndIsConsumedBeforeLaterStop() {
         var session = WakeSession()
         _ = session.activate(at: 0)
         session.setExecuting(true, at: 1)
-        XCTAssertEqual(session.receive("background conversation", at: 2), [])
-        XCTAssertEqual(session.finishUtterance(at: 3), [.ignored])
-        XCTAssertEqual(session.receive("background conversation stop", at: 4), [])
-        XCTAssertEqual(session.finishUtterance(at: 5), [.deactivated])
+        XCTAssertEqual(session.receive("background conversation", at: 2), [.partial("background conversation")])
+        XCTAssertEqual(session.finishUtterance(at: 3), [.command("background conversation")])
+        XCTAssertEqual(session.receive("background conversation stop", at: 4), [.deactivated])
+        XCTAssertEqual(session.finishUtterance(at: 5), [])
     }
 
-    func testExecutionCompletionConsumesAmbientSpeechBeforeNextCommand() {
+    func testExecutionCompletionPreservesAnUnfinishedCorrection() {
         var session = WakeSession()
         _ = session.activate(at: 0)
         session.setExecuting(true, at: 1)
-        _ = session.receive("background conversation", at: 2)
+        XCTAssertEqual(session.receive("actually use", at: 2), [.partial("actually use")])
         session.setExecuting(false, at: 3)
-        XCTAssertEqual(session.finishUtterance(at: 4), [])
-        XCTAssertEqual(session.receive("background conversation open Notes", at: 5), [.partial("open Notes")])
-        XCTAssertEqual(session.finishUtterance(at: 6), [.command("open Notes")])
+        XCTAssertEqual(session.pendingCommand, "actually use")
+        XCTAssertEqual(session.lastChangeAt, 2)
+        XCTAssertEqual(session.receive("actually use Safari instead", at: 4), [.partial("actually use Safari instead")])
+        XCTAssertEqual(session.finishUtterance(at: 5), [.command("actually use Safari instead")])
+    }
+
+    func testStartingExecutionPreservesSpeechAlreadyInProgress() {
+        var session = WakeSession()
+        _ = session.activate(at: 0)
+        XCTAssertEqual(session.receive("then open", at: 1), [.partial("then open")])
+        session.setExecuting(true, at: 1.1)
+        XCTAssertEqual(session.pendingCommand, "then open")
+        XCTAssertEqual(session.receive("then open the store link", at: 1.4), [.partial("then open the store link")])
+        XCTAssertEqual(session.finishUtterance(at: 2), [.command("then open the store link")])
+        XCTAssertEqual(session.finishUtterance(at: 3), [])
+    }
+
+    func testBusyRecognitionRotationPreservesCorrectionAcrossTaskCompletion() {
+        var session = WakeSession()
+        _ = session.activate(at: 0)
+        session.setExecuting(true, at: 1)
+        _ = session.receive("change the search to", at: 2)
+        session.beginRecognition(preservingPending: true)
+        session.setExecuting(false, at: 2.5)
+        XCTAssertEqual(session.receive("MacBook reviews", at: 3), [.partial("change the search to MacBook reviews")])
+        XCTAssertEqual(session.finishUtterance(at: 4), [.command("change the search to MacBook reviews")])
+    }
+
+    func testConsumedReplayBoundaryAllowsShorterContinuationWhileBusy() {
+        var session = WakeSession()
+        _ = session.activate(at: 0)
+        _ = session.receive("open Chrome and search YouTube for Linus Tech Tips", at: 1)
+        XCTAssertEqual(session.finishUtterance(at: 2),
+                       [.command("open Chrome and search YouTube for Linus Tech Tips")])
+        // Accurate replay consumes those audio samples. The next live result
+        // contains only new words, even though the original task is still busy.
+        session.beginRecognition(preservingPending: false)
+        session.setExecuting(true, at: 2)
+        XCTAssertEqual(session.receive("actually Safari", at: 3), [.partial("actually Safari")])
+        XCTAssertEqual(session.finishUtterance(at: 4), [.command("actually Safari")])
     }
 
     func testExecutionCompletionDoesNotDropPendingSleepInstruction() {
@@ -226,7 +286,8 @@ final class WakeSessionTests: XCTestCase {
         session.setExecuting(true, at: 1)
         _ = session.receive("stop", at: 2)
         session.setExecuting(false, at: 2.1)
-        XCTAssertEqual(session.finishUtterance(at: 3), [.deactivated])
+        XCTAssertEqual(session.finishUtterance(at: 3), [])
+        XCTAssertFalse(session.isActive)
     }
 
     func testTypedExecutionCannotActivateWithWakeHeardDuringTask() {
@@ -243,7 +304,8 @@ final class WakeSessionTests: XCTestCase {
         var session = WakeSession()
         session.setExecuting(true, at: 1)
         _ = session.receive("stop", at: 2)
-        XCTAssertEqual(session.finishUtterance(at: 3), [.deactivated])
+        XCTAssertEqual(session.finishUtterance(at: 3), [])
+        XCTAssertFalse(session.isActive)
         XCTAssertFalse(session.isActive)
     }
 

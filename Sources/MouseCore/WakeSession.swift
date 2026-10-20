@@ -1,7 +1,7 @@
 import Foundation
 
-/// Standby speech stays local. Once activated, every completed idle utterance
-/// goes to the model; only bare "stop" is interpreted locally.
+/// Standby speech stays local. Once activated, every completed utterance
+/// goes to the model; an initial "stop" is interpreted locally without waiting.
 public struct WakeSession {
     public enum Event: Equatable {
         case activated
@@ -22,6 +22,20 @@ public struct WakeSession {
     private var displayedPartial = ""
 
     public init() {}
+
+    /// Do not consume an unfinished wake prefix as background speech merely
+    /// because a short endpoint elapsed before Apple's next volatile update.
+    public static func isPossibleWakePrefix(_ text: String) -> Bool {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !["\"", "“", "'", "‘"].contains(where: { value.hasPrefix($0) }) else { return false }
+        let words = tokens(in: value).map(\.word)
+        let polite = words.prefix(while: { ["okay", "ok", "please"].contains($0) }).count
+        guard polite <= 2 else { return false }
+        let remaining = Array(words.dropFirst(polite))
+        if remaining.isEmpty { return polite > 0 }
+        if remaining.count == 1 { return "hey".hasPrefix(remaining[0]) }
+        return remaining.count == 2 && remaining[0] == "hey" && "mouse".hasPrefix(remaining[1])
+    }
 
     /// Replace a cumulative recognition stream without losing an unfinished
     /// utterance, activation, or a split wake/control phrase.
@@ -52,10 +66,9 @@ public struct WakeSession {
     }
 
     public mutating func setExecuting(_ executing: Bool, at time: TimeInterval) {
-        let finishedExecution = isExecuting && !executing
         isExecuting = executing
-        // Consume speech heard during the task before accepting a new command.
-        if executing || (finishedExecution && VoiceControl.match(pendingCommand) == nil) { clearUtterance() }
+        // Task execution is metadata, not an utterance boundary. A continuation
+        // or correction may span a model request or the completion of an action.
     }
 
     public mutating func receive(_ transcript: String, at time: TimeInterval) -> [Event] {
@@ -85,11 +98,14 @@ public struct WakeSession {
             }
         }
 
+        if (isActive || isExecuting), VoiceControl.match(utterance) == .sleep {
+            return events + deactivate()
+        }
         pendingCommand = utterance
         lastChangeAt = time
-        // Controls wait for the acoustic endpoint as well: a partial "stop"
-        // must not cancel a task before it becomes "stop by later".
-        let visible = isActive && !isExecuting && VoiceControl.match(utterance) == nil ? utterance : ""
+        // Ordinary provisional words only update the UI. Commands are emitted
+        // by finishUtterance after the separate accurate recognition pass.
+        let visible = isActive && VoiceControl.match(utterance) == nil ? utterance : ""
         if visible != displayedPartial {
             displayedPartial = visible
             events.append(.partial(visible))
@@ -105,7 +121,7 @@ public struct WakeSession {
         guard hadUtterance else { return [] }
         guard isActive || isExecuting else { return [] }
         if VoiceControl.match(utterance) == .sleep { return deactivate() }
-        guard !isExecuting else { return [.ignored] }
+        guard isActive else { return [.ignored] }
         return [.command(utterance)]
     }
 

@@ -99,6 +99,8 @@ final class NativeComputer {
         _ = try validate(action, frame: frame)
     }
 
+    func validateFrame(_ frame: ScreenshotFrame) throws { try validateDisplay(frame) }
+
     static func encodeJPEG(_ image: CGImage) throws -> Data {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {

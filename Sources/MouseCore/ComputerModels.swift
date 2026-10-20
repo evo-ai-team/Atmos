@@ -47,6 +47,18 @@ public struct ComputerCall: Sendable {
         self.callID = callID; self.actions = actions; self.description = description; self.safetyChecks = safetyChecks
     }
 }
+/// Luna resolves a new utterance against the active task in the same response as its next action.
+public struct TaskUpdate: Sendable, Equatable {
+    public enum Kind: String, Sendable {
+        case revise, replace
+    }
+    public var kind: Kind
+    public var goal: String
+    public init(kind: Kind, goal: String) {
+        self.kind = kind
+        self.goal = goal
+    }
+}
 public struct ModelTurn: Sendable {
     public var id: String
     public var calls: [ComputerCall]
@@ -55,16 +67,19 @@ public struct ModelTurn: Sendable {
     public var pauseReason: String?
     /// The utterance was not a clear request for computer control. Stay silent and take no action.
     public var ignored: Bool
+    /// Present with an action or pause; absent for ignored speech and final messages.
+    public var taskUpdate: TaskUpdate?
     public var inputTokens: Int
     public var outputTokens: Int
-    public init(id: String, calls: [ComputerCall], message: String = "", pauseReason: String? = nil, ignored: Bool = false, inputTokens: Int = 0, outputTokens: Int = 0) {
+    public init(id: String, calls: [ComputerCall], message: String = "", pauseReason: String? = nil, ignored: Bool = false, taskUpdate: TaskUpdate? = nil, inputTokens: Int = 0, outputTokens: Int = 0) {
         self.id = id; self.calls = calls; self.message = message; self.pauseReason = pauseReason; self.ignored = ignored
+        self.taskUpdate = taskUpdate
         self.inputTokens = inputTokens; self.outputTokens = outputTokens
     }
 }
 public enum MouseError: LocalizedError, Equatable {
-    case invalidAction(String), permission(String), api(String), configuration(String), limit(String)
+    case invalidAction(String), permission(String), api(String), configuration(String)
     public var errorDescription: String? {
-        switch self { case .invalidAction(let s), .permission(let s), .api(let s), .configuration(let s), .limit(let s): return s }
+        switch self { case .invalidAction(let s), .permission(let s), .api(let s), .configuration(let s): return s }
     }
 }

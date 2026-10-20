@@ -1,11 +1,12 @@
 import AppKit
 import QuartzCore
 
-/// The notch is deliberately the whole interface: no controls or activity dots.
+/// The notch is the interface; loading uses a compact, noninteractive dot ring.
 enum MouseOverlayState: Equatable {
     case standby
     case active
     case transcribing(String)
+    case thinking
     case working(String)
     case notice(String)
 }
@@ -32,6 +33,23 @@ final class MouseNotchController {
         transitionID += 1
         let currentTransition = transitionID
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let present = { [weak self] in
+            guard let self, self.transitionID == currentTransition else { return }
+            self.present(nextState, after: previousState, geometry: geometry,
+                         transition: currentTransition, reduceMotion: reduceMotion)
+        }
+        if nextState != .thinking, surface.isThinkingVisible {
+            // This is purely a presentation transition. Execution does not wait
+            // for the dots to leave, and newer states supersede this callback.
+            surface.finishThinking(animated: !reduceMotion, completion: present)
+        } else {
+            present()
+        }
+    }
+
+    private func present(_ nextState: MouseOverlayState, after previousState: MouseOverlayState,
+                         geometry: MouseNotchGeometry, transition currentTransition: Int,
+                         reduceMotion: Bool) {
         let duration = reduceMotion ? 0 : 0.30
 
         if nextState == .standby {
@@ -39,6 +57,7 @@ final class MouseNotchController {
                             horizontalInset: 24, wraps: false, animate: false)
             guard panel.isVisible else { return }
             panel.alphaValue = 1
+            surface.prepareResize(to: geometry.collapsedFrame.size, shoulderRadius: 0)
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = duration
                 context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -62,18 +81,22 @@ final class MouseNotchController {
                         wraps: presentation.wraps,
                         animate: !reduceMotion && !(wasTranscribing && isTranscribing))
         surface.applyAccessibilityPreferences()
+        if nextState == .thinking { surface.startThinking(reduceMotion: reduceMotion) }
 
         if !panel.isVisible {
             panel.alphaValue = 1
             panel.setFrame(geometry.collapsedFrame, display: false)
+            surface.resetCollapsedContour()
             // orderFrontRegardless does not activate the app. The panel cannot
             // become key, and mouse events pass to the application underneath.
             panel.orderFrontRegardless()
         }
+        let targetFrame = geometry.frame(size: presentation.size)
+        surface.prepareResize(to: targetFrame.size, shoulderRadius: MouseNotchContour.shoulderRadius)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.8, 0.25, 1)
-            panel.animator().setFrame(geometry.frame(size: presentation.size), display: true)
+            panel.animator().setFrame(targetFrame, display: true)
         }
     }
 
@@ -113,6 +136,39 @@ private final class MouseNotchPanel: NSPanel {
     }
 }
 
+private enum MouseNotchContour {
+    // A fixed-size, concave shoulder turns each side into the screen edge.
+    // Keep it small even when a long transcript expands the body.
+    static let shoulderRadius: CGFloat = 6
+}
+
+/// Derive the shoulder inset from the window's current size, so there is only
+/// one animation clock. A fixed inset would let the visible sides cross into
+/// the hardware notch before the bottom arrives there.
+private struct MouseNotchContourResize {
+    var startSize: NSSize = .zero
+    var targetSize: NSSize = .zero
+    var startRadius: CGFloat = 0
+    var targetRadius: CGFloat = 0
+
+    func radius(at size: NSSize) -> CGFloat {
+        let widthChange = targetSize.width - startSize.width
+        let heightChange = targetSize.height - startSize.height
+        let change: CGFloat
+        let traveled: CGFloat
+        if abs(widthChange) >= abs(heightChange) {
+            change = widthChange
+            traveled = size.width - startSize.width
+        } else {
+            change = heightChange
+            traveled = size.height - startSize.height
+        }
+        guard abs(change) > 0.001 else { return targetRadius }
+        let progress = max(0, min(1, traveled / change))
+        return startRadius + (targetRadius - startRadius) * progress
+    }
+}
+
 private struct MouseNotchGeometry {
     let screenFrame: NSRect
     let centerX: CGFloat
@@ -131,10 +187,19 @@ private struct MouseNotchGeometry {
     }
 
     var collapsedFrame: NSRect {
-        frame(size: NSSize(width: cameraWidth, height: max(1, cameraHeight)))
+        // The entire silhouette, including its shoulders, must fit inside the
+        // hardware notch before the panel disappears.
+        anchoredFrame(size: NSSize(width: cameraWidth, height: max(1, cameraHeight)))
     }
 
     func frame(size: NSSize) -> NSRect {
+        // Leave the glass body and text layout at their existing widths; only
+        // the small shoulders extend beyond its sides.
+        anchoredFrame(size: NSSize(width: size.width + MouseNotchContour.shoulderRadius * 2,
+                                   height: size.height))
+    }
+
+    private func anchoredFrame(size: NSSize) -> NSRect {
         NSRect(x: centerX - size.width / 2, y: screenFrame.maxY - size.height,
                width: size.width, height: size.height)
     }
@@ -157,6 +222,13 @@ private struct MouseNotchPresentation {
             wraps = false
             size = NSSize(width: min(geometry.cameraWidth + 40, availableWidth),
                           height: max(30, geometry.cameraHeight + 18))
+        case .thinking:
+            text = ""
+            font = .systemFont(ofSize: 16, weight: .medium)
+            horizontalInset = 24
+            wraps = false
+            size = NSSize(width: min(geometry.cameraWidth + 16, availableWidth),
+                          height: geometry.cameraHeight + 56)
         case .transcribing(let transcript), .notice(let transcript):
             text = transcript
             font = .systemFont(ofSize: 17, weight: .regular)
@@ -191,13 +263,14 @@ private struct MouseNotchPresentation {
     }
 }
 
-/// Extending the native rounded glass above the screen clips off its upper
-/// corners. That leaves filled upper corners and straight sides, while keeping
-/// genuine native refraction along the two visible lower corners.
+/// The body retains native glass refraction along its sides and lower corners.
+/// A black cap adds concave shoulders where it joins the physical screen edge.
 private final class MouseNotchSurface: NSView {
     private let radius: CGFloat = 22
     private let glass = NSGlassEffectView()
     private let content = MouseNotchContent()
+    private let shoulders = CAShapeLayer()
+    private var contourResize = MouseNotchContourResize()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -207,6 +280,8 @@ private final class MouseNotchSurface: NSView {
         glass.cornerRadius = radius
         glass.contentView = content
         addSubview(glass)
+        shoulders.fillColor = NSColor.black.cgColor
+        layer?.addSublayer(shoulders)
         applyAccessibilityPreferences()
     }
 
@@ -216,8 +291,50 @@ private final class MouseNotchSurface: NSView {
 
     override func layout() {
         super.layout()
-        glass.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height + radius)
+        let shoulder = min(contourResize.radius(at: bounds.size), bounds.width / 2, bounds.height)
+        glass.frame = NSRect(x: shoulder, y: 0, width: max(0, bounds.width - shoulder * 2),
+                             height: bounds.height + radius)
         content.extraTopInset = radius
+
+        // These are outward shoulders, not rounded rectangle corners. Each
+        // quarter-circle is tangent to the top edge and the vertical body.
+        let top = bounds.height
+        let right = bounds.width
+        let tangent = shoulder * 0.5522847498
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 0, y: top))
+        path.addLine(to: CGPoint(x: right, y: top))
+        path.addCurve(to: CGPoint(x: right - shoulder, y: top - shoulder),
+                      control1: CGPoint(x: right - tangent, y: top),
+                      control2: CGPoint(x: right - shoulder, y: top - shoulder + tangent))
+        path.addLine(to: CGPoint(x: shoulder, y: top - shoulder))
+        path.addCurve(to: CGPoint(x: 0, y: top),
+                      control1: CGPoint(x: shoulder, y: top - shoulder + tangent),
+                      control2: CGPoint(x: tangent, y: top))
+        path.closeSubpath()
+
+        // Window resizing already supplies animation frames. Updating this
+        // path immediately prevents the cap from trailing behind the glass.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shoulders.frame = bounds
+        shoulders.path = path
+        shoulders.contentsScale = window?.backingScaleFactor ?? 2
+        CATransaction.commit()
+    }
+
+    func resetCollapsedContour() {
+        contourResize = MouseNotchContourResize()
+        needsLayout = true
+    }
+
+    func prepareResize(to size: NSSize, shoulderRadius: CGFloat) {
+        // On interruption, continue from the actual current contour instead of
+        // snapping its shoulders back to their fully expanded size.
+        contourResize = MouseNotchContourResize(
+            startSize: bounds.size, targetSize: size,
+            startRadius: contourResize.radius(at: bounds.size), targetRadius: shoulderRadius)
+        needsLayout = true
     }
 
     func setText(_ text: String, font: NSFont, cameraHeight: CGFloat, horizontalInset: CGFloat, wraps: Bool, animate: Bool) {
@@ -229,10 +346,17 @@ private final class MouseNotchSurface: NSView {
         content.reduceTransparency = reduceTransparency
         glass.style = reduceTransparency ? .regular : .clear
     }
+
+    var isThinkingVisible: Bool { content.thinkingIndicator.isVisible }
+    func startThinking(reduceMotion: Bool) { content.thinkingIndicator.start(reduceMotion: reduceMotion) }
+    func finishThinking(animated: Bool, completion: @escaping () -> Void) {
+        content.thinkingIndicator.finish(animated: animated, completion: completion)
+    }
 }
 
 private final class MouseNotchContent: NSView {
     private let label = NSTextField(labelWithString: "")
+    let thinkingIndicator = MouseThinkingIndicator()
     private var textRevision = 0
     private var cameraHeight: CGFloat = 0
     private var horizontalInset: CGFloat = 24
@@ -250,6 +374,7 @@ private final class MouseNotchContent: NSView {
         label.maximumNumberOfLines = 0
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(label)
+        addSubview(thinkingIndicator)
     }
 
     convenience init() { self.init(frame: .zero) }
@@ -287,6 +412,10 @@ private final class MouseNotchContent: NSView {
             ? ceil((font?.ascender ?? 17) - (font?.descender ?? -4) + (font?.leading ?? 0))
             : ceil(measured.height)
         label.frame = NSRect(x: horizontalInset, y: max(0, top - height), width: width, height: height)
+        let indicatorSide = MouseThinkingIndicator.preferredSide
+        thinkingIndicator.frame = NSRect(x: (bounds.width - indicatorSide) / 2,
+                                         y: max(0, top - indicatorSide),
+                                         width: indicatorSide, height: indicatorSide)
         needsDisplay = true
     }
 

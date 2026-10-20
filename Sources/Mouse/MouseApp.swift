@@ -23,11 +23,21 @@ enum MouseEntry {
             print("Key configured: \(KeychainStore.exists())")
             print("Screen Recording: \(native.screenRecordingGranted)")
             print("Accessibility: \(native.accessibilityGranted)")
-            print("Model: gpt-6-luna / Fast / low reasoning")
+            print("Model: Luna Fast / low + screenshots · 1000 ms between steps")
+            print("Key readable by this build: \((try? KeychainStore.load()) != nil)")
             print("Speech engine: Apple SpeechAnalyzer / SpeechTranscriber (on-device)")
             print("SpeechTranscriber available: \(SpeechTranscriber.isAvailable)")
             print("Microphone authorization: \(AVCaptureDevice.authorizationStatus(for: .audio).rawValue)")
             exit(0)
+        }
+        if CommandLine.arguments.contains("--microphone-check") {
+            _ = NSApplication.shared
+            Task { @MainActor in
+                do { try await MicrophoneCheck.run(); exit(0) }
+                catch { print("Microphone check failed: \(error.localizedDescription)"); exit(1) }
+            }
+            NSApplication.shared.run()
+            return
         }
         if let index = CommandLine.arguments.firstIndex(of: "--voice-check") {
             guard index + 1 < CommandLine.arguments.count else {
@@ -69,9 +79,10 @@ enum MouseEntry {
                 case "standby": overlay.show(.standby)
                 case "transcript": overlay.show(.transcribing(transcript))
                 case "action": overlay.show(.working("Opening store…"))
+                case "thinking": overlay.show(.thinking)
                 case "notice": overlay.show(.notice("Which channel did you mean?"))
                 case "cycle":
-                    let states: [MouseOverlayState] = [.active, .transcribing("Go to Chrome"), .transcribing(transcript), .working("Going to Chrome…"), .working("Searching YouTube…"), .working("Searching Linus Tech Tips…"), .working("Opening channel…"), .working("Opening store…"), .active]
+                    let states: [MouseOverlayState] = [.active, .transcribing("Go to Chrome"), .transcribing(transcript), .thinking, .working("Going to Chrome…"), .thinking, .working("Searching YouTube…"), .working("Searching Linus Tech Tips…"), .working("Opening channel…"), .working("Opening store…"), .active]
                     for item in states {
                         overlay.show(item)
                         try? await Task.sleep(for: .seconds(2))

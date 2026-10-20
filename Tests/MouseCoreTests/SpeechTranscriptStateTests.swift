@@ -28,6 +28,25 @@ final class SpeechTranscriptStateTests: XCTestCase {
         XCTAssertNotNil(state.beginFinalization(at: 3.8))
     }
 
+    func testFiveHundredMillisecondWindowWaitsForSpeechAndRevisionsAndRejectsStalePasses() throws {
+        var state = seededState()
+        XCTAssertEqual(SpeechAudioHistoryPolicy.endpointSilence, 0.500)
+        XCTAssertNil(state.beginFinalization(at: 1.699, silenceDuration: SpeechAudioHistoryPolicy.endpointSilence))
+        let first = try XCTUnwrap(state.beginFinalization(at: 1.701, silenceDuration: SpeechAudioHistoryPolicy.endpointSilence))
+
+        XCTAssertTrue(state.observeAudio(end: 2.6, lastSpeechAt: 1.71))
+        XCTAssertFalse(state.commit(first))
+        XCTAssertNil(state.beginFinalization(at: 2.209, silenceDuration: SpeechAudioHistoryPolicy.endpointSilence))
+        let second = try XCTUnwrap(state.beginFinalization(at: 2.211, silenceDuration: SpeechAudioHistoryPolicy.endpointSilence))
+
+        XCTAssertTrue(state.replace(start: 0.5, end: 1.5, with: [.init(start: 0.5, end: 1.5, text: "open Safari")], at: 2.22))
+        XCTAssertFalse(state.commit(second))
+        XCTAssertEqual(state.text, "open Safari")
+        XCTAssertNil(state.beginFinalization(at: 2.719, silenceDuration: SpeechAudioHistoryPolicy.endpointSilence))
+        let corrected = try XCTUnwrap(state.beginFinalization(at: 2.721, silenceDuration: SpeechAudioHistoryPolicy.endpointSilence))
+        XCTAssertTrue(state.commit(corrected))
+    }
+
     func testLateCorrectionInvalidatesOldSnapshotBeforeSubmission() {
         var state = seededState()
         let candidate = state.beginFinalization(at: 2.5)!

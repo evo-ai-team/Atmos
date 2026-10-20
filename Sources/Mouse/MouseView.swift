@@ -54,9 +54,9 @@ struct MouseView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(model.startingVoice ? "Preparing voice…" : model.active ? "Mouse is active" : model.listening ? "Ready for “Hey Mouse”" : "Voice is paused")
+                    Text(model.startingVoice ? "Preparing voice…" : model.listening && !model.voice.isRunning ? "Reconnecting microphone…" : model.active ? "Mouse is active" : model.listening ? "Ready for “Hey Mouse”" : "Voice is paused")
                         .font(.headline)
-                    Text(model.startingVoice ? model.status : model.active ? "Speak your next command." : "Say “Hey Mouse” to begin.").font(.callout).foregroundStyle(.secondary)
+                    Text(model.startingVoice || (model.listening && !model.voice.isRunning) ? model.status : model.active ? "Speak your next command." : "Say “Hey Mouse” to begin.").font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button(model.listening ? "Pause microphone" : "Enable voice") { model.toggleListening() }
@@ -73,7 +73,7 @@ struct MouseView: View {
             Text("Mac permissions").font(.headline)
             permission("Screen Recording", detail: "See the screen during a command", symbol: "macwindow", allowed: model.screenAllowed) { model.requestScreen() }
             Divider()
-            permission("Accessibility", detail: "Click, type, and use keyboard shortcuts", symbol: "cursorarrow", allowed: model.accessibilityAllowed) { model.requestAccessibility() }
+            permission("Accessibility", detail: "Click, type, and use shortcuts", symbol: "cursorarrow", allowed: model.accessibilityAllowed) { model.requestAccessibility() }
             Divider()
             permission("Microphone", detail: "Voice recognition stays on this Mac", symbol: "mic", allowed: model.voiceAuthorized) { if !model.listening { model.toggleListening() } }
         }.padding(16).background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 18))
@@ -115,7 +115,7 @@ struct MouseView: View {
             } else {
                 Button("Change API key…") { editingKey = true }.controlSize(.small)
             }
-            Text("While active, completed speech and screenshots go to Luna to decide whether to act.").font(.caption).foregroundStyle(.secondary)
+            Text("While active, Luna checks completed speech as text. Accepted commands use screenshots and session history to act. Session history clears when Mouse quits.").font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -130,7 +130,7 @@ struct MouseView: View {
             Text("\(model.budget.inputTokens.formatted()) input · \(model.budget.outputTokens.formatted()) output tokens")
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             Text(String(format: "Approx. $%.4f · No request cap", model.budget.estimatedUSD)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            Text("GPT-6 Luna · Fast · Low reasoning. The estimate does not account for cache pricing; OpenAI reports actual billing.")
+            Text("Luna Fast · text-only speech checks, screenshots for actions. Pauses 1 second between steps. Estimates exclude cache pricing; OpenAI reports actual billing.")
                 .font(.caption).foregroundStyle(.secondary)
             if let warning = model.usageWarning { Text(warning).font(.caption).foregroundStyle(.orange) }
         }

@@ -8,8 +8,9 @@ struct SpeechAudioPacket: @unchecked Sendable {
     let buffer: AVAudioPCMBuffer
     let start: CMTime
     let capturedAt: TimeInterval
-    init(buffer: AVAudioPCMBuffer, start: CMTime, capturedAt: TimeInterval = ProcessInfo.processInfo.systemUptime) {
-        self.buffer = buffer; self.start = start; self.capturedAt = capturedAt
+    let containsSpeech: Bool
+    init(buffer: AVAudioPCMBuffer, start: CMTime, capturedAt: TimeInterval = ProcessInfo.processInfo.systemUptime, containsSpeech: Bool = false) {
+        self.buffer = buffer; self.start = start; self.capturedAt = capturedAt; self.containsSpeech = containsSpeech
     }
     var startSeconds: Double { CMTimeGetSeconds(start) }
     var endSeconds: Double { startSeconds + Double(buffer.frameLength) / buffer.format.sampleRate }
@@ -20,15 +21,16 @@ final class SpeechAudioFeed: @unchecked Sendable {
     private struct Capture: @unchecked Sendable {
         let buffer: AVAudioPCMBuffer
         let time: TimeInterval
+        let containsSpeech: Bool
     }
     enum FeedError: LocalizedError {
         case allocation, overflow, conversion, formatChanged
         var errorDescription: String? {
             switch self {
-            case .allocation: return "Mouse could not copy microphone audio. Voice was paused before any incomplete command was submitted."
-            case .overflow: return "Speech processing fell behind the microphone. Voice was paused; please enable it and repeat the command."
+            case .allocation: return "Mouse could not copy microphone audio. The unfinished command was discarded."
+            case .overflow: return "Speech processing fell behind the microphone. The unfinished command was discarded."
             case .conversion: return "Mouse could not convert microphone audio for the speech model."
-            case .formatChanged: return "The microphone format changed. Enable the microphone again to resume voice control."
+            case .formatChanged: return "The microphone format changed."
             }
         }
     }
@@ -65,7 +67,7 @@ final class SpeechAudioFeed: @unchecked Sendable {
                     let converted = try Self.convert(captured.buffer, with: converter, to: targetFormat)
                     guard converted.frameLength > 0 else { continue }
                     let start = CMTime(value: framePosition, timescale: CMTimeScale(targetFormat.sampleRate))
-                    let packet = SpeechAudioPacket(buffer: converted, start: start, capturedAt: captured.time)
+                    let packet = SpeechAudioPacket(buffer: converted, start: start, capturedAt: captured.time, containsSpeech: captured.containsSpeech)
                     framePosition += Int64(converted.frameLength)
                     guard await onPacket(packet) else { break }
                     try Task.checkCancellation()
@@ -116,9 +118,10 @@ final class SpeechAudioFeed: @unchecked Sendable {
         lastBufferAt = now
         // This only proposes an endpoint; it can never submit provisional text.
         // Transcript activity also postpones finalization, and new sound invalidates it.
-        if energy > 0.006 { lastSpeechAt = now }
+        let containsSpeech = energy > 0.006
+        if containsSpeech { lastSpeechAt = now }
         lock.unlock()
-        switch raw.yield(Capture(buffer: copy, time: now)) {
+        switch raw.yield(Capture(buffer: copy, time: now, containsSpeech: containsSpeech)) {
         case .enqueued: break
         case .dropped: raw.finish(throwing: FeedError.overflow)
         case .terminated: break

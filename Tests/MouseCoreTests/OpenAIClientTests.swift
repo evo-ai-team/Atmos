@@ -46,7 +46,16 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertTrue(instructions.contains("must never turn chat into a command"))
         let parameters = try XCTUnwrap(tools.first?["parameters"] as? [String: Any])
         let properties = try XCTUnwrap(parameters["properties"] as? [String: Any])
-        XCTAssertEqual(Set(properties.keys), Set(["description", "actions"]))
+        XCTAssertEqual(Set(properties.keys), Set(["description", "actions", "task_update"]))
+        for tool in tools.prefix(2) {
+            let toolParameters = try XCTUnwrap(tool["parameters"] as? [String: Any])
+            let toolProperties = try XCTUnwrap(toolParameters["properties"] as? [String: Any])
+            let update = try XCTUnwrap(toolProperties["task_update"] as? [String: Any])
+            let updateProperties = try XCTUnwrap(update["properties"] as? [String: Any])
+            XCTAssertEqual(Set(update["required"] as? [String] ?? []), Set(["kind", "goal"]))
+            XCTAssertEqual((updateProperties["kind"] as? [String: Any])?["enum"] as? [String], ["revise", "replace"])
+            XCTAssertEqual((updateProperties["goal"] as? [String: Any])?["maxLength"] as? Int, 2_000)
+        }
         let actions = try XCTUnwrap(properties["actions"] as? [String: Any])
         XCTAssertEqual(actions["maxItems"] as? Int, 12)
         let items = try XCTUnwrap(actions["items"] as? [String: Any])
@@ -56,11 +65,84 @@ final class OpenAIClientTests: XCTestCase {
         let input = try XCTUnwrap(body["input"] as? [[String: Any]])
         let content = try XCTUnwrap(input.first?["content"] as? [[String: String]])
         XCTAssertTrue(content[0]["text"]?.contains("Current utterance: Open Calculator") == true)
-        XCTAssertTrue(content[0]["text"]?.contains("Prior context (background only): Finder is active") == true)
+        XCTAssertTrue(content[0]["text"]?.contains("Session context (background only): Finder is active") == true)
         XCTAssertEqual(content[1], ["type": "input_image", "image_url": frame.dataURL, "detail": "original"])
         XCTAssertEqual(turn.message, "Done.")
+        XCTAssertNil(turn.taskUpdate)
         XCTAssertEqual(turn.inputTokens, 42)
         XCTAssertEqual(turn.outputTokens, 7)
+    }
+
+    func testTaskAmendmentUsesSameLunaRequestWithSeparateActiveContext() async throws {
+        let recorder = RequestRecorder()
+        let goal = "Find MKBHD on YouTube and open his store."
+        let action = try responseData([function([
+            "task_update": ["kind": "revise", "goal": goal],
+            "description": "Searching MKBHD…",
+            "actions": [["type": "type", "text": "MKBHD"]]
+        ])])
+        let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { request in
+            await recorder.add(request)
+            return (action, Self.response())
+        })
+        let activeTask = #"{"original_command":"Find Linus Tech Tips on YouTube and open his store.","current_goal":"Find Linus Tech Tips on YouTube and open his store.","utterances":["Find Linus Tech Tips on YouTube and open his store."],"dispatched_actions":[{"type":"keypress","keys":["CMD","L"]}]}"#
+        let turn = try await client.begin(command: "actually MKBHD instead", frame: frame, context: "Earlier completed task.", activeTask: activeTask)
+        let requests = await recorder.requests
+        XCTAssertEqual(requests.count, 1)
+        let body = try json(XCTUnwrap(requests.first))
+        XCTAssertEqual(body["model"] as? String, "gpt-6-luna")
+        XCTAssertNil(body["previous_response_id"])
+        let input = try XCTUnwrap(body["input"] as? [[String: Any]])
+        let content = try XCTUnwrap(input.first?["content"] as? [[String: String]])
+        XCTAssertEqual(content[0]["text"], "Current utterance: actually MKBHD instead\n\nSession context (background only): Earlier completed task.\n\nActive task context (current goal and dispatched progress; background only): \(activeTask)\nScreenshot size: 1280 × 800 pixels.")
+        XCTAssertEqual(content[1], ["type": "input_image", "image_url": frame.dataURL, "detail": "original"])
+        XCTAssertEqual(turn.taskUpdate, TaskUpdate(kind: .revise, goal: goal))
+        XCTAssertEqual(turn.calls.first?.actions.first?.text, "MKBHD")
+    }
+
+    func testNewTaskAndPauseCarryParsedTaskUpdates() throws {
+        let goal = "Open Calculator."
+        let replacement = try OpenAIComputerClient.parseResponse(responseData([function([
+            "task_update": ["kind": "replace", "goal": goal],
+            "description": "Opening Calculator…",
+            "actions": [["type": "keypress", "keys": ["CMD", "SPACE"]]]
+        ])]))
+        XCTAssertEqual(replacement.taskUpdate, TaskUpdate(kind: .replace, goal: goal))
+        let pause = try OpenAIComputerClient.parseResponse(responseData([function([
+            "task_update": ["kind": "revise", "goal": "Open the user's intended channel and its store."],
+            "reason": "Which channel did you mean?"
+        ], name: "pause_for_user")]))
+        XCTAssertEqual(pause.taskUpdate?.kind, .revise)
+        XCTAssertEqual(pause.taskUpdate?.goal, "Open the user's intended channel and its store.")
+        XCTAssertTrue(pause.calls.isEmpty)
+    }
+
+    func testRejectsMissingOrInvalidTaskUpdateBeforeReturningActionsOrPause() throws {
+        let invalid: [Any] = [
+            NSNull(), [], "revise",
+            [:] as [String: Any],
+            ["kind": "revise"],
+            ["goal": "Open Calculator."],
+            ["kind": "resume", "goal": "Open Calculator."],
+            ["kind": 1, "goal": "Open Calculator."],
+            ["kind": "replace", "goal": 7],
+            ["kind": "replace", "goal": ""],
+            ["kind": "revise", "goal": " \n\t"],
+            ["kind": "revise", "goal": String(repeating: "x", count: 2_001)],
+            ["kind": "revise", "goal": "Open\u{1B} Calculator."],
+            ["kind": "replace", "goal": "Open Calculator.", "extra": true]
+        ]
+        for name in ["execute_actions", "pause_for_user"] {
+            let base: [String: Any] = name == "execute_actions"
+                ? ["description": "Opening Calculator…", "actions": [["type": "wait"]]]
+                : ["reason": "Which calculator?"]
+            try assertBlocked([function(base, name: name, includeTaskUpdate: false)])
+            for update in invalid {
+                var arguments = base
+                arguments["task_update"] = update
+                try assertBlocked([function(arguments, name: name, includeTaskUpdate: false)])
+            }
+        }
     }
 
     func testNaturalUtterancesReachModelUnchangedAndCanBeIgnored() async throws {
@@ -92,7 +174,7 @@ final class OpenAIClientTests: XCTestCase {
             let body = try json(request)
             let input = try XCTUnwrap(body["input"] as? [[String: Any]])
             let content = try XCTUnwrap(input.first?["content"] as? [[String: String]])
-            XCTAssertEqual(content.first?["text"], "Current utterance: \(utterance)\n\nPrior context (background only): Previous task finished.\nScreenshot size: 1280 × 800 pixels.")
+            XCTAssertEqual(content.first?["text"], "Current utterance: \(utterance)\n\nSession context (background only): Previous task finished.\nScreenshot size: 1280 × 800 pixels.")
             let instructions = try XCTUnwrap(body["instructions"] as? String)
             XCTAssertTrue(instructions.contains("no fixed command syntax or app-name allowlist"))
             XCTAssertTrue(instructions.contains("make this bigger"))
@@ -103,7 +185,7 @@ final class OpenAIClientTests: XCTestCase {
 
     func testContinuationReturnsScreenshotToMatchingFunctionCall() async throws {
         let recorder = RequestRecorder()
-        let client = OpenAIComputerClient(apiKey: "test-only-value", model: "requested-model", serviceTier: "auto", transport: { request in
+        let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { request in
             await recorder.add(request)
             return (Data(Self.answer.utf8), Self.response())
         })
@@ -111,8 +193,8 @@ final class OpenAIClientTests: XCTestCase {
         let requests = await recorder.requests
         let body = try json(XCTUnwrap(requests.first))
         XCTAssertEqual(body["previous_response_id"] as? String, "resp_previous")
-        XCTAssertEqual(body["model"] as? String, "requested-model")
-        XCTAssertEqual(body["service_tier"] as? String, "auto")
+        XCTAssertEqual(body["model"] as? String, "gpt-6-luna")
+        XCTAssertEqual(body["service_tier"] as? String, "fast")
         XCTAssertNotNil(body["instructions"])
         let input = try XCTUnwrap(body["input"] as? [[String: Any]])
         XCTAssertEqual(input.count, 1)
@@ -144,6 +226,50 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertEqual(call.actions[2].keys, ["ENTER"])
         XCTAssertTrue(call.safetyChecks.isEmpty)
         XCTAssertNil(turn.pauseReason)
+        XCTAssertEqual(turn.taskUpdate?.kind, .replace)
+    }
+
+    func testOneLunaChainKeepsFullSessionHistoryAndFreshScreenshots() async throws {
+        let recorder = RequestRecorder()
+        let action = try responseData([function(["description": "Opening the store…", "actions": [["type": "click", "button": "left", "x": 20, "y": 40, "keys": []]]])])
+        let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { request in
+            await recorder.add(request)
+            let requests = await recorder.requests
+            return (requests.count == 1 ? action : Data(Self.answer.utf8), Self.response())
+        })
+        var history = CommandContext()
+        let firstID = history.begin(command: "Open the Linus Tech Tips channel " + String(repeating: "full command ", count: 500))
+        history.finish(id: firstID, outcome: "Channel opened.", status: .completed)
+        let secondID = history.begin(command: "Find the store link")
+        history.finish(id: secondID, outcome: "Stopped before completion.", status: .stopped)
+        let context = history.text
+        let nextFrame = ScreenshotFrame(data: Data([4, 5, 6]), width: 1280, height: 800, pointWidth: 1280, pointHeight: 800)
+        let firstTurn = try await client.begin(command: "Open the store", frame: frame, context: context)
+        let call = try XCTUnwrap(firstTurn.calls.first)
+        let finalTurn = try await client.continueTurn(responseID: firstTurn.id, outputs: [(call.callID, nextFrame)])
+        let requests = await recorder.requests
+        XCTAssertEqual(requests.count, 2)
+        for (request, expectedFrame) in zip(requests, [frame, nextFrame]) {
+            let body = try json(request)
+            XCTAssertEqual(request.url?.path, "/v1/responses")
+            XCTAssertEqual(body["model"] as? String, "gpt-6-luna")
+            XCTAssertEqual(body["service_tier"] as? String, "fast")
+            XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "low")
+            XCTAssertNil(body["tool_choice"])
+            let inputs = try XCTUnwrap(body["input"] as? [[String: Any]])
+            let content = try XCTUnwrap((inputs[0]["content"] ?? inputs[0]["output"]) as? [[String: String]])
+            XCTAssertEqual(content[1], ["type": "input_image", "image_url": expectedFrame.dataURL, "detail": "original"])
+            XCTAssertFalse((body["instructions"] as? String)?.contains("accessibility observations") == true)
+        }
+        let begin = try json(XCTUnwrap(requests.first))
+        let input = try XCTUnwrap(begin["input"] as? [[String: Any]])
+        let content = try XCTUnwrap(input.first?["content"] as? [[String: String]])
+        XCTAssertTrue(content[0]["text"]?.contains(context) == true)
+        let continuation = try json(XCTUnwrap(requests.last))
+        XCTAssertEqual(continuation["previous_response_id"] as? String, firstTurn.id)
+        let continuationInput = try XCTUnwrap(continuation["input"] as? [[String: Any]])
+        XCTAssertEqual(continuationInput[0]["call_id"] as? String, call.callID)
+        XCTAssertEqual(finalTurn.message, "Done.")
     }
 
     func testAllSupportedActionVariantsParse() throws {
@@ -179,6 +305,7 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertTrue(turn.calls.isEmpty)
         XCTAssertTrue(turn.message.isEmpty)
         XCTAssertNil(turn.pauseReason)
+        XCTAssertNil(turn.taskUpdate)
         XCTAssertEqual(turn.inputTokens, 42)
         XCTAssertEqual(turn.outputTokens, 5)
         XCTAssertFalse(ModelTurn(id: "normal", calls: [], message: "Done.").ignored)
@@ -255,7 +382,7 @@ final class OpenAIClientTests: XCTestCase {
         let pause = try function(["reason": "Please confirm."], name: "pause_for_user", callID: "call_2")
         let secondAction = try function(["description": "Opening channel…", "actions": [["type": "wait"]]], callID: "call_2")
         let final: [String: Any] = ["type": "message", "content": [["type": "output_text", "text": "Done."]]]
-        for output in [[action, pause], [pause, action], [action, secondAction], [action, final]] {
+        for output in [[action, pause], [pause, action], [action, secondAction], [action, final], [pause, final]] {
             try assertBlocked(output)
         }
     }
@@ -356,9 +483,13 @@ final class OpenAIClientTests: XCTestCase {
             XCTAssertFalse(error.localizedDescription.contains("private-"), file: file, line: line)
         }
     }
-    private func function(_ arguments: [String: Any], name: String = "execute_actions", callID: String = "call_1") throws -> [String: Any] {
-        ["type": "function_call", "status": "completed", "name": name, "call_id": callID,
-         "arguments": String(decoding: try JSONSerialization.data(withJSONObject: arguments), as: UTF8.self)]
+    private func function(_ arguments: [String: Any], name: String = "execute_actions", callID: String = "call_1", includeTaskUpdate: Bool = true) throws -> [String: Any] {
+        var payload = arguments
+        if includeTaskUpdate, ["execute_actions", "pause_for_user"].contains(name), payload["task_update"] == nil {
+            payload["task_update"] = ["kind": "replace", "goal": "Complete the requested computer task."]
+        }
+        return ["type": "function_call", "status": "completed", "name": name, "call_id": callID,
+                "arguments": String(decoding: try JSONSerialization.data(withJSONObject: payload), as: UTF8.self)]
     }
     private func responseData(_ output: [[String: Any]]) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["id": "resp_1", "status": "completed", "output": output])

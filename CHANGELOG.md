@@ -8,6 +8,14 @@ Current source: `/Users/sameemsaleem/Product/Mouse`
 
 Current behavior and setup: [README.md](README.md)
 
+## 2026-10-21 — Blend the hardware notch into clear glass
+
+- Replaced the full-width black tint and opaque shoulder cap with a camera-sized black region and a short rounded fade into native clear glass.
+- Added a thin side/bottom highlight above the material and content layers, fading before the top corners. Kept the nonactivating, click-through panel and existing resize/motion behavior.
+- Kept the light foreground readable in both app appearances, provided opaque charcoal for Reduce Transparency, and avoided a fake black cutout on displays without a notch.
+
+Validation: the Release build and signature verification passed. An isolated live preview confirmed glass transparency, loading-dot glow, and edge highlights across active, thinking, action, transcript, and no-notch layouts. The preview made no API requests and captured no microphone audio.
+
 ## 2026-10-21 — Configurable model behavior, audio controls, and timing logs
 
 - Added Settings → Behavior & logs with three persisted routes: Luna Responses only; Decisions with a screenshot and optional Luna fallback; Decisions without an image and optional Luna fallback. The default remains text-only Decisions, and each command retains its selected route through completion.

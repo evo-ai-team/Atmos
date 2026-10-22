@@ -53,7 +53,8 @@ final class MouseNotchController {
         let duration = reduceMotion ? 0 : 0.30
 
         if nextState == .standby {
-            surface.setText("", font: .systemFont(ofSize: 17), cameraHeight: geometry.cameraHeight,
+            surface.setText("", font: .systemFont(ofSize: 17), cameraWidth: geometry.cameraWidth,
+                            cameraHeight: geometry.cameraHeight,
                             horizontalInset: 24, wraps: false, animate: false)
             guard panel.isVisible else { return }
             panel.alphaValue = 1
@@ -76,7 +77,8 @@ final class MouseNotchController {
         if case .transcribing = previousState { wasTranscribing = true } else { wasTranscribing = false }
         let isTranscribing: Bool
         if case .transcribing = nextState { isTranscribing = true } else { isTranscribing = false }
-        surface.setText(presentation.text, font: presentation.font, cameraHeight: geometry.cameraHeight,
+        surface.setText(presentation.text, font: presentation.font, cameraWidth: geometry.cameraWidth,
+                        cameraHeight: geometry.cameraHeight,
                         horizontalInset: presentation.horizontalInset,
                         wraps: presentation.wraps,
                         animate: !reduceMotion && !(wasTranscribing && isTranscribing))

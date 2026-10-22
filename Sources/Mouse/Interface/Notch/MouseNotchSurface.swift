@@ -28,13 +28,17 @@ private struct MouseNotchContourResize {
     }
 }
 
-/// The body retains native glass refraction along its sides and lower corners.
-/// A black cap adds concave shoulders where it joins the physical screen edge.
+/// Native glass surrounds the measured camera cutout. Only that cutout stays
+/// black; its tint falls away locally instead of darkening the full top row.
 final class MouseNotchSurface: NSView {
     private let radius: CGFloat = 22
     private let glass = NSGlassEffectView()
     private let content = MouseNotchContent()
     private let shoulders = CAShapeLayer()
+    private let glassFade = CAGradientLayer()
+    private let edgeOverlay = NSView()
+    private let edge = CAShapeLayer()
+    private let edgeFade = CAGradientLayer()
     private var contourResize = MouseNotchContourResize()
 
     override init(frame frameRect: NSRect) {
@@ -43,10 +47,26 @@ final class MouseNotchSurface: NSView {
         layer?.masksToBounds = true
         glass.style = .clear
         glass.cornerRadius = radius
-        glass.contentView = content
+        // The notch always uses light text, regardless of the app's appearance.
+        glass.appearance = NSAppearance(named: .darkAqua)
+        glass.wantsLayer = true
+        glass.layer?.mask = glassFade
         addSubview(glass)
-        shoulders.fillColor = NSColor.black.cgColor
+        // Keep text and the camera blend outside the material's edge fade.
+        // Fading the whole content view would make the camera seam reappear.
+        content.layer?.cornerRadius = radius
+        content.layer?.masksToBounds = true
+        addSubview(content)
         layer?.addSublayer(shoulders)
+        edge.fillColor = nil
+        edge.strokeColor = NSColor.white.withAlphaComponent(0.38).cgColor
+        edge.lineWidth = 0.75
+        edge.mask = edgeFade
+        // An explicit view preserves this order when AppKit rebuilds the
+        // material's backing layers during window resizing.
+        edgeOverlay.wantsLayer = true
+        edgeOverlay.layer?.addSublayer(edge)
+        addSubview(edgeOverlay, positioned: .above, relativeTo: content)
         applyAccessibilityPreferences()
     }
 
@@ -59,6 +79,7 @@ final class MouseNotchSurface: NSView {
         let shoulder = min(contourResize.radius(at: bounds.size), bounds.width / 2, bounds.height)
         glass.frame = NSRect(x: shoulder, y: 0, width: max(0, bounds.width - shoulder * 2),
                              height: bounds.height + radius)
+        content.frame = glass.frame
         content.extraTopInset = radius
 
         // These are outward shoulders, not rounded rectangle corners. Each
@@ -68,14 +89,17 @@ final class MouseNotchSurface: NSView {
         let tangent = shoulder * 0.5522847498
         let path = CGMutablePath()
         path.move(to: CGPoint(x: 0, y: top))
-        path.addLine(to: CGPoint(x: right, y: top))
-        path.addCurve(to: CGPoint(x: right - shoulder, y: top - shoulder),
-                      control1: CGPoint(x: right - tangent, y: top),
-                      control2: CGPoint(x: right - shoulder, y: top - shoulder + tangent))
+        path.addLine(to: CGPoint(x: shoulder, y: top))
         path.addLine(to: CGPoint(x: shoulder, y: top - shoulder))
         path.addCurve(to: CGPoint(x: 0, y: top),
                       control1: CGPoint(x: shoulder, y: top - shoulder + tangent),
                       control2: CGPoint(x: tangent, y: top))
+        path.closeSubpath()
+        path.move(to: CGPoint(x: right - shoulder, y: top))
+        path.addLine(to: CGPoint(x: right, y: top))
+        path.addCurve(to: CGPoint(x: right - shoulder, y: top - shoulder),
+                      control1: CGPoint(x: right - tangent, y: top),
+                      control2: CGPoint(x: right - shoulder, y: top - shoulder + tangent))
         path.closeSubpath()
 
         // Window resizing already supplies animation frames. Updating this
@@ -85,6 +109,14 @@ final class MouseNotchSurface: NSView {
         shoulders.frame = bounds
         shoulders.path = path
         shoulders.contentsScale = window?.backingScaleFactor ?? 2
+        // The native rim and the added glint disappear before reaching the
+        // screen's top corners. The shoulders themselves have no white stroke.
+        updateFade(glassFade, frame: glass.bounds, visibleTop: top)
+        updateFade(edgeFade, frame: bounds, visibleTop: top)
+        edgeOverlay.frame = bounds
+        edge.frame = edgeOverlay.bounds
+        edge.path = edgePath(in: glass.frame, top: top - shoulder)
+        edge.contentsScale = shoulders.contentsScale
         CATransaction.commit()
     }
 
@@ -102,14 +134,48 @@ final class MouseNotchSurface: NSView {
         needsLayout = true
     }
 
-    func setText(_ text: String, font: NSFont, cameraHeight: CGFloat, horizontalInset: CGFloat, wraps: Bool, animate: Bool) {
-        content.setText(text, font: font, cameraHeight: cameraHeight, horizontalInset: horizontalInset, wraps: wraps, animate: animate)
+    func setText(_ text: String, font: NSFont, cameraWidth: CGFloat, cameraHeight: CGFloat, horizontalInset: CGFloat, wraps: Bool, animate: Bool) {
+        content.setText(text, font: font, cameraWidth: cameraWidth, cameraHeight: cameraHeight,
+                        horizontalInset: horizontalInset, wraps: wraps, animate: animate)
     }
 
     func applyAccessibilityPreferences() {
         let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         content.reduceTransparency = reduceTransparency
         glass.style = reduceTransparency ? .regular : .clear
+        shoulders.fillColor = (reduceTransparency
+            ? NSColor(white: 0.12, alpha: 1)
+            : NSColor.black.withAlphaComponent(0.12)).cgColor
+        needsLayout = true
+    }
+
+    private func updateFade(_ fade: CAGradientLayer, frame: NSRect, visibleTop: CGFloat) {
+        let height = max(1, frame.height)
+        fade.frame = frame
+        fade.startPoint = CGPoint(x: 0.5, y: 0)
+        fade.endPoint = CGPoint(x: 0.5, y: 1)
+        fade.colors = [NSColor.white.cgColor, NSColor.white.cgColor,
+                       NSColor.clear.cgColor, NSColor.clear.cgColor]
+        fade.locations = [0, NSNumber(value: max(0, visibleTop - 24) / height),
+                          NSNumber(value: max(0, visibleTop - 3) / height), 1]
+    }
+
+    private func edgePath(in body: NSRect, top: CGFloat) -> CGPath {
+        let inset: CGFloat = 0.5
+        let left = body.minX + inset
+        let right = body.maxX - inset
+        let bottom = inset
+        let corner = max(0, min(radius, (right - left) / 2, top - bottom))
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: left, y: max(bottom, top)))
+        path.addLine(to: CGPoint(x: left, y: bottom + corner))
+        path.addArc(tangent1End: CGPoint(x: left, y: bottom),
+                    tangent2End: CGPoint(x: left + corner, y: bottom), radius: corner)
+        path.addLine(to: CGPoint(x: right - corner, y: bottom))
+        path.addArc(tangent1End: CGPoint(x: right, y: bottom),
+                    tangent2End: CGPoint(x: right, y: bottom + corner), radius: corner)
+        path.addLine(to: CGPoint(x: right, y: max(bottom, top)))
+        return path
     }
 
     var isThinkingVisible: Bool { content.thinkingIndicator.isVisible }
@@ -123,6 +189,7 @@ private final class MouseNotchContent: NSView {
     private let label = NSTextField(labelWithString: "")
     let thinkingIndicator = MouseThinkingIndicator()
     private var textRevision = 0
+    private var cameraWidth: CGFloat = 0
     private var cameraHeight: CGFloat = 0
     private var horizontalInset: CGFloat = 24
     var extraTopInset: CGFloat = 22 { didSet { needsLayout = true; needsDisplay = true } }
@@ -148,19 +215,43 @@ private final class MouseNotchContent: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         if reduceTransparency {
-            NSColor.black.setFill()
+            // An opaque charcoal fallback respects Reduce Transparency while
+            // reserving full black for the physical camera cutout.
+            NSColor(white: 0.12, alpha: 1).setFill()
             bounds.fill()
-            return
+        } else {
+            NSColor.black.withAlphaComponent(0.12).setFill()
+            bounds.fill()
         }
-        // NSView coordinates run from the bottom. The hardware camera's entire
-        // row stays solid black, then softens into the native material below.
-        let visibleHeight = max(1, bounds.height - extraTopInset)
-        let blackStart = max(0, min(0.82, (visibleHeight - cameraHeight - 5) / max(1, bounds.height)))
-        NSGradient(colorsAndLocations:
-            (NSColor.black.withAlphaComponent(0.12), 0),
-            (NSColor.black.withAlphaComponent(0.76), max(0.06, min(blackStart * 0.55, 18 / max(1, bounds.height)))),
-            (NSColor.black, max(0.12, blackStart)),
-            (NSColor.black, 1))?.draw(in: bounds, angle: 90)
+        drawCameraBlend()
+    }
+
+    private func drawCameraBlend() {
+        // Displays without a camera cutout get glass throughout, not a fake
+        // black notch. AppKit coordinates begin at the bottom of this view.
+        guard cameraWidth > 0, cameraHeight > 0 else { return }
+        let camera = NSRect(x: (bounds.width - cameraWidth) / 2,
+                            y: bounds.height - extraTopInset - cameraHeight,
+                            width: cameraWidth, height: cameraHeight + extraTopInset + 8)
+        let corner: CGFloat = 8
+        let feather: CGFloat = 20
+        let steps = 32
+        var previousAlpha: CGFloat = 0
+        // Nested rounded contours make the fade follow the actual cutout on
+        // all three visible sides. The cubic falloff reaches glass quickly.
+        for step in 0...steps {
+            let progress = CGFloat(step) / CGFloat(steps)
+            let distance = feather * (1 - progress)
+            let alpha = 0.96 * progress * progress * progress
+            // Source-over compensation keeps overlapping fills at the desired
+            // opacity instead of accumulating into another solid black cap.
+            NSColor.black.withAlphaComponent((alpha - previousAlpha) / (1 - previousAlpha)).setFill()
+            NSBezierPath(roundedRect: camera.insetBy(dx: -distance, dy: -distance),
+                         xRadius: corner + distance, yRadius: corner + distance).fill()
+            previousAlpha = alpha
+        }
+        NSColor.black.setFill()
+        NSBezierPath(roundedRect: camera, xRadius: corner, yRadius: corner).fill()
     }
 
     override func layout() {
@@ -184,9 +275,10 @@ private final class MouseNotchContent: NSView {
         needsDisplay = true
     }
 
-    func setText(_ text: String, font: NSFont, cameraHeight: CGFloat, horizontalInset: CGFloat, wraps: Bool, animate: Bool) {
+    func setText(_ text: String, font: NSFont, cameraWidth: CGFloat, cameraHeight: CGFloat, horizontalInset: CGFloat, wraps: Bool, animate: Bool) {
         textRevision += 1
         let revision = textRevision
+        self.cameraWidth = cameraWidth
         self.cameraHeight = cameraHeight
         self.horizontalInset = horizontalInset
         let paragraph = NSMutableParagraphStyle()

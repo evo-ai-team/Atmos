@@ -71,6 +71,46 @@ final class DecisionsClientTests: XCTestCase {
         XCTAssertTrue(timing.report.contains("Decisions request shape: text-only; screenshot none"))
     }
 
+    func testExplicitImageModeSendsOneOriginalScreenshotOnlyInUserEvidence() async throws {
+        let recorder = Recorder()
+        let reply = try responseData()
+        let timing = PipelineTiming(origin: .typed)
+        let frame = ScreenshotFrame(data: Data([1, 2, 3]), width: 640, height: 480, pointWidth: 640, pointHeight: 480)
+        let client = DecisionsClient(apiKey: "test-only-value", transport: { request in
+            await recorder.add(request)
+            return (reply, Self.httpResponse())
+        })
+        _ = try await client.decide(instructions: "Choose.", context: "Evidence", questions: questions,
+                                    frame: frame, timing: timing)
+        let requests = await recorder.requests
+        XCTAssertEqual(requests.count, 1)
+        let body = try json(XCTUnwrap(requests.first?.httpBody))
+        let input = try XCTUnwrap(body["input"] as? [[String: Any]])
+        XCTAssertEqual(input[0]["content"] as? [[String: String]], [["type": "input_text", "text": "Choose."]])
+        XCTAssertEqual(input[1]["content"] as? [[String: String]], [
+            ["type": "input_text", "text": "Evidence"],
+            ["type": "input_image", "image_url": frame.dataURL, "detail": "original"]
+        ])
+        XCTAssertTrue(timing.report.contains("image; screenshot 640×480"))
+        XCTAssertFalse(timing.report.contains(frame.dataURL))
+    }
+
+    func testImageModeRejectsEmptyScreenshotBeforeNetwork() async throws {
+        let recorder = Recorder()
+        let reply = try responseData()
+        let client = DecisionsClient(apiKey: "test-only-value", transport: { request in
+            await recorder.add(request)
+            return (reply, Self.httpResponse())
+        })
+        do {
+            _ = try await client.decide(instructions: "Choose.", context: "Evidence", questions: questions,
+                                       frame: ScreenshotFrame(data: Data(), width: 640, height: 480, pointWidth: 640, pointHeight: 480))
+            XCTFail("Accepted empty image")
+        } catch { XCTAssertTrue(error is MouseError) }
+        let requests = await recorder.requests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
     func testInvalidQuestionsAreRejectedBeforeNetwork() async throws {
         let valid = questions[0]
         let duplicateChoices = [valid.choices[0], valid.choices[0]]

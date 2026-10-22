@@ -3,6 +3,28 @@ import XCTest
 @testable import MouseCore
 
 final class PipelineTimingTests: XCTestCase {
+    func testStructuredSnapshotUsesOneClockAndFreezesAfterCompletion() {
+        let clock = TestClock(10)
+        let timing = PipelineTiming(origin: .typed, clock: { clock.read() })
+        let stage = timing.begin("Choose action")
+        clock.set(10.5)
+        timing.markFirstInput()
+        let running = timing.snapshot
+        XCTAssertEqual(running.outcome, .running)
+        XCTAssertEqual(running.totalDuration, 0.5)
+        XCTAssertEqual(running.firstInputDuration, 0.5)
+        XCTAssertEqual(running.stages[0].duration, 0.5)
+        clock.set(10.75)
+        timing.end(stage)
+        timing.finish(.succeeded)
+        clock.set(30)
+        let completed = timing.snapshot
+        XCTAssertEqual(completed.totalDuration, 0.75)
+        XCTAssertEqual(completed.stages[0].duration, 0.75)
+        XCTAssertEqual(completed.stages[0].outcome, .succeeded)
+        XCTAssertEqual(completed.outcome, .succeeded)
+    }
+
     func testOverlappingStagesDoNotInflateTotalElapsed() {
         let clock = TestClock(10)
         let timing = PipelineTiming(origin: .speech, clock: { clock.read() })

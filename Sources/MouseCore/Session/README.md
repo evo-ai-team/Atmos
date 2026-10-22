@@ -9,6 +9,7 @@ State shared across speech recognition and computer-task execution. These types 
 | `CommandContext.swift` | Keeps chronological accepted commands, resolved goals, dispatch descriptions, and outcomes for follow-up context. |
 | `TaskSteeringState.swift` | Tracks the current accepted goal, amendments, and actions actually dispatched. |
 | `CaptureStamp.swift` | Restricts speculative screenshot reuse to the originating utterance, task generation, foreground process, and freshness window. |
+| `MousePreferences.swift` | Persists the model pipeline, speech sensitivity, and optional second transcription pass in local preferences. |
 
 ## State boundaries
 

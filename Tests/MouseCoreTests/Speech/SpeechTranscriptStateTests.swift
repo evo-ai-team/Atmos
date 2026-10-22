@@ -125,6 +125,52 @@ final class SpeechTranscriptStateTests: XCTestCase {
         XCTAssertTrue(state.isCurrent(candidate))
     }
 
+    func testFastTranscriptCommitsCurrentWordsOnceAndAdvancesAudioBoundary() throws {
+        var state = seededState()
+        state.observeAudio(end: 2.5, lastSpeechAt: 1, convertedCaptureAt: 2.45)
+        let candidate = try XCTUnwrap(state.beginFinalization(at: 2.5, latestCaptureAt: 2.49))
+        XCTAssertEqual(state.commitLiveTranscript(candidate, at: 2.5, lastSpeechAt: 1, latestCaptureAt: 2.49), "open Chrome")
+        XCTAssertEqual(state.consumedThrough, 2.5)
+        XCTAssertEqual(state.text, "")
+        XCTAssertNil(state.commitLiveTranscript(candidate, at: 2.5, lastSpeechAt: 1, latestCaptureAt: 2.49))
+        // Late live results for committed audio cannot submit the command twice.
+        state.replace(start: 0.5, end: 1.5, with: [.init(start: 0.5, end: 1.5, text: "open Chrome")], at: 2.6)
+        XCTAssertEqual(state.text, "")
+    }
+
+    func testFastTranscriptRejectsSpeechCapturedAfterEndpoint() throws {
+        var state = seededState()
+        state.observeAudio(end: 2.5, lastSpeechAt: 1, convertedCaptureAt: 2.45)
+        let candidate = try XCTUnwrap(state.beginFinalization(at: 2.5, latestCaptureAt: 2.49))
+        XCTAssertNil(state.commitLiveTranscript(candidate, at: 2.55, lastSpeechAt: 2.51, latestCaptureAt: 2.54))
+        XCTAssertEqual(state.text, "open Chrome")
+        XCTAssertEqual(state.consumedThrough, 0)
+        XCTAssertNil(state.candidate)
+    }
+
+    func testFastTranscriptRejectsRevisedOrResetCandidate() throws {
+        var state = seededState()
+        state.observeAudio(end: 2.5, lastSpeechAt: 1, convertedCaptureAt: 2.45)
+        let candidate = try XCTUnwrap(state.beginFinalization(at: 2.5, latestCaptureAt: 2.49))
+        state.replace(start: 0.5, end: 1.5, with: [.init(start: 0.5, end: 1.5, text: "do not open Chrome")], at: 2.51)
+        XCTAssertNil(state.commitLiveTranscript(candidate, at: 2.52, lastSpeechAt: 1, latestCaptureAt: 2.51))
+        XCTAssertEqual(state.text, "do not open Chrome")
+        state.discard(through: 2.5)
+        XCTAssertNil(state.commitLiveTranscript(candidate, at: 2.52, lastSpeechAt: 1, latestCaptureAt: 2.51))
+    }
+
+    func testFastTranscriptWaitsForPendingAudioWithoutLosingWords() throws {
+        var state = seededState()
+        state.observeAudio(end: 2.5, lastSpeechAt: 1, convertedCaptureAt: 2.45)
+        let candidate = try XCTUnwrap(state.beginFinalization(at: 2.5, latestCaptureAt: 2.49))
+        XCTAssertNil(state.commitLiveTranscript(candidate, at: 2.8, lastSpeechAt: 1, latestCaptureAt: 2.79))
+        XCTAssertEqual(state.text, "open Chrome")
+        state.invalidateFinalization()
+        state.observeAudio(end: 2.9, lastSpeechAt: 1, convertedCaptureAt: 2.85)
+        let retry = try XCTUnwrap(state.beginFinalization(at: 2.9, latestCaptureAt: 2.89))
+        XCTAssertEqual(state.commitLiveTranscript(retry, at: 2.9, lastSpeechAt: 1, latestCaptureAt: 2.89), "open Chrome")
+    }
+
     private func seededState() -> SpeechTranscriptState {
         var state = SpeechTranscriptState()
         state.replace(start: 0.5, end: 1.5, with: [.init(start: 0.5, end: 1.5, text: "open Chrome")], at: 1.2)

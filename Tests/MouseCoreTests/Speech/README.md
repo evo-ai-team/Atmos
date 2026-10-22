@@ -2,7 +2,8 @@
 
 Deterministic tests of `Sources/MouseCore/Speech`. Audio and activity times are supplied directly; no microphone, network, or Apple speech model is required.
 
-- `SpeechTranscriptStateTests` checks volatile range replacement, silence endpoints, delayed conversion, and invalidated candidates.
+- `SpeechTranscriptStateTests` checks volatile range replacement, silence endpoints, delayed conversion, and invalidated candidates. Live-only commits are checked for new speech, late revisions, pending conversion, lifecycle resets, and duplicate delivery.
+- `SpeechSensitivityTests` checks the unchanged default activity threshold, slider direction and bounds, and recovery from invalid persisted values.
 - `SpeechAudioHistoryPolicyTests` checks retention and replay coverage, including quiet missing command prefixes.
 - `SpeechActivityGateTests` checks raw activity visibility and when idle activity may be consumed.
 - `SpeechBoundarySynchronizerTests` checks serialized boundary advancement, coalescing, cancellation, and failure.

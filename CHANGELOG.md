@@ -8,6 +8,16 @@ Current source: `/Users/sameemsaleem/Product/Mouse`
 
 Current behavior and setup: [README.md](README.md)
 
+## 2026-10-21 — Configurable model behavior, audio controls, and timing logs
+
+- Added Settings → Behavior & logs with three persisted routes: Luna Responses only; Decisions with a screenshot and optional Luna fallback; Decisions without an image and optional Luna fallback. The default remains text-only Decisions, and each command retains its selected route through completion.
+- Combined command acceptance and first-action selection. Removed the unused separate Responses screening client and its request/parser. A stable accepted first turn is reused without another model call. Ignored speech leaves current work and its AX handles intact; accepted amendments refresh observations if the prior task moved during selection. Unrelated speculative captures are cancelled and drained before sharing the AX controller with a new command.
+- Added a separately retained latest accepted command summary with total time, first-input latency, per-stage durations, status, and copyable logs. The ten recent full traces remain available, including ignored speech, request metadata, and overlapping stages.
+- Added a sensitivity slider over the existing speech-energy threshold. Its 50% default preserves the former threshold and never changes microphone gain. Added a second-transcription-pass switch, enabled by default; off commits stable first-pass text with the same endpoint, cancellation, and consumed-audio protections.
+- Updated directory guides and the root README for the selected-mode input, privacy, and execution boundaries.
+
+Validation: **266 offline tests passed with zero failures**; Release build and signature verification passed. Coverage includes preferences, both Decisions wire formats, first-pass transcript commit boundaries, sensitivity, structured timing snapshots, and existing request/action validation. No live API or microphone accuracy/latency benchmark was performed.
+
 ## 2026-10-21 — Make Decisions text only and compact its inputs
 
 - Removed screenshot support from the Decisions client API and wire types. Every Decisions request contains text only. Capture remains available locally for native geometry, progress checks, and the separate image-bearing Responses planner.

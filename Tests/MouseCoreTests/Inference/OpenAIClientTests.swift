@@ -44,6 +44,8 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertTrue(instructions.contains("Can you open Chrome?"))
         XCTAssertTrue(instructions.contains("How do I open Chrome?"))
         XCTAssertTrue(instructions.contains("must never turn chat into a command"))
+        XCTAssertTrue(instructions.contains("No separate command-screening call"))
+        XCTAssertFalse(instructions.contains("has already passed a separate"))
         let parameters = try XCTUnwrap(tools.first?["parameters"] as? [String: Any])
         let properties = try XCTUnwrap(parameters["properties"] as? [String: Any])
         XCTAssertEqual(Set(properties.keys), Set(["description", "actions", "task_update"]))

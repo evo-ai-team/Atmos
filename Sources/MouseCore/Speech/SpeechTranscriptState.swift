@@ -1,8 +1,8 @@
 import Foundation
 
 /// Audio-time assembly and endpoint decisions, independent of Apple's engines.
-/// Volatile text is preview-only; a candidate must remain current until a separate
-/// final result stream has completed before its command can be committed.
+/// A candidate must remain current until its chosen recognition path commits:
+/// the completed replay by default, or stable live text when replay is disabled.
 public struct SpeechTranscriptState {
     public struct Segment: Equatable, Sendable {
         public let start: TimeInterval
@@ -89,6 +89,22 @@ public struct SpeechTranscriptState {
     }
 
     public mutating func invalidateFinalization() { candidate = nil }
+
+    /// The optional fast path commits exactly the live text behind the current
+    /// endpoint. Recheck the raw microphone watermark and conversion progress:
+    /// queued audio or a revised hypothesis must never turn an old candidate
+    /// into a command. A failed attempt leaves words available for a new endpoint.
+    public mutating func commitLiveTranscript(
+        _ candidate: Candidate, at time: TimeInterval,
+        lastSpeechAt: TimeInterval, latestCaptureAt: TimeInterval
+    ) -> String? {
+        guard !observeAudio(end: audioEnd, lastSpeechAt: lastSpeechAt),
+              audioIsCaughtUp(at: time, latestCaptureAt: latestCaptureAt),
+              isCurrent(candidate) else { return nil }
+        let result = text
+        guard commit(candidate) else { return nil }
+        return result
+    }
 
     @discardableResult
     public mutating func commit(_ candidate: Candidate) -> Bool {

@@ -27,6 +27,13 @@ final class AppModel: ObservableObject {
     @Published var error: String?
     @Published var activity: [Activity] = []
     @Published private(set) var timingTraces: [PipelineTiming] = []
+    @Published private(set) var latestCommandTiming: PipelineTiming?
+    @Published var preferences = MousePreferences.load() {
+        didSet {
+            preferences.save()
+            applyVoicePreferences()
+        }
+    }
     @Published private(set) var latestDecision = "No action selected this session"
     @Published private(set) var latestDispatch = "No input dispatched this session"
     @Published private(set) var lastActionTargets: [DecisionChoice] = []
@@ -44,8 +51,8 @@ final class AppModel: ObservableObject {
     let voice = VoiceInput()
     private let accessibility = AccessibilityController()
     private lazy var screenObserver = ScreenObserver(computer: computer, accessibility: accessibility)
-    // Execution and speech screening have separate lifetimes. Background speech
-    // must finish its text-only check before it can retire an accepted task.
+    // Execution and incoming selection have separate lifetimes. The chosen
+    // model must accept new speech before it can retire an existing task.
     // `generation` owns UI/state changes as well as input: a cancelled request
     // may still return, but it must never dispatch or finish its replacement.
     private var runningTask: Task<Void, Never>?
@@ -64,6 +71,12 @@ final class AppModel: ObservableObject {
     private var voiceTimings: [UUID: PipelineTiming] = [:]
     private var screeningTiming: PipelineTiming?
     private var runningTiming: PipelineTiming?
+    private var submittedBehaviors: [UUID: ChatbotBehavior] = [:]
+    private var screeningCaptureID: UUID?
+    private var preparedInput: PreparedInput?
+    private var executionRevision = 0
+    private var inputInFlight = false
+    private var currentBehavior: ChatbotBehavior = .decisionsTextOnly
     private lazy var speechScreening = SpeechScreeningQueue(
         check: { [weak self] text in
             guard let self else { throw CancellationError() }
@@ -76,9 +89,13 @@ final class AppModel: ObservableObject {
             self.pendingInputs.append(command)
             let timing = self.screeningTiming
             self.screeningTiming = nil
+            self.latestCommandTiming = timing
+            let prepared = self.preparedInput
+            self.preparedInput = nil
+            if let timing { self.submittedBehaviors.removeValue(forKey: timing.id) }
             if let captureID { self.voiceTimings.removeValue(forKey: captureID) }
-            timing?.mark("Speech command accepted")
-            self.launchTask(captureID: captureID, timing: timing)
+            timing?.mark("Command accepted")
+            self.launchTask(captureID: captureID, timing: timing, prepared: prepared)
         },
         onIgnored: { [weak self] captureID in
             self?.finishSpeechScreening(captureID: captureID)
@@ -87,13 +104,16 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             self.finishSpeechScreening(captureID: captureID)
             self.error = error.localizedDescription
-            self.log(error.localizedDescription, detail: "Speech check failed")
+            self.log(error.localizedDescription, detail: "Command selection failed")
             if !self.working {
                 self.status = "Command not accepted · try again"
                 self.showNotice("Couldn't check command · try again")
             }
         },
-        onCheckStarted: { [weak self] _, timing in self?.screeningTiming = timing }
+        onCheckStarted: { [weak self] captureID, timing in
+            self?.screeningCaptureID = captureID
+            self?.screeningTiming = timing
+        }
     )
 
     private struct PendingCapture {
@@ -112,6 +132,7 @@ final class AppModel: ObservableObject {
     // MARK: - Initialization and voice events
 
     init() {
+        applyVoicePreferences()
         let usage = usageHistory.load()
         budget = usage.budget
         usageWarning = usage.warning
@@ -186,6 +207,11 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: - Settings and voice controls
+
+    private func applyVoicePreferences() {
+        voice.audioSensitivity = preferences.audioSensitivity
+        voice.secondPassEnabled = preferences.secondPassEnabled
+    }
 
     func refreshPermissions() {
         // This periodic main-actor work can delay an in-flight command even
@@ -303,7 +329,7 @@ final class AppModel: ObservableObject {
     /// run independently. A revision invalidates this exact candidate.
     private func startSpeculativeCapture(_ id: UUID) {
         invalidateSpeculativeCapture()
-        guard active, !working, screenAllowed, accessibilityAllowed,
+        guard active, !working, !speechScreening.isScreening, screenAllowed, accessibilityAllowed,
               NSWorkspace.shared.frontmostApplication?.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
         let token = generation
         let retirement = retiredWork
@@ -339,7 +365,9 @@ final class AppModel: ObservableObject {
         // the ten-report UI limit and are needed only until this handoff.
         let timing = captureID.flatMap { voiceTimings.removeValue(forKey: $0) } ?? PipelineTiming(origin: .typed)
         retainTiming(timing)
-        timing.mark("Command submitted for screening")
+        submittedBehaviors[timing.id] = preferences.behavior
+        timing.annotate("Chatbot behavior: \(preferences.behavior.title)")
+        timing.mark("Command submitted for intent and action selection")
         speechScreening.enqueue(text, captureID: captureID, timing: timing)
         if !working {
             transcript = ""
@@ -349,52 +377,76 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The first selected model checks intent and prepares the first action in the
+    /// same request. Background speech can be ignored without cancelling ongoing
+    /// input; only an accepted result is transferred to the execution lifetime.
     private func screenUtterance(_ text: String) async throws -> String? {
-        let timing = screeningTiming
+        guard let timing = screeningTiming else { throw CancellationError() }
+        let behavior = submittedBehaviors[timing.id] ?? preferences.behavior
+        let captureID = screeningCaptureID
+        preparedInput = nil
         try Task.checkCancellation()
-        guard let key = try measureStage(timing, "Speech screening: load API key", operation: { try KeychainStore.load() }) else {
-            throw MouseError.configuration("Add your OpenAI API key in Settings.")
+        // A previously cancelled drag may still be releasing its button. Never
+        // ground a new action in an observation taken before that cleanup ends.
+        let retirement = retiredWork
+        await measureStage(timing, "Incoming command: cancelled input cleanup") {
+            await retirement?.value
         }
-        // No screenshots, action records, or response-chain ID go to this call.
-        // Read the context when a queued utterance starts, so prior accepted
-        // fragments are available without treating background chat as context.
-        struct Context: Encodable {
-            let currentGoal: String?
-            let acceptedPendingCommands: [String]
-            let awaitingUserInput: Bool
-            let clarification: String?
-            let lastAcceptedCommand: String?
-            let lastAcceptedGoal: String?
-            let recentAcceptedCommands: [CommandContext.Entry]
-        }
-        let contextData = try measureStage(timing, "Speech screening context encoding") {
-            let context = Context(
-                currentGoal: taskState?.goal,
-                acceptedPendingCommands: pendingInputs,
-                awaitingUserInput: taskPausedForUser,
-                clarification: taskPausedForUser ? taskClarification : nil,
-                lastAcceptedCommand: conversationContext.entries.last?.command,
-                lastAcceptedGoal: lastAcceptedGoal,
-                // Intent screening needs the recent referents, not a second copy of
-                // the entire session on every background utterance. Each retained
-                // command is complete; action models still receive the full history.
-                recentAcceptedCommands: Array(conversationContext.entries.suffix(3))
-            )
-            return try JSONEncoder().encode(context)
-        }
-        let client = SpeechIntentFilter(apiKey: key)
-        recordRequestStarted(timing: timing)
-        let result = try await client.classify(
-            utterance: text, taskContext: String(decoding: contextData, as: UTF8.self), timing: timing
-        )
-        budget.record(inputTokens: result.inputTokens, outputTokens: result.outputTokens)
-        persistUsage(timing: timing)
         try Task.checkCancellation()
-        return result.command
+        let key = try measureStage(timing, "Command permissions and API key") { try executionKey() }
+        let revision = executionRevision
+        let inputWasInFlight = inputInFlight
+        let wasWorking = working
+        let history = SelectionHistory(full: conversationContext.text, commands: conversationContext.entries)
+        let input = (pendingInputs + [text]).joined(separator: "\n")
+        let observation: ScreenObservation
+        // An independent AX owner prevents a background utterance's capture from
+        // replacing the retained handles being used by an accepted task.
+        let controller = wasWorking ? AccessibilityController() : accessibility
+        if wasWorking {
+            let observer = ScreenObserver(computer: computer, accessibility: controller)
+            observation = try await measureStage(timing, "Incoming command observation") {
+                try await observer.capture(timing: timing)
+            }
+        } else {
+            let pendingCapture = speculativeCapture
+            speculativeCapture = nil
+            let prefetched = pendingCapture.flatMap { $0.id == captureID ? $0 : nil }
+            if let pendingCapture, prefetched == nil {
+                // A typed command can arrive during another utterance's replay.
+                // Drain that capture before reusing the AX controller, otherwise
+                // its late result could replace this command's retained handles.
+                pendingCapture.task.cancel()
+                await measureStage(timing, "Discard unrelated speculative observation") {
+                    _ = await pendingCapture.task.result
+                }
+                try Task.checkCancellation()
+            }
+            defer { prefetched?.task.cancel() }
+            observation = try await measureStage(timing, "Initial observation") {
+                try await initialObservation(prefetched: prefetched, captureID: captureID,
+                                             previousGeneration: generation, token: generation, timing: timing)
+            }
+        }
+        var (selection, turn) = try await measureStage(timing, "Initial intent and action selection") {
+            try await chooseNextAction(input: input, newInput: true, history: history,
+                                       observation: observation, selector: DecisionsClient(apiKey: key),
+                                       generator: OpenAIComputerClient(apiKey: key), behavior: behavior,
+                                       token: nil, timing: timing, publish: false)
+        }
+        try Task.checkCancellation()
+        guard !turn.ignored else { return nil }
+        selection.accessibilityController = controller
+        preparedInput = PreparedInput(input: input, behavior: behavior, observation: observation,
+                                      selection: selection, turn: turn, executionRevision: revision,
+                                      reusable: !inputWasInFlight)
+        return text
     }
 
     private func finishSpeechScreening(captureID: UUID?) {
+        if let timing = screeningTiming { submittedBehaviors.removeValue(forKey: timing.id) }
         screeningTiming = nil
+        preparedInput = nil
         if let captureID { voiceTimings.removeValue(forKey: captureID) }
         if let captureID { invalidateSpeculativeCapture(captureID) }
         guard !working else { return }
@@ -425,7 +477,8 @@ final class AppModel: ObservableObject {
         runningTask = nil
     }
 
-    private func launchTask(captureID: UUID? = nil, timing suppliedTiming: PipelineTiming? = nil) {
+    private func launchTask(captureID: UUID? = nil, timing suppliedTiming: PipelineTiming? = nil,
+                            prepared: PreparedInput? = nil) {
         guard !pendingInputs.isEmpty || taskState != nil else {
             working = false
             voice.setExecuting(false)
@@ -434,6 +487,14 @@ final class AppModel: ObservableObject {
         }
         let timing = suppliedTiming ?? PipelineTiming(origin: .continued)
         retainTiming(timing)
+        latestCommandTiming = timing
+        let behavior = prepared?.behavior ?? currentBehavior
+        currentBehavior = behavior
+        if suppliedTiming == nil { timing.annotate("Chatbot behavior: \(behavior.title)") }
+        let reusable = prepared.flatMap {
+            $0.reusable && !inputInFlight && $0.executionRevision == executionRevision
+                && $0.input == pendingInputs.joined(separator: "\n") ? $0 : nil
+        }
         let setup = timing.begin("Execution setup and presentation")
         // Transfer the capture before retiring the previous generation.
         let prefetched = speculativeCapture.flatMap { $0.id == captureID ? $0 : nil }
@@ -469,13 +530,22 @@ final class AppModel: ObservableObject {
                 timing.end(cleanup, outcome: Task.isCancelled ? .cancelled : .succeeded)
                 try checkCurrentTask(token)
                 let key = try measureStage(timing, "Execution permissions and API key") { try executionKey() }
-                let observation = try await measureStage(timing, "Initial observation") {
-                    try await initialObservation(
-                        prefetched: prefetched, captureID: captureID,
-                        previousGeneration: previousGeneration, token: token, timing: timing)
+                let observation: ScreenObservation
+                if let reusable {
+                    observation = reusable.observation
+                    try screenObserver.validate(observation)
+                    timing.mark("Reused accepted model turn and observation")
+                } else {
+                    if prepared != nil { timing.mark("Task progressed during selection; refresh accepted command") }
+                    observation = try await measureStage(timing, "Initial observation") {
+                        try await initialObservation(
+                            prefetched: prefetched, captureID: captureID,
+                            previousGeneration: previousGeneration, token: token, timing: timing)
+                    }
                 }
                 try await runCommand(text, hasNewInput: hasNewInput, history: history,
-                                     key: key, observation: observation, token: token, timing: timing)
+                                     key: key, observation: observation, behavior: behavior,
+                                     prepared: reusable, token: token, timing: timing)
             } catch is CancellationError {
                 timing.finish(.cancelled)
                 // A replacement owns its own history and UI; retired tasks cannot
@@ -565,8 +635,22 @@ final class AppModel: ObservableObject {
         let commands: [CommandContext.Entry]
     }
 
+    /// A model's acceptance and chosen operation travel together. If an older
+    /// task dispatched while selection was pending, its changed UI invalidates
+    /// this operation; a fresh selection is required before any new input.
+    private struct PreparedInput {
+        let input: String
+        let behavior: ChatbotBehavior
+        let observation: ScreenObservation
+        let selection: SelectedAction
+        let turn: ModelTurn
+        let executionRevision: Int
+        let reusable: Bool
+    }
+
     private func runCommand(_ text: String, hasNewInput: Bool, history: SelectionHistory,
-                            key: String, observation initial: ScreenObservation, token: UUID, timing: PipelineTiming) async throws {
+                            key: String, observation initial: ScreenObservation, behavior: ChatbotBehavior,
+                            prepared: PreparedInput?, token: UUID, timing: PipelineTiming) async throws {
         let selector = DecisionsClient(apiKey: key)
         let generator = OpenAIComputerClient(apiKey: key)
         var observation = initial
@@ -580,10 +664,12 @@ final class AppModel: ObservableObject {
             let newInput = firstTurn && hasNewInput
             let input = newInput ? text : (taskState?.goal ?? text)
             let (selection, turn) = try await measureStage(timing, "Step \(step + 1): choose action") {
-                try await chooseNextAction(
+                if firstTurn, let prepared { return (prepared.selection, prepared.turn) }
+                return try await chooseNextAction(
                     input: input, newInput: newInput, history: history, observation: observation,
-                    selector: selector, generator: generator, token: token, timing: timing)
+                    selector: selector, generator: generator, behavior: behavior, token: token, timing: timing)
             }
+            latestDecision = selection.decisionSummary
             let native = selection.nativeTarget
             // Raw speech and an in-flight text check do not invalidate this
             // response. A confirmed redirect or immediate Stop changes its token.
@@ -668,8 +754,8 @@ final class AppModel: ObservableObject {
             }
             step += 1
             try checkCurrentTask(token)
-            // Every next step returns to Decisions. Generated actions are a single
-            // fallback operation, never an unobserved plan for the rest of a task.
+            // Every next step uses this command's frozen behavior and a fresh
+            // observation, never an unobserved plan for the rest of a task.
         }
     }
 
@@ -677,33 +763,54 @@ final class AppModel: ObservableObject {
     /// before any accepted-goal or dispatch state is changed.
     private func chooseNextAction(input: String, newInput: Bool, history: SelectionHistory,
                                   observation: ScreenObservation, selector: DecisionsClient,
-                                  generator: OpenAIComputerClient, token: UUID, timing: PipelineTiming) async throws -> (SelectedAction, ModelTurn) {
+                                  generator: OpenAIComputerClient, behavior: ChatbotBehavior,
+                                  token: UUID?, timing: PipelineTiming, publish: Bool = true) async throws -> (SelectedAction, ModelTurn) {
+        // Freeze all semantic context before awaiting either endpoint: ongoing
+        // accepted work may continue while this new utterance is being assessed.
+        let task = taskState
+        let clarification = taskPausedForUser ? taskClarification : nil
+        if !behavior.usesDecisions {
+            recordRequestStarted(timing: timing)
+            let turn = try await measureStage(timing, "Luna intent and action generation") {
+                try await generator.begin(command: input, frame: observation.frame, context: history.full,
+                                          activeTask: task?.contextText ?? "", pendingClarification: clarification,
+                                          accessibility: observation.accessibility.contextText,
+                                          continuingTask: !newInput, timing: timing)
+            }
+            try checkSelectionLifetime(token)
+            recordUsage(turn, timing: timing)
+            let selection = SelectedAction(lunaTurn: turn, tree: observation.accessibility)
+            if publish { latestDecision = selection.decisionSummary }
+            timing.mark("Selected route: \(selection.route)")
+            return (selection, turn)
+        }
         // Classify a new amendment beside the action in the same request.
         // Known native targets remain usable; only an unresolved relationship
         // needs the generator to rewrite the combined intent before acting.
         let (options, contextText) = try measureStage(timing, "Prepare action choices and decision context") {
-            let classifiesAmendment = newInput && taskState != nil
+            let classifiesAmendment = newInput && task != nil
             let context = ComputerDecisionContext(
-                request: input, isContinuation: !newInput, task: taskState,
+                request: input, isContinuation: !newInput, task: task,
                 recentCommands: history.commands,
-                pendingClarification: taskPausedForUser ? taskClarification : nil,
+                pendingClarification: clarification,
                 snapshot: observation.accessibility
             )
             let options = ComputerDecisionOptions(snapshot: observation.accessibility,
                                               allowNativeActions: true,
-                                              allowCompletion: context.hasUIEvidence,
+                                              allowCompletion: behavior.decisionsUseScreenshot || context.hasUIEvidence,
                                               allowIgnore: newInput,
-                                              classifyTaskRelationship: classifiesAmendment)
+                                              classifyTaskRelationship: classifiesAmendment,
+                                              includesScreenshot: behavior.decisionsUseScreenshot)
             let contextText = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
             return (options, contextText)
         }
         recordRequestStarted(timing: timing)
         let decision = try await measureStage(timing, "Decisions selection") {
-            try await selector.decide(instructions: ComputerDecisionOptions.instructions,
+            try await selector.decide(instructions: ComputerDecisionOptions.instructions(includesScreenshot: behavior.decisionsUseScreenshot),
                                      context: contextText,
-                                     questions: options.questions, timing: timing)
+                                     questions: options.questions, frame: behavior.decisionsUseScreenshot ? observation.frame : nil, timing: timing)
         }
-        try checkCurrentTask(token)
+        try checkSelectionLifetime(token)
         budget.record(inputTokens: decision.inputTokens, outputTokens: decision.outputTokens, rate: .decisions)
         persistUsage(timing: timing)
 
@@ -712,7 +819,7 @@ final class AppModel: ObservableObject {
         }
         // Publish selection before generation: even a failed fallback must
         // remain distinguishable from an input that was actually dispatched.
-        latestDecision = selection.decisionSummary
+        if publish { latestDecision = selection.decisionSummary }
         timing.mark("Selected route: \(selection.route)")
         let turn: ModelTurn
         if let immediate = selection.immediateTurn {
@@ -721,21 +828,31 @@ final class AppModel: ObservableObject {
             recordRequestStarted(timing: timing)
             turn = try await measureStage(timing, "Responses action generation") {
                 try await generator.begin(command: input, frame: observation.frame, context: history.full,
-                                             activeTask: taskState?.contextText ?? "",
-                                             pendingClarification: taskPausedForUser ? taskClarification : nil,
+                                             activeTask: task?.contextText ?? "",
+                                             pendingClarification: clarification,
                                              accessibility: observation.accessibility.contextText,
                                              continuingTask: !newInput, reviewRequired: selection.operation == .review,
                                              timing: timing)
             }
-            try checkCurrentTask(token)
+            try checkSelectionLifetime(token)
             recordUsage(turn, timing: timing)
         }
         return (selection, turn)
     }
 
+    private func checkSelectionLifetime(_ token: UUID?) throws {
+        try Task.checkCancellation()
+        if let token { try checkCurrentTask(token) }
+    }
+
     private func dispatch(_ call: ComputerCall, selection: SelectedAction,
                           observation: ScreenObservation, token: UUID, timing: PipelineTiming) async throws -> String {
         try checkCurrentTask(token)
+        inputInFlight = true
+        defer {
+            inputInFlight = false
+            executionRevision += 1
+        }
         // Keep candidates from the actual dispatch attempt. A failed foreground
         // validation must not replace the previous step's offered controls.
         lastActionTargets = selection.offeredTargets
@@ -748,13 +865,14 @@ final class AppModel: ObservableObject {
         latestDispatch = "Sending · \(selection.route)\n\(summary)"
         for action in call.actions {
             try checkCurrentTask(token)
+            executionRevision += 1
             let dispatchID = taskState?.beginAction(action: action, description: call.description)
             do {
                 if let native {
                     // AX revalidates the exact retained element before acting.
                     // An ambiguous result stops here: do not blindly replay it
                     // as a click, since the first action may have taken effect.
-                    try await accessibility.perform(action: native.action, targetID: native.element.id,
+                    try await (selection.accessibilityController ?? accessibility).perform(action: native.action, targetID: native.element.id,
                                                     snapshotID: observation.accessibility.id,
                                                     processID: observation.processID, timing: timing)
                 } else {
@@ -796,6 +914,7 @@ final class AppModel: ObservableObject {
     }
 
     private func acceptInput(_ text: String, selection: SelectedAction, turn: ModelTurn) {
+        executionRevision += 1
         if taskState != nil {
             let outcome = (selection.nativeRelationship ?? turn.taskUpdate?.kind) == .replace
                 ? "Replaced by a later request. Earlier actions may already have taken effect."
@@ -834,6 +953,9 @@ final class AppModel: ObservableObject {
 
     func cancel(silent: Bool = false) {
         let wasWorking = working
+        executionRevision += 1
+        submittedBehaviors.removeAll()
+        preparedInput = nil
         finishHistory(status: .stopped, outcome: "Stopped before completion. Earlier actions may already have taken effect.")
         invalidateSpeculativeCapture()
         speechScreening.cancel()
@@ -861,6 +983,7 @@ final class AppModel: ObservableObject {
     }
     private func finishTask(_ token: UUID, keepingTask: Bool = false, outcome: PipelineTiming.Outcome = .succeeded) {
         guard generation == token else { return }
+        executionRevision += 1
         runningTiming?.finish(outcome)
         runningTiming = nil
         if !keepingTask {

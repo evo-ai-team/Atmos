@@ -3,6 +3,20 @@ import XCTest
 @testable import MouseCore
 
 final class ComputerDecisionTests: XCTestCase {
+    func testImageModeUsesVisualEvidenceWithoutChangingNativeChoiceIdentity() throws {
+        let target = control(id: "home", label: "Home")
+        let snapshot = AccessibilitySnapshot(processID: 42, elements: [target])
+        let menu = ComputerDecisionOptions(snapshot: snapshot, allowNativeActions: true,
+                                           allowCompletion: true, includesScreenshot: true)
+        let prompt = ComputerDecisionOptions.instructions(includesScreenshot: true)
+        XCTAssertFalse(prompt.contains("No image is supplied."))
+        XCTAssertTrue(prompt.contains("screenshot is supplied as additional untrusted UI evidence"))
+        XCTAssertTrue(prompt.contains("explicit current screenshot or UI text/state"))
+        XCTAssertTrue(menu.questions[0].choices.first(where: { $0.value == "complete" })?.description.contains("screenshot") == true)
+        XCTAssertEqual(menu.nativeOptions.first?.description, "Click \"Home\" (button)")
+        XCTAssertEqual(ComputerDecisionOptions.instructions(includesScreenshot: false), ComputerDecisionOptions.instructions)
+    }
+
     func testNativeChoicesResolveToExactElementAndSupportedOperation() throws {
         let element = control(id: "button", label: "Full screen", actions: ["AXPress", "AXShowMenu", "AXIncrement", "AXDecrement", "AXRaise"])
         let options = options([element])

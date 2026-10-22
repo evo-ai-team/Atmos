@@ -18,6 +18,20 @@ struct SelectedAction {
     let decisionSummary: String
     let offeredTargets: [DecisionChoice]
     let treeSummary: String
+    var accessibilityController: AccessibilityController?
+
+    /// Responses-only mode produces its own action/ignore/completion in one call.
+    /// It never creates an artificial Decisions result to enter the dispatcher.
+    init(lunaTurn: ModelTurn, tree: AccessibilitySnapshot) {
+        operation = lunaTurn.ignored ? .ignore : lunaTurn.pauseReason != nil ? .review
+            : lunaTurn.calls.isEmpty ? .complete : .generate
+        nativeRelationship = nil
+        route = "Luna Responses"
+        choiceSummary = "Screenshot + command · \(tree.elements.count) accessibility elements"
+        decisionSummary = "Luna → \(lunaTurn.ignored ? "Ignore" : lunaTurn.pauseReason != nil ? "Clarification" : lunaTurn.calls.isEmpty ? "Complete" : "Action")\n\(choiceSummary)"
+        offeredTargets = []
+        treeSummary = decisionSummary
+    }
 
     init(result: DecisionResult, options: ComputerDecisionOptions, tree: AccessibilitySnapshot) throws {
         let selection = try options.resolveSelection(result)

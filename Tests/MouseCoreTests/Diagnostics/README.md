@@ -4,4 +4,6 @@
 
 Metadata tests check chronological placement without fabricated durations, separate annotation and stage retention limits, bounded single-line messages, concurrent annotation recording, and ignored late annotations both before and after the completed report is cached.
 
+Structured-snapshot coverage checks live totals, stage durations, first-input latency, and frozen values after completion.
+
 Run `Scripts/test.sh --filter PipelineTimingTests` from the project root. These tests validate timing accounting; they do not measure live API, microphone, capture, or accessibility latency.

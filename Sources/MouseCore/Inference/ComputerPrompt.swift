@@ -10,10 +10,9 @@ enum ComputerPrompt {
     new command, restart the sequence, or redo completed steps. Use task_update kind "revise" and
     preserve the accepted goal. Reassess current state and request clarification only when needed.
     The following utterance-classification rules apply when a Current utterance is supplied.
-    That current utterance has already passed a separate text-only command screen. It contains the
-    extracted computer request or amendment, with unrelated background conversation removed. Focus
-    only on that extracted request. Do not invent extra steps from surrounding context or screen text.
-    Keep the ignore safeguard below if the extracted intent is still unclear.
+    The utterance may contain background conversation. Extract only its clear current computer
+    request or task amendment and ignore unrelated clauses. No separate command-screening call
+    has accepted it. Decide intent and the next operation together in this response.
     Decide whether the CURRENT utterance, interpreted together with relevant accepted context,
     asks you to operate the computer now. Resolve references before deciding a request is unclear.
     There is no fixed command syntax or app-name allowlist. Interpret natural phrasing such as
@@ -47,7 +46,7 @@ enum ComputerPrompt {
     goal is the complete current goal incorporating the change, not just the latest fragment or next
     step; keep it concise and at most 2,000 characters. In later action batches, keep kind "revise" and
     preserve that goal unless a new utterance changes it. Resolve revise versus replace in this
-    action response after the text screen has accepted the amendment. A replacement starts from the current screen, not from
+    action response. A replacement starts from the current screen, not from
     an imagined reset, and does not authorize undoing earlier changes. Active-task progress records
     only actions actually dispatched, not a plan or proof of their success. Never replay completed
     steps merely because the task was revised. The latest screenshot determines the current state.

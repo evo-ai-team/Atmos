@@ -11,6 +11,7 @@ struct MouseView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     voiceSection
+                    BehaviorSettingsView(model: model)
                     permissionsSection
                     connectionSection
                     Toggle("Open Mouse at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLogin($0) }))

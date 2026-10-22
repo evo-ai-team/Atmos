@@ -41,7 +41,7 @@ public final class SpeechScreeningQueue {
     /// context when each item actually starts, not when it is enqueued.
     public func enqueue(_ text: String, captureID: UUID? = nil, timing: PipelineTiming? = nil) {
         pending.append(Utterance(text: text, captureID: captureID, timing: timing,
-            queueSpan: timing?.begin("Speech screening queue")))
+            queueSpan: timing?.begin("Incoming command queue")))
         guard worker == nil else { return }
         let token = generation
         worker = Task { @MainActor [weak self] in
@@ -71,7 +71,7 @@ public final class SpeechScreeningQueue {
             utterance.timing?.end(utterance.queueSpan, outcome: .succeeded)
             onCheckStarted(utterance.captureID, utterance.timing)
             guard isCurrent(token) else { return }
-            let screeningSpan = utterance.timing?.begin("Speech intent screening")
+            let screeningSpan = utterance.timing?.begin("Intent and first-action selection")
             do {
                 let command = try await check(utterance.text)
                 guard isCurrent(token) else { return }

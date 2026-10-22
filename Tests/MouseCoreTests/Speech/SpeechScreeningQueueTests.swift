@@ -25,7 +25,7 @@ final class SpeechScreeningQueueTests: XCTestCase {
         }, onFailure: { _, _ in XCTFail("Unexpected failure") }, onCheckStarted: { id, timing in
             startedIDs.append(id)
             XCTAssertTrue(timing === (id == firstID ? firstTiming : secondTiming))
-            XCTAssertTrue(timing?.report.contains("· succeeded · Speech screening queue") == true,
+            XCTAssertTrue(timing?.report.contains("· succeeded · Incoming command queue") == true,
                 "Queue wait must end before the app starts its checker")
         })
 
@@ -36,13 +36,13 @@ final class SpeechScreeningQueueTests: XCTestCase {
         checker.resolve(at: 0, with: .success("Open Chrome"))
         await fulfillment(of: [secondStarted], timeout: 2)
         XCTAssertEqual(startedIDs, [firstID, secondID])
-        XCTAssertTrue(firstTiming.report.contains("+0.0 ms · 1000.0 ms · succeeded · Speech intent screening"))
-        XCTAssertTrue(secondTiming.report.contains("+0.0 ms · 1000.0 ms · succeeded · Speech screening queue"))
+        XCTAssertTrue(firstTiming.report.contains("+0.0 ms · 1000.0 ms · succeeded · Intent and first-action selection"))
+        XCTAssertTrue(secondTiming.report.contains("+0.0 ms · 1000.0 ms · succeeded · Incoming command queue"))
         clock.set(101.5)
         checker.resolve(at: 1, with: .success(nil))
         await fulfillment(of: [ignored], timeout: 2)
         XCTAssertTrue(secondTiming.report.contains("· ignored\n"))
-        XCTAssertTrue(secondTiming.report.contains("+1000.0 ms · 500.0 ms · succeeded · Speech intent screening"))
+        XCTAssertTrue(secondTiming.report.contains("+1000.0 ms · 500.0 ms · succeeded · Intent and first-action selection"))
         firstTiming.finish(.succeeded)
     }
 
@@ -74,15 +74,15 @@ final class SpeechScreeningQueueTests: XCTestCase {
         queue.cancel()
         let oldReport = oldTiming.report
         let queuedReport = queuedTiming.report
-        XCTAssertTrue(oldReport.contains("· cancelled · Speech intent screening"))
-        XCTAssertTrue(queuedReport.contains("· cancelled · Speech screening queue"))
+        XCTAssertTrue(oldReport.contains("· cancelled · Intent and first-action selection"))
+        XCTAssertTrue(queuedReport.contains("· cancelled · Incoming command queue"))
         queue.enqueue("Replacement", timing: replacementTiming)
         await fulfillment(of: [newStarted], timeout: 2)
         checker.resolve(at: 0, with: .success("Old command"))
         await fulfillment(of: [oldReturned], timeout: 2)
         XCTAssertEqual(oldTiming.report, oldReport)
         XCTAssertEqual(queuedTiming.report, queuedReport)
-        XCTAssertTrue(replacementTiming.report.contains("· running · Speech intent screening"))
+        XCTAssertTrue(replacementTiming.report.contains("· running · Intent and first-action selection"))
         checker.resolve(at: 1, with: .success("Replacement"))
         await fulfillment(of: [accepted], timeout: 2)
         replacementTiming.finish(.succeeded)

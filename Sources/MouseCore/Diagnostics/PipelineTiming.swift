@@ -20,6 +20,22 @@ public final class PipelineTiming: @unchecked Sendable {
         fileprivate let recordID: UUID
     }
 
+    public struct Stage: Identifiable, Sendable {
+        public let id: UUID
+        public let name: String
+        public let offset: TimeInterval
+        public let duration: TimeInterval
+        public let outcome: Outcome
+    }
+
+    public struct Snapshot: Sendable {
+        public let origin: Origin
+        public let outcome: Outcome
+        public let totalDuration: TimeInterval
+        public let firstInputDuration: TimeInterval?
+        public let stages: [Stage]
+    }
+
     private struct Record {
         let id: UUID
         let name: String
@@ -165,6 +181,23 @@ public final class PipelineTiming: @unchecked Sendable {
             records[index].end = now
             records[index].outcome = outcome
         }
+    }
+
+    /// Structured values for the settings UI. Take one snapshot per redraw so
+    /// a running total and its stages share the same clock observation.
+    public var snapshot: Snapshot {
+        let sample = clock()
+        lock.lock()
+        defer { lock.unlock() }
+        let now = endedAt ?? observe(sample)
+        return Snapshot(
+            origin: origin, outcome: outcome, totalDuration: now - startedAt,
+            firstInputDuration: firstInputAt.map { $0 - startedAt },
+            stages: records.sorted { $0.start == $1.start ? $0.order < $1.order : $0.start < $1.start }.map {
+                Stage(id: $0.id, name: $0.name, offset: $0.start - startedAt,
+                      duration: ($0.end ?? now) - $0.start, outcome: $0.outcome)
+            }
+        )
     }
 
     /// A copyable snapshot, including elapsed durations for work still running.

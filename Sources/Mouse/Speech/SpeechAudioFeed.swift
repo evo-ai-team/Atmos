@@ -2,6 +2,9 @@ import AVFoundation
 import CoreMedia
 import Foundation
 import Speech
+#if SWIFT_PACKAGE
+import MouseCore
+#endif
 
 /// Bridges the audio tap and the analyzer without sharing mutable PCM buffers.
 /// Meter and stop state are lock-protected; one detached task owns conversion.
@@ -29,6 +32,7 @@ final class SpeechAudioFeed: @unchecked Sendable {
     private var conversionTask: Task<Void, Never>?
     private let lock = NSLock()
     private var stopped = false
+    private var speechThreshold = SpeechSensitivity.energyThreshold(for: SpeechSensitivity.defaultValue)
     private var rms = 0.0
     private var lastSpeechAt = ProcessInfo.processInfo.systemUptime
     private var lastBufferAt = ProcessInfo.processInfo.systemUptime
@@ -95,9 +99,9 @@ final class SpeechAudioFeed: @unchecked Sendable {
         lock.lock()
         rms = energy
         lastBufferAt = now
-        // This only proposes an endpoint; it can never submit provisional text.
-        // Transcript activity also postpones finalization, and new sound invalidates it.
-        let containsSpeech = energy > 0.006
+        // This only proposes an endpoint. Transcript activity also postpones
+        // committing an utterance, and new sound invalidates its candidate.
+        let containsSpeech = energy > speechThreshold
         if containsSpeech { lastSpeechAt = now }
         lock.unlock()
         switch raw.yield(Capture(buffer: copy, time: now, containsSpeech: containsSpeech)) {
@@ -111,6 +115,14 @@ final class SpeechAudioFeed: @unchecked Sendable {
     func meter() -> (rms: Double, lastSpeechAt: TimeInterval, lastBufferAt: TimeInterval) {
         lock.lock(); defer { lock.unlock() }
         return (rms, lastSpeechAt, lastBufferAt)
+    }
+
+    /// Updating the activity gate never modifies the captured PCM samples.
+    func setSensitivity(_ value: Double) {
+        let threshold = SpeechSensitivity.energyThreshold(for: value)
+        lock.lock()
+        speechThreshold = threshold
+        lock.unlock()
     }
 
     /// Finite diagnostics can close input and let conversion/output drain.

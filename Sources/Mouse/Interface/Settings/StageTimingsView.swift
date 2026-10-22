@@ -11,7 +11,7 @@ struct StageTimingsView: View {
     @State private var isExpanded = false
 
     var body: some View {
-        DisclosureGroup("Stage timings", isExpanded: $isExpanded) {
+        DisclosureGroup("Full timing logs", isExpanded: $isExpanded) {
             if isExpanded {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {

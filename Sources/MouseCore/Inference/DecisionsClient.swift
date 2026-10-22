@@ -2,8 +2,8 @@ import Foundation
 
 /// The Decisions endpoint is a classifier, not the Responses tool-generation API.
 /// Keep its contract separate: no tools, reasoning controls, service tier, or response
-/// history IDs belong here. This client accepts text only; screenshots belong to the
-/// planner. A new observation produces a new set of closed choices.
+/// history IDs belong here. Text-only is the default; only the explicitly selected
+/// image mode supplies a frame. A new observation produces new closed choices.
 public actor DecisionsClient {
     typealias Transport = APIRequest.Transport
 
@@ -27,6 +27,7 @@ public actor DecisionsClient {
         instructions: String,
         context: String,
         questions: [DecisionQuestion],
+        frame: ScreenshotFrame? = nil,
         timing: PipelineTiming? = nil
     ) async throws -> DecisionResult {
         var stage = timing?.begin("Decisions request encoding")
@@ -35,16 +36,22 @@ public actor DecisionsClient {
         try Task.checkCancellation()
         guard !apiKey.isEmpty else { throw MouseError.configuration("Add an OpenAI API key in Settings.") }
         try Self.validate(questions)
+        if let frame, frame.width <= 0 || frame.height <= 0 || frame.data.isEmpty {
+            throw MouseError.configuration("A nonempty screenshot is required for image Decisions.")
+        }
+        var content = [InputPart(text: context)]
+        if let frame { content.append(InputPart(frame: frame)) }
 
         let body = RequestBody(
             model: Self.model,
             input: [
                 InputMessage(role: "developer", content: [InputPart(text: instructions)]),
-                InputMessage(role: "user", content: [InputPart(text: context)])
+                InputMessage(role: "user", content: content)
             ],
             questions: questions
         )
-        timing?.annotate("Decisions request shape: text-only; screenshot none; context UTF-8 \(context.utf8.count) bytes; \(questions.count) question(s), \(questions.reduce(0) { $0 + $1.choices.count }) total choices")
+        let imageSummary = frame.map { "image; screenshot \($0.width)×\($0.height)" } ?? "text-only; screenshot none"
+        timing?.annotate("Decisions request shape: \(imageSummary); context UTF-8 \(context.utf8.count) bytes; \(questions.count) question(s), \(questions.reduce(0) { $0 + $1.choices.count }) total choices")
         let request = APIRequest.make(
             endpoint: Self.endpoint, apiKey: apiKey, body: try JSONEncoder().encode(body)
         )
@@ -171,8 +178,19 @@ public actor DecisionsClient {
     }
 
     private struct InputPart: Encodable {
-        let type = "input_text"
-        let text: String
+        let type: String
+        let text: String?
+        let imageURL: String?
+        let detail: String?
+        enum CodingKeys: String, CodingKey { case type, text, detail; case imageURL = "image_url" }
+
+        init(text: String) {
+            type = "input_text"; self.text = text; imageURL = nil; detail = nil
+        }
+
+        init(frame: ScreenshotFrame) {
+            type = "input_image"; text = nil; imageURL = frame.dataURL; detail = "original"
+        }
     }
 
     private struct ResponseBody: Decodable {

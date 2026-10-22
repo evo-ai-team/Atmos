@@ -19,6 +19,16 @@ final class VoiceInput {
     var onActivationChanged: ((Bool) -> Void)?
     var onDeactivation: (() -> Void)?
     var onFailure: ((String) -> Void)?
+    /// Changes the speech-activity threshold only; 50% preserves the old gate.
+    var audioSensitivity: Double {
+        get { sensitivity }
+        set {
+            sensitivity = SpeechSensitivity.normalized(newValue)
+            feed?.setSensitivity(sensitivity)
+        }
+    }
+    /// Read at the next endpoint. Changing this never cancels an ongoing replay.
+    var secondPassEnabled = true
     var isEnabled: Bool { recovery.isEnabled }
     /// Includes raw audio that has not yet reached the timer/recognizer.
     /// Activity alone is not permission to interrupt the current computer task.
@@ -49,6 +59,7 @@ final class VoiceInput {
     }
 
     private var session = WakeSession()
+    private var sensitivity = SpeechSensitivity.defaultValue
     private var transcript = SpeechTranscriptState()
     private var history: [SpeechAudioPacket] = []
     private var snapshotFloor: TimeInterval = 0
@@ -144,6 +155,7 @@ final class VoiceInput {
             await self?.fail(message, lifecycle: startID)
         }
         self.feed = feed
+        feed.setSensitivity(audioSensitivity)
         activityGate = SpeechActivityGate(lastSpeechAt: feed.meter().lastSpeechAt)
         isRunning = true
         presentActivation(false)
@@ -305,8 +317,8 @@ final class VoiceInput {
     }
 
     private func publishPreview() {
-        // Wake and first-word Stop are deliberately immediate. Ordinary live
-        // words remain preview-only until the accurate replay completes.
+        // Wake and first-word Stop are deliberately immediate. Ordinary words
+        // wait for a stable endpoint and, when enabled, the accurate replay.
         let events = session.receive(transcript.text, at: Self.now)
         if events.contains(.deactivated) { resetUtterance() }
         handle(events)
@@ -369,6 +381,10 @@ final class VoiceInput {
             trimHistory()
             return
         }
+        if !secondPassEnabled {
+            commitLivePass(candidate, lifecycle: id)
+            return
+        }
         guard let locale, !history.isEmpty else {
             fail(InputError.unavailableAudio.localizedDescription, lifecycle: id)
             return
@@ -394,20 +410,12 @@ final class VoiceInput {
 
     private func startFinalPass(_ replay: UtteranceReplay, lifecycle id: UUID) {
         let candidate = replay.candidate
-        let replayStartedAt = Self.now
-        let lastSpeechAt = feed?.meter().lastSpeechAt ?? replayStartedAt
-        // Start at the last detected speech, so the silence endpoint and any
-        // delayed recognition/conversion are included in time until the click.
-        let endpointStartedAt = lastSpeechAt.isFinite && lastSpeechAt > 0 && lastSpeechAt <= replayStartedAt
-            ? lastSpeechAt : replayStartedAt
-        let timing = PipelineTiming(origin: .speech, startedAt: endpointStartedAt)
-        timing.record("Speech endpoint wait", from: endpointStartedAt, to: replayStartedAt)
-        finalTaskID = candidate.id
-        finalTiming = timing
-        // The app must associate the trace before speculative capture starts.
-        // Even a wake-only replay is visible and will finish as ignored.
-        onTimingStarted?(candidate.id, timing)
-        if session.isActive { onFinalizationStarted?(candidate.id) }
+        let timing = startSpeechTiming(candidate, usesReplay: true)
+        guard isRunning, lifecycle == id, finalTaskID == candidate.id,
+              transcript.isCurrent(candidate) else {
+            timing.finish(.cancelled)
+            return
+        }
         let replaySpan = timing.begin("Local speech replay")
         finalTask = Task { @MainActor [weak self] in
             do {
@@ -435,6 +443,47 @@ final class VoiceInput {
                 self.finalTiming = nil
             }
         }
+    }
+
+    private func startSpeechTiming(_ candidate: SpeechTranscriptState.Candidate, usesReplay: Bool) -> PipelineTiming {
+        let endpointReachedAt = Self.now
+        let lastSpeechAt = feed?.meter().lastSpeechAt ?? endpointReachedAt
+        // Start at the last detected speech, so the silence endpoint and any
+        // delayed recognition/conversion are included in time until the click.
+        let endpointStartedAt = lastSpeechAt.isFinite && lastSpeechAt > 0 && lastSpeechAt <= endpointReachedAt
+            ? lastSpeechAt : endpointReachedAt
+        let timing = PipelineTiming(origin: .speech, startedAt: endpointStartedAt)
+        timing.record("Speech endpoint wait", from: endpointStartedAt, to: endpointReachedAt)
+        timing.annotate(usesReplay ? "Speech transcription: live + second pass" : "Speech transcription: fast live only; second pass skipped")
+        finalTaskID = candidate.id
+        finalTiming = timing
+        // The app must associate the trace before speculative capture starts.
+        // Even a wake-only utterance is visible and will finish as ignored.
+        onTimingStarted?(candidate.id, timing)
+        if session.isActive { onFinalizationStarted?(candidate.id) }
+        return timing
+    }
+
+    private func commitLivePass(_ candidate: SpeechTranscriptState.Candidate, lifecycle id: UUID) {
+        let timing = startSpeechTiming(candidate, usesReplay: false)
+        let validationSpan = timing.begin("Fast speech commit validation")
+        // Timing/capture callbacks can synchronously stop or reset the session.
+        // Check ownership again before accepting text or clearing another trace.
+        guard isRunning, lifecycle == id, finalTaskID == candidate.id else {
+            timing.end(validationSpan, outcome: .cancelled)
+            timing.finish(.cancelled)
+            return
+        }
+        guard let meter = feed?.meter(), let text = transcript.commitLiveTranscript(
+            candidate, at: Self.now, lastSpeechAt: meter.lastSpeechAt, latestCaptureAt: meter.lastBufferAt
+        ) else {
+            timing.end(validationSpan, outcome: .cancelled)
+            cancelFinalPass()
+            return
+        }
+        finishCommittedSpeech(lastSpeechAt: meter.lastSpeechAt)
+        timing.end(validationSpan, outcome: .succeeded)
+        publishFinalizedText(text, candidateID: candidate.id, timing: timing)
     }
 
     private static func finalizeWithTimeout(_ replay: UtteranceReplay, timing: PipelineTiming) async throws -> String {
@@ -478,20 +527,24 @@ final class VoiceInput {
             cancelFinalPass()
             return false
         }
-        activityGate.consume(lastSpeechAt: meter.lastSpeechAt)
-        synchronizeLiveBoundary()
-        finalTask = nil
-        finalTaskID = nil
-        finalTiming = nil
-        trimHistory()
+        finishCommittedSpeech(lastSpeechAt: meter.lastSpeechAt)
         timing.end(validationSpan, outcome: .succeeded)
         publishFinalizedText(text, candidateID: replay.candidate.id, timing: timing)
         return true
     }
 
+    private func finishCommittedSpeech(lastSpeechAt: TimeInterval) {
+        activityGate.consume(lastSpeechAt: lastSpeechAt)
+        synchronizeLiveBoundary()
+        finalTask = nil
+        finalTaskID = nil
+        finalTiming = nil
+        trimHistory()
+    }
+
     private func publishFinalizedText(_ text: String, candidateID: UUID, timing: PipelineTiming) {
-        // Fast wake has already activated the session. Replay still supplies
-        // corrected command text and strips a repeated wake.
+        // Fast wake has already activated the session. Both recognition paths
+        // strip a repeated wake before delivering the selected transcript.
         session.beginRecognition(preservingPending: false)
         handle(session.receive(text, at: Self.now), candidateID: candidateID)
         presentActivation(session.isActive)

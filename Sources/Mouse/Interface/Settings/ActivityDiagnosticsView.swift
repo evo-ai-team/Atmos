@@ -15,7 +15,6 @@ struct ActivityDiagnosticsView: View {
                         TextField("Type a command", text: $model.command).textFieldStyle(.roundedBorder).onSubmit { model.submit() }
                         Button("Run") { model.submit() }.disabled(model.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    StageTimingsView(traces: model.timingTraces)
                     VStack(alignment: .leading, spacing: 3) {
                         if let goal = model.lastAcceptedGoal {
                             Text("Last accepted goal").font(.caption.weight(.medium))

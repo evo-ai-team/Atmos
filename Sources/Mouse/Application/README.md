@@ -12,7 +12,7 @@ speech through observation, selection, input dispatch, and completion.
   the same foreground process and validates that evidence before acting.
 - `StageMeasurement.swift` closes synchronous and asynchronous stage timers on
   success, error, or cancellation without changing the operation's result.
-- `SelectedAction.swift` converts a validated Decisions answer into a native,
+- `SelectedAction.swift` converts a validated Decisions answer or Luna response into a native,
   generated, completion, or ignored operation and its diagnostic descriptions.
 - `UsageHistory.swift` loads and saves local usage, backs up unreadable counters,
   and falls back to counting in memory after a storage failure.
@@ -24,25 +24,31 @@ capturing a new screen. Speech screening runs separately and cannot retire work
 until it accepts a command. Keep these checks around every asynchronous boundary
 when changing the execution loop.
 
-Decisions is always text only. `AppModel` supplies `ComputerDecisionContext` with
-the full current request/goal, pending clarification, last three accepted
-commands, latest 12 dispatch summaries, and up to 100 meaningful AX text/state
-rows. Omitted history and UI evidence are explicit. Simple numbered options map
-locally to retained exact AX elements/actions; they do not expose the full tree,
-native IDs, help, or geometry. The existing 249-native-choice cap and candidate
-coverage remain. Completion is unavailable without current AX evidence and is
-permitted only when explicit UI text/state establishes the entire goal.
+`MousePreferences` supplies three per-command modes: Responses Luna alone, Decisions with
+an image, or Decisions with text only. The chosen mode is frozen when input is submitted
+and appears in timing metadata. Voice sensitivity and second-pass recognition settings
+are also persisted and applied to `VoiceInput`.
 
-Screenshot capture remains part of the local observation for geometry, native
-validation, and progress checks. A screenshot is never attached to Decisions;
-visual inspection, uncertain targets, and unsupported actions use the Responses
-planner with the screenshot, full captured AX tree, and full history. Speech
-screening is unchanged. Smaller payloads are not a measured speed guarantee.
+The incoming-command queue runs the selected model's intent check and first action
+selection together. There is no separate SpeechIntentFilter call. Accepted results carry
+their observation into execution, avoiding a repeat model request. Ignored speech leaves
+active work running. Concurrent checks use their own AX controller so capturing a new
+tree cannot replace a running action's retained handles. If existing work dispatched or
+changed task state during selection, or input was in flight, acceptance retires that work
+and takes a fresh observation before selecting again. Cancellation invalidates both paths.
+
+Decisions receives compact context with the complete request/goal, last three accepted
+commands, twelve dispatch summaries, and up to 100 useful AX state rows. Numbered choices
+map locally to exact native targets. Text-only completion requires current AX evidence;
+image mode may additionally establish completion from the screenshot. Unsupported actions
+use the screenshot-capable Responses planner. Luna-only uses that planner directly on
+every step, including ignore, completion, and amendments, without calling Decisions.
 
 Each command carries a `PipelineTiming` reference from speech replay or typed
 submission through screening and execution. Queued and retired tasks retain
 their own references, so late callbacks cannot alter a replacement's report.
-The latest ten reports appear in Settings. Candidate-to-trace handoff mappings
+The latest ten reports appear in Settings. The latest accepted command is retained
+separately, so ignored background speech cannot evict its summary. Candidate-to-trace handoff mappings
 outlive display retention and are removed on submission or invalidation.
 Timers include background permission/Keychain polling, usage persistence,
 speculative capture reuse, focus restoration, API stages, input, and settle

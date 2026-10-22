@@ -1,31 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-mouseProjectDir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-mouseWorkspaceDir="$(cd "$mouseProjectDir/../.." && pwd)"
-
-if [[ -z "${DEVELOPER_DIR:-}" ]]; then
-    mouseSelectedDeveloper="$(/usr/bin/xcode-select -p 2>/dev/null || true)"
-    if [[ "$mouseSelectedDeveloper" == *.app/Contents/Developer && -x "$mouseSelectedDeveloper/usr/bin/xcodebuild" ]]; then
-        export DEVELOPER_DIR="$mouseSelectedDeveloper"
-    else
-        export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
-    fi
-fi
-if [[ ! -x "$DEVELOPER_DIR/usr/bin/xcodebuild" ]]; then
-    printf 'Full Xcode is required. Set DEVELOPER_DIR to its Contents/Developer directory.\n' >&2
-    exit 1
-fi
-
-if [[ -n "${MOUSE_BUILD_DIR:-}" ]]; then
-    mouseBuildDir="$MOUSE_BUILD_DIR"
-elif [[ -d "$mouseWorkspaceDir/work" ]]; then
-    mouseBuildDir="$mouseWorkspaceDir/work/mouse-build"
-else
-    mouseBuildDir="$(mktemp -d "${TMPDIR:-/tmp}/mouse-build.XXXXXX")"
-fi
-mkdir -p "$mouseBuildDir"
-mouseBuildDir="$(cd "$mouseBuildDir" && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/environment.sh"
+mouseBuildDir="$(mouse_output_directory "${MOUSE_BUILD_DIR:-}" "mouse-build")"
 
 mouseOutputApp="${1:-$mouseProjectDir/../Mouse.app}"
 if [[ $# -gt 1 || "$mouseOutputApp" != *.app ]]; then

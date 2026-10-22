@@ -7,10 +7,11 @@ import Foundation
 // No app launches, screenshot capture, network requests, or external assets.
 
 let project = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-let workspace = project.deletingLastPathComponent().deletingLastPathComponent()
 let iconset = CommandLine.arguments.count > 1
     ? URL(fileURLWithPath: CommandLine.arguments[1])
-    : workspace.appendingPathComponent("work/Mouse.iconset", isDirectory: true)
+    : FileManager.default.temporaryDirectory
+        .appendingPathComponent("mouse-icon-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("Mouse.iconset", isDirectory: true)
 let destination = CommandLine.arguments.count > 2
     ? URL(fileURLWithPath: CommandLine.arguments[2])
     : project.appendingPathComponent("Resources/Mouse.icns")

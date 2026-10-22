@@ -8,6 +8,14 @@ Current source: `/Users/sameemsaleem/Product/Mouse`
 
 Current behavior and setup: [README.md](README.md)
 
+## 2026-10-21 — Clearer notch glass and finer reflections
+
+- Removed the forced dark material appearance and extra full-panel black wash, and reduced the native glass strength so the background remains visible through the extension.
+- Replaced the uniform bright outline with a thinner reflection whose brightness varies across the sides and bottom, still fading out near the top corners.
+- Preserved the opaque camera region, full-span smooth fade, text, layout, and Reduce Transparency fallback.
+
+Validation: Release build and signature verification passed. An isolated native comparison checked active and transcript states on desktop and warm patterned backgrounds; a second preview checked loading, action, and no-notch layouts. No model requests or microphone capture were used.
+
 ## 2026-10-21 — Extend the notch fade to the panel edges
 
 - Replaced the fixed 20-point camera fade with rounded contours spanning the full visible extension. The transition now reaches the panel's sides and bottom at every presentation size.

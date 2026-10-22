@@ -38,6 +38,7 @@ final class MouseNotchSurface: NSView {
     private let glassFade = CAGradientLayer()
     private let edgeOverlay = NSView()
     private let edge = CAShapeLayer()
+    private let edgeLight = CAGradientLayer()
     private let edgeFade = CAGradientLayer()
     private var contourResize = MouseNotchContourResize()
 
@@ -47,8 +48,10 @@ final class MouseNotchSurface: NSView {
         layer?.masksToBounds = true
         glass.style = .clear
         glass.cornerRadius = radius
-        // The notch always uses light text, regardless of the app's appearance.
-        glass.appearance = NSAppearance(named: .darkAqua)
+        // The material supplies refraction, not another opaque dark backing.
+        // Keep it separate from the camera blend and text so its strength can
+        // be reduced without exposing the hardware seam or dimming content.
+        glass.tintColor = nil
         glass.wantsLayer = true
         glass.layer?.mask = glassFade
         addSubview(glass)
@@ -59,13 +62,22 @@ final class MouseNotchSurface: NSView {
         addSubview(content)
         layer?.addSublayer(shoulders)
         edge.fillColor = nil
-        edge.strokeColor = NSColor.white.withAlphaComponent(0.38).cgColor
-        edge.lineWidth = 0.75
-        edge.mask = edgeFade
+        edge.strokeColor = NSColor.white.cgColor
+        edge.lineWidth = 0.6
+        // An uneven reflection reads as a thin glass edge instead of a bright
+        // outline around a frosted panel. The vertical mask removes it at top.
+        edgeLight.startPoint = CGPoint(x: 0, y: 0.5)
+        edgeLight.endPoint = CGPoint(x: 1, y: 0.5)
+        edgeLight.colors = [0.08, 0.24, 0.48, 0.16, 0.28].map {
+            NSColor.white.withAlphaComponent($0).cgColor
+        }
+        edgeLight.locations = [0, 0.18, 0.52, 0.82, 1]
+        edgeLight.mask = edge
         // An explicit view preserves this order when AppKit rebuilds the
         // material's backing layers during window resizing.
         edgeOverlay.wantsLayer = true
-        edgeOverlay.layer?.addSublayer(edge)
+        edgeOverlay.layer?.mask = edgeFade
+        edgeOverlay.layer?.addSublayer(edgeLight)
         addSubview(edgeOverlay, positioned: .above, relativeTo: content)
         applyAccessibilityPreferences()
     }
@@ -114,6 +126,7 @@ final class MouseNotchSurface: NSView {
         updateFade(glassFade, frame: glass.bounds, visibleTop: top)
         updateFade(edgeFade, frame: bounds, visibleTop: top)
         edgeOverlay.frame = bounds
+        edgeLight.frame = edgeOverlay.bounds
         edge.frame = edgeOverlay.bounds
         edge.path = edgePath(in: glass.frame, top: top - shoulder)
         edge.contentsScale = shoulders.contentsScale
@@ -143,9 +156,10 @@ final class MouseNotchSurface: NSView {
         let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         content.reduceTransparency = reduceTransparency
         glass.style = reduceTransparency ? .regular : .clear
+        glass.alphaValue = reduceTransparency ? 1 : 0.42
         shoulders.fillColor = (reduceTransparency
             ? NSColor(white: 0.12, alpha: 1)
-            : NSColor.black.withAlphaComponent(0.12)).cgColor
+            : NSColor.clear).cgColor
         needsLayout = true
     }
 
@@ -218,9 +232,6 @@ private final class MouseNotchContent: NSView {
             // An opaque charcoal fallback respects Reduce Transparency while
             // reserving full black for the physical camera cutout.
             NSColor(white: 0.12, alpha: 1).setFill()
-            bounds.fill()
-        } else {
-            NSColor.black.withAlphaComponent(0.12).setFill()
             bounds.fill()
         }
         drawCameraBlend()

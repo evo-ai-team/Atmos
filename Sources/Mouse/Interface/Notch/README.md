@@ -12,9 +12,10 @@ of the primary screen. It passes mouse events through to the app underneath.
   Its contour follows the panel's actual animated size to avoid competing clocks.
   Only the measured hardware cutout is fully black. A rounded, smooth fade spans
   the full extension to its sides and bottom, scaling with each presentation's
-  size. It blends into native clear glass; the side and bottom highlights fade
-  before the top corners. Screens without a cutout use glass throughout, and
-  Reduce Transparency substitutes opaque charcoal behind the content.
+  size. The native clear material is softened without dimming the camera blend
+  or text, and has no extra full-panel black wash. Thin, varying side and bottom
+  reflections fade before the top corners. Screens without a cutout use glass
+  throughout, and Reduce Transparency substitutes opaque charcoal behind the content.
 - `MouseThinkingIndicator.swift` draws and animates the compact thinking dots.
 
 Presentation never gates command execution. Reduced-motion and reduced-transparency

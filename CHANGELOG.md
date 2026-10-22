@@ -8,6 +8,13 @@ Current source: `/Users/sameemsaleem/Product/Mouse`
 
 Current behavior and setup: [README.md](README.md)
 
+## 2026-10-21 — Extend the notch fade to the panel edges
+
+- Replaced the fixed 20-point camera fade with rounded contours spanning the full visible extension. The transition now reaches the panel's sides and bottom at every presentation size.
+- Eased opacity at both ends to soften the hardware seam and the transition into clear glass. Kept the exact camera region black and preserved the glass material and edge highlights.
+
+Validation: Release build and signature verification passed. Live previews verified the active, thinking, working, transcript, and no-notch layouts. This visual-only change does not alter command execution or audio behavior.
+
 ## 2026-10-21 — Blend the hardware notch into clear glass
 
 - Replaced the full-width black tint and opaque shoulder cap with a camera-sized black region and a short rounded fade into native clear glass.

@@ -29,7 +29,7 @@ private struct MouseNotchContourResize {
 }
 
 /// Native glass surrounds the measured camera cutout. Only that cutout stays
-/// black; its tint falls away locally instead of darkening the full top row.
+/// black; its tint eases out across the extension to the visible panel edges.
 final class MouseNotchSurface: NSView {
     private let radius: CGFloat = 22
     private let glass = NSGlassEffectView()
@@ -233,25 +233,31 @@ private final class MouseNotchContent: NSView {
         let camera = NSRect(x: (bounds.width - cameraWidth) / 2,
                             y: bounds.height - extraTopInset - cameraHeight,
                             width: cameraWidth, height: cameraHeight + extraTopInset + 8)
-        let corner: CGFloat = 8
-        let feather: CGFloat = 20
-        let steps = 32
+        let cameraCorner: CGFloat = 8
+        let panelCorner: CGFloat = 22
+        let steps = 128
         var previousAlpha: CGFloat = 0
-        // Nested rounded contours make the fade follow the actual cutout on
-        // all three visible sides. The cubic falloff reaches glass quickly.
-        for step in 0...steps {
+        // Scale the transition to this presentation's sides and bottom rather
+        // than ending a fixed distance from the camera. A shared top, above the
+        // clipped screen edge, keeps every rounded contour nested while resizing.
+        // Smoothstep has zero slope at both ends, avoiding a visible cutoff at
+        // either the hardware seam or the clear outer glass.
+        for step in 1..<steps {
             let progress = CGFloat(step) / CGFloat(steps)
-            let distance = feather * (1 - progress)
-            let alpha = 0.96 * progress * progress * progress
+            let left = bounds.minX + (camera.minX - bounds.minX) * progress
+            let bottom = bounds.minY + (camera.minY - bounds.minY) * progress
+            let width = bounds.width + (camera.width - bounds.width) * progress
+            let contour = NSRect(x: left, y: bottom, width: width, height: camera.maxY - bottom)
+            let corner = panelCorner + (cameraCorner - panelCorner) * progress
+            let alpha = progress * progress * (3 - 2 * progress)
             // Source-over compensation keeps overlapping fills at the desired
-            // opacity instead of accumulating into another solid black cap.
+            // opacity. Leave the opaque endpoint to the exact camera fill below.
             NSColor.black.withAlphaComponent((alpha - previousAlpha) / (1 - previousAlpha)).setFill()
-            NSBezierPath(roundedRect: camera.insetBy(dx: -distance, dy: -distance),
-                         xRadius: corner + distance, yRadius: corner + distance).fill()
+            NSBezierPath(roundedRect: contour, xRadius: corner, yRadius: corner).fill()
             previousAlpha = alpha
         }
         NSColor.black.setFill()
-        NSBezierPath(roundedRect: camera, xRadius: corner, yRadius: corner).fill()
+        NSBezierPath(roundedRect: camera, xRadius: cameraCorner, yRadius: cameraCorner).fill()
     }
 
     override func layout() {

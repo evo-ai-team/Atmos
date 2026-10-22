@@ -16,7 +16,9 @@ of the primary screen. It passes mouse events through to the app underneath.
   Edge lighting stays steady through opening and closing; only the body geometry
   animates. Reduce Motion applies the final geometry immediately.
 - `MouseNotchLayout.swift` calculates screen/camera geometry, text measurements,
-  and each state's target size.
+  and each state's target size. Working labels use `MouseCore.ActionLabel` to
+  show at most two words without an ellipsis. A target that is too wide is
+  omitted from the display; full descriptions and actual actions stay in history.
 - `MouseNotchSurface.swift` draws the glass body, concave shoulders, and text.
   Its contour follows the panel's actual animated size to avoid competing clocks.
   Only the measured hardware cutout is fully black. A full-width vertical tint

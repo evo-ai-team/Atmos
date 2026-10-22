@@ -1,4 +1,7 @@
 import AppKit
+#if SWIFT_PACKAGE
+import MouseCore
+#endif
 
 enum MouseNotchContour {
     // A fixed-size, concave shoulder turns each side into the screen edge.
@@ -76,14 +79,25 @@ struct MouseNotchPresentation {
             size = NSSize(width: width,
                           height: geometry.cameraHeight + 14 + textHeight + 23)
         case .working(let description):
-            // Status is kept to one line. The model's description is already
-            // constrained to a short phrase; the label truncates as a fallback.
-            text = description.replacingOccurrences(of: "\n", with: " ")
-            font = .systemFont(ofSize: 16, weight: .medium)
+            let statusFont = NSFont.systemFont(ofSize: 16, weight: .medium)
+            font = statusFont
             horizontalInset = 24
             wraps = false
-            let textWidth = ceil((text as NSString).size(withAttributes: [.font: font]).width)
-            size = NSSize(width: min(max(geometry.cameraWidth + 68, textWidth + 48), min(460, availableWidth)),
+            let maximumWidth = min(460, availableWidth)
+            // Keep the full description in history, but show at most two words
+            // here. Unusually wide targets fall back to the action alone instead
+            // of making the notch truncate its status with an ellipsis.
+            var label = ActionLabel.compact(description)
+            func measuredWidth(_ value: String) -> CGFloat {
+                ceil((value as NSString).size(withAttributes: [.font: statusFont]).width)
+            }
+            let textLimit = maximumWidth - horizontalInset * 2 - 4
+            if measuredWidth(label) > textLimit {
+                label = String(label.split(separator: " ").first ?? "Working")
+            }
+            if measuredWidth(label) > textLimit { label = "Working" }
+            text = label
+            size = NSSize(width: min(max(geometry.cameraWidth + 68, measuredWidth(label) + 52), maximumWidth),
                           height: geometry.cameraHeight + 49)
         }
     }

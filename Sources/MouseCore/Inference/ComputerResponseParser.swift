@@ -33,8 +33,8 @@ enum ComputerResponseParser {
                 if item.content?.contains(where: { $0.type == "refusal" }) == true {
                     throw invalidResponse("The model declined this request.")
                 }
-                // Completion is a structured operation with the complete goal.
-                // A final message must never silently complete the caller's task.
+                // Answers and task completion have distinct structured operations.
+                // A raw message must never silently complete the caller's task.
                 throw invalidResponse("The model returned a message instead of exactly one tool call.")
             case "reasoning": break
             default:
@@ -59,6 +59,8 @@ enum ComputerResponseParser {
         }
         switch name {
         case "execute_actions":
+            // The prompt asks for two words and 40 characters. Keep a little wire
+            // tolerance: display formatting must not invalidate a valid UI operation.
             guard Set(payload.keys) == Set(["description", "actions", "task_update"]),
                   let description = payload["description"] as? String,
                   isSingleLine(description, maximum: 64),
@@ -82,6 +84,17 @@ enum ComputerResponseParser {
                 throw invalidResponse("The model returned an invalid ignore operation.")
             }
             return ModelTurn(id: responseID, calls: [], ignored: true)
+        case "answer_question":
+            guard Set(payload.keys) == Set(["text"]),
+                  let text = payload["text"] as? String,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  text.count <= 4_000,
+                  text.unicodeScalars.allSatisfy({
+                      !CharacterSet.controlCharacters.contains($0) || $0 == "\n" || $0 == "\r" || $0 == "\t"
+                  }) else {
+                throw invalidResponse("The model returned an invalid text answer.")
+            }
+            return ModelTurn(id: responseID, calls: [], answer: text)
         case "complete_task":
             guard Set(payload.keys) == Set(["message", "task_update"]),
                   let message = payload["message"] as? String,

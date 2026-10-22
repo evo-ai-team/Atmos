@@ -36,7 +36,7 @@ enum ComputerTools {
              "description": "Perform one short, screenshot-grounded UI operation with its brief in-progress description. The result is a fresh screenshot.",
              "parameters": object([
                 "task_update": taskUpdate,
-                "description": ["type": "string", "minLength": 1, "maxLength": 64, "description": "A short in-progress label, ideally 3–6 words. Describe only this batch, never completion."],
+                "description": ["type": "string", "minLength": 1, "maxLength": 40, "description": "A 1–2-word in-progress label without an ellipsis: Loading Store, Opening YouTube, Clicking Channel. Describe only this batch, never completion."],
                 "actions": ["type": "array", "minItems": 1, "maxItems": 12, "items": ["anyOf": variants]]
              ])],
             ["type": "function", "name": "pause_for_user", "strict": true,
@@ -46,8 +46,13 @@ enum ComputerTools {
                 "reason": ["type": "string", "minLength": 1, "maxLength": 180, "description": "A concise question or explanation of what the user needs to provide."]
              ])],
             ["type": "function", "name": "ignore_utterance", "strict": true,
-             "description": "Silently ignore speech that does not clearly request computer control now, including chat, informational questions, quoted/hypothetical/negated actions, or doubtful intent. No action or reply.",
+             "description": "Silently ignore background conversation or speech that neither clearly requests computer control nor asks Mouse a question. Quoted, hypothetical, or negated actions do not authorize input. No action or reply.",
              "parameters": object([:])],
+            ["type": "function", "name": "answer_question", "strict": true,
+             "description": "Answer a current question clearly addressed to Mouse, including general, how-to, screen, or task-context questions. Text only; never dispatch input, revise an accepted task, or report task completion.",
+             "parameters": object([
+                "text": ["type": "string", "minLength": 1, "maxLength": 4_000, "description": "The concise text answer. Multiple lines are allowed; distinguish observed facts from uncertainty."]
+             ])],
             ["type": "function", "name": "complete_task", "strict": true,
              "description": "Complete immediately when the current screenshot shows the entire goal is satisfied and actual dispatched history is consistent with that result. Preserve the full current goal; do not add another action or observation.",
              "parameters": object([

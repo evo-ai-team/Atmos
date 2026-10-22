@@ -48,6 +48,7 @@ enum ComputerRequest {
 struct ComputerRequestPolicy {
     var reviewRequired = false
     var allowIgnore = true
+    var allowAnswer = true
 
     var instructions: String {
         let reviewInstructions = reviewRequired ? """
@@ -67,25 +68,30 @@ struct ComputerRequestPolicy {
 
     var tools: [[String: Any]] {
         // Constrain the offered tools as well as validating the response. An
-        // accepted task has no new utterance to ignore. Review can recognize an
+        // accepted task has no new utterance to ignore or question to answer. Review can recognize an
         // already-achieved goal, but can never dispatch further input.
         return ComputerTools.definitions.filter { tool in
             let name = tool["name"] as? String
             if reviewRequired { return name == "pause_for_user" || name == "complete_task" }
-            return allowIgnore || name != "ignore_utterance"
+            if name == "ignore_utterance" { return allowIgnore }
+            if name == "answer_question" { return allowAnswer }
+            return true
         }
     }
 
     func validate(_ turn: ModelTurn) throws {
         // Preserve the selector's review decision even if the generator disagrees.
         // Prompting alone must not turn a request for permission into executable input.
-        let completed = turn.calls.isEmpty && turn.pauseReason == nil && !turn.ignored
+        let completed = turn.calls.isEmpty && turn.pauseReason == nil && !turn.ignored && turn.answer == nil
             && turn.taskUpdate != nil && !turn.message.isEmpty
         guard !reviewRequired || (turn.calls.isEmpty && (turn.pauseReason != nil || completed)) else {
             throw MouseError.api("The review request returned neither clarification nor completion. No new actions were executed.")
         }
         guard allowIgnore || !turn.ignored else {
             throw MouseError.api("The planner returned an invalid ignore for an accepted task. Completion was not confirmed.")
+        }
+        guard allowAnswer || turn.answer == nil else {
+            throw MouseError.api("The planner returned an answer without a new question. Completion was not confirmed.")
         }
     }
 }

@@ -68,7 +68,7 @@ Activation persists between commands until you say **“stop”** or choose **St
 | **Decisions + screenshot** | Decisions receives the screenshot, compact AX context, and simple native options. It selects a native action or control route; Responses handles generation or review when needed. |
 | **Decisions · text only** (default) | Decisions receives compact AX text and native options with no image. Responses receives the screenshot only when fallback or review is needed. |
 
-A command keeps the mode selected when it was submitted, including its later steps. Changing the picker affects subsequent submissions. A native option's short number resolves locally to the exact retained control and operation; the model does not reconstruct a target from its label. Requests such as “make this bigger,” “and his store,” and “can you open that?” use accepted-command context and the current observation. The prompts distinguish directed requests from conversation, informational questions, quoted instructions, and hypothetical commands; in mixed speech they use the clear computer request and disregard unrelated conversation. They do not identify the speaker, and model judgments can still be wrong.
+A command keeps the mode selected when it was submitted, including its later steps. Changing the picker affects subsequent submissions. A native option's short number resolves locally to the exact retained control and operation; the model does not reconstruct a target from its label. Requests such as “make this bigger,” “and his store,” and “can you open that?” use accepted-command context and the current observation. The prompts distinguish computer commands, questions addressed to Mouse, and background conversation. Questions receive text answers; action-shaped questions such as “Can you open Chrome?” still request computer input. In mixed speech, the models use the directed request and disregard unrelated conversation. They do not identify the speaker, and model judgments can still be wrong.
 
 | State or control | Visible behavior and effect |
 |---|---|
@@ -76,7 +76,7 @@ A command keeps the mode selected when it was submitted, including its later ste
 | Active and ready | A slightly expanded, empty gradient notch indicates readiness. |
 | Speaking while idle | Provisional text wraps at a constrained width and grows downward. Apple may revise tentative words. |
 | Speaking during a task | The current action or loading presentation stays visible while speech is transcribed and checked. Only an accepted command interrupts the task. |
-| Acting | The panel shrinks to one short description of the current operation. |
+| Acting | The panel shows a maximum of two words for the current operation, without an ellipsis. |
 | Finished, or speech ignored while idle | The panel returns to the small active indicator. |
 | Speech ignored during a task | Work and the current action/loading presentation continue unchanged. |
 | Required input or error | A brief notice appears; details are available in Settings. |
@@ -87,6 +87,12 @@ A command keeps the mode selected when it was submitted, including its later ste
 The only local sleep control is **“stop” as the first word**, ignoring case and ordinary boundary punctuation. It works from provisional text without the quiet endpoint, second pass, or API check: “stop now” and “stop listening” also sleep Mouse. “Stop by later” can therefore sleep it too. Quoted “stop”, “don't stop”, “type stop”, and words such as “stopwatch” do not match. “Cancel” and “go to sleep” are not local controls. While active, Mouse accepts continuations and corrections during model requests and execution. The existing task continues until the selected action model accepts a command and classifies how it relates to the current task. “Hey Mouse” also activates from the live result; ordinary spoken commands wait for a stable endpoint and the optional second transcription pass before that model request.
 
 The notch has no buttons. The menu provides activation, Stop, Settings, microphone pause/resume, and Quit. Typed requests and recent activity are under **Testing & recent activity** in Settings. Settings hides during execution and does not reopen after every task. Previous clicks or typing are not undone by Stop.
+
+### Questions and answers
+
+Ask a question by voice while Mouse is active, or use **Answers → Ask a question**. Questions can request general information, an explanation, or information about the current screen or task. “How do I open Chrome?” receives an explanation; “Can you open Chrome?” still requests action. Both Decisions modes route questions to Luna; Luna-only handles them directly.
+
+Luna returns `answer_question` with plain text, separate from `complete_task`, action dispatch, and goal updates. The **Answers** tab keeps the full question and response, with selectable text and a copy button. When idle, the notch shows a brief preview for 20 seconds. An answer during ongoing computer work is retained in Answers without replacing or completing that task. Answers are kept in memory until app exit. Background conversation remains ignored.
 
 ### Action history
 
@@ -223,9 +229,10 @@ A **review** selection remains distinct from ordinary generation. Its Responses 
 | `execute_actions` | One coherent operation with required `task_update`, short `description`, and 1–12 actions. |
 | `pause_for_user` | Required target information, authorization, authentication, or review is missing. Includes `task_update`; no actions run with the question. |
 | `complete_task` | Offered whenever Luna receives a screenshot, including initial requests, continuations, amendments, and review. Use immediately when current screen evidence and actual dispatch history establish the entire goal is achieved. Includes the complete `task_update` and a brief `message`; sends no input. |
-| `ignore_utterance({})` | Silently reject a new non-action utterance without a conversational reply or desktop action. |
+| `answer_question` | Text response to a new question addressed to Mouse, up to 4,000 characters. No desktop input, `task_update`, or task completion. Not offered during accepted-task continuation or review. |
+| `ignore_utterance({})` | Silently reject background speech with no directed request or question. |
 
-Generated descriptions aim for 3–6 words and at most 64 characters, such as “Searching Linus Tech Tips…”. Native operations use short local descriptions. Both describe work in progress. The generative parser rejects malformed, incomplete, refused, mixed, or multiple operations, and the controller validates every action in a batch before posting its first desktop event.
+Generated descriptions request one or two words, at most 40 characters, with no ellipsis: “Loading Store”, “Opening YouTube”, or “Clicking Channel”. The notch enforces a two-word display limit for both generated and native descriptions, measures the text, and falls back to the action word for an unusually wide target. Full original descriptions stay in action history; display formatting never changes the payload or target. The parser retains a 64-character tolerance so an otherwise valid action is not rejected merely for a verbose label. The generative parser rejects malformed, incomplete, refused, mixed, or multiple operations, and the controller validates every action in a batch before posting its first desktop event.
 
 Luna-only mode and Responses fallback support click, double-click, pointer move, scroll, drag, Unicode typing, keypress, wait, and screenshot actions. Pointer actions support Command, Control, Option/Alt, and Shift modifiers. Keypress supports common navigation keys, Enter, Escape, Space, Tab, F1–F20, and supported printable keys. Invalid fields, unsupported keys, nonfinite/out-of-bounds coordinates, and invalid action sizes fail explicitly. Typing uses Unicode events without changing the clipboard. There is no shell or scripting tool.
 
@@ -268,6 +275,7 @@ The separate activity list holds up to 20 entries in memory, and Settings shows 
 | Accessibility permission | Used to read the tree, invoke offered native AX operations, and post mouse/keyboard input. |
 | API key | Stored in macOS Keychain under the stable service `com.chosen.mac.openai`; not written to the repository or usage JSON. Routine reads do not intentionally prompt; explicit reconnect can ask macOS to authorize access. |
 | Accepted-command history | Full command text, accepted goal, latest dispatched input description, task status, and outcome kept in RAM when available. Full history goes to the Responses planner; the latest three entries go to Decisions. Decisions also receives the full current goal and latest 12 dispatch summaries with omitted counts. Survives Stop/microphone pause; cleared when the app exits. No transcript file is written. |
+| Answers tab | Questions and complete plain-text replies kept in session memory; no answer-history file is written. Answers do not enter the computer-task dispatch history. |
 | Actions tab | Exact action payloads, model descriptions, goals, native target metadata, and dispatch states kept in session memory. Retained after tasks and Stop; cleared on app exit. No action-history file is written. |
 | Recent activity | Up to 20 entries in memory; cleared when the app exits. Separate from the complete accepted-command history. |
 | Request/token counters | Persisted to `~/Library/Application Support/Mouse/usage.json`. No transcripts, screenshots, or API key are stored in this file. |

@@ -1,5 +1,8 @@
 # Action contracts and selection
 
+- `ActionLabel` formats display-only notch labels to at most two words without
+  ellipses. Full descriptions, targets, and payloads stay intact in action history.
+
 - `ComputerModels` defines requested actions, planner turns, task updates, and shared errors. Optional wire fields still require strict parser and native preflight validation.
 - `ScreenshotFrame` carries encoded pixels with the original display geometry and maps model coordinates back to global screen points.
 - `ComputerDecisionOptions` builds a compact text selection menu from one accessibility snapshot. Choices use short numbers and readable verbs, roles, and quoted labels; up to two named ancestors distinguish repeated controls. The exact element/action mapping stays local, and unique menu question names reject answers from any other menu, including a reordered copy of the same snapshot. Primary actions retain priority over context menus, with up to 249 native choices.

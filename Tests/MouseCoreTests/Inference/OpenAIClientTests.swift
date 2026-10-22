@@ -29,7 +29,7 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertEqual(body["parallel_tool_calls"] as? Bool, false)
         XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "low")
         let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
-        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance", "complete_task"])
+        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance", "answer_question", "complete_task"])
         for tool in tools {
             XCTAssertEqual(tool["type"] as? String, "function")
             XCTAssertEqual(tool["strict"] as? Bool, true)
@@ -39,18 +39,28 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertTrue((ignoreParameters["properties"] as? [String: Any])?.isEmpty == true)
         XCTAssertEqual(ignoreParameters["required"] as? [String], [])
         XCTAssertEqual(ignoreParameters["additionalProperties"] as? Bool, false)
+        let answerParameters = try XCTUnwrap(tools.first { $0["name"] as? String == "answer_question" }?["parameters"] as? [String: Any])
+        let answerProperties = try XCTUnwrap(answerParameters["properties"] as? [String: Any])
+        XCTAssertEqual(Set(answerProperties.keys), ["text"])
+        XCTAssertEqual((answerProperties["text"] as? [String: Any])?["maxLength"] as? Int, 4_000)
         let instructions = try XCTUnwrap(body["instructions"] as? String)
         XCTAssertTrue(instructions.contains("call ignore_utterance with {}"))
         XCTAssertTrue(instructions.contains("no answer, question, explanation, or UI action"))
         XCTAssertTrue(instructions.contains("Can you open Chrome?"))
         XCTAssertTrue(instructions.contains("How do I open Chrome?"))
+        XCTAssertTrue(instructions.contains("call answer_question"))
+        XCTAssertTrue(instructions.contains("general knowledge, how-to, screen, and task-context questions"))
+        XCTAssertTrue(instructions.contains("do not need to include the name Mouse"))
+        XCTAssertTrue(instructions.contains("use 1–2 words, at most 40 characters, with no ellipsis"))
+        XCTAssertFalse(instructions.contains("Ignore casual chat, informational"))
         XCTAssertTrue(instructions.contains("must never turn chat into a command"))
         XCTAssertTrue(instructions.contains("No separate command-screening call"))
         XCTAssertFalse(instructions.contains("has already passed a separate"))
         let parameters = try XCTUnwrap(tools.first?["parameters"] as? [String: Any])
         let properties = try XCTUnwrap(parameters["properties"] as? [String: Any])
         XCTAssertEqual(Set(properties.keys), Set(["description", "actions", "task_update"]))
-        for tool in tools where tool["name"] as? String != "ignore_utterance" {
+        XCTAssertEqual((properties["description"] as? [String: Any])?["maxLength"] as? Int, 40)
+        for tool in tools where ["execute_actions", "pause_for_user", "complete_task"].contains(tool["name"] as? String ?? "") {
             let toolParameters = try XCTUnwrap(tool["parameters"] as? [String: Any])
             let toolProperties = try XCTUnwrap(toolParameters["properties"] as? [String: Any])
             let update = try XCTUnwrap(toolProperties["task_update"] as? [String: Any])
@@ -127,7 +137,7 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertEqual(body["tool_choice"] as? String, "required")
         let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
         XCTAssertEqual(tools.compactMap { $0["name"] as? String },
-                       ["execute_actions", "pause_for_user", "ignore_utterance", "complete_task"])
+                       ["execute_actions", "pause_for_user", "ignore_utterance", "answer_question", "complete_task"])
         let parameters = try XCTUnwrap(tools.last?["parameters"] as? [String: Any])
         try assertClosedObjects(parameters)
         XCTAssertEqual(Set(parameters["required"] as? [String] ?? []), ["task_update", "message"])
@@ -200,6 +210,7 @@ final class OpenAIClientTests: XCTestCase {
             let names = tools.compactMap { $0["name"] as? String }
             XCTAssertTrue(names.contains("complete_task"))
             XCTAssertEqual(names.contains("ignore_utterance"), !mode.continuing && !mode.review)
+            XCTAssertEqual(names.contains("answer_question"), !mode.continuing && !mode.review)
             if mode.review { XCTAssertEqual(names, ["pause_for_user", "complete_task"]) }
             let instructions = try XCTUnwrap(body["instructions"] as? String)
             XCTAssertTrue(instructions.contains("On EVERY screenshot"))
@@ -262,7 +273,7 @@ final class OpenAIClientTests: XCTestCase {
         // An ordinary follow-up keeps executable actions available. A supplied
         // clarification is context, not the separate authorization-only review mode.
         let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
-        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance", "complete_task"])
+        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance", "answer_question", "complete_task"])
         XCTAssertEqual(content[1]["image_url"], frame.dataURL)
         XCTAssertNil(body["previous_response_id"])
     }
@@ -289,7 +300,7 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertTrue(instructions.contains("do not invent semantic IDs"))
         XCTAssertNil(body["previous_response_id"])
         let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
-        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance", "complete_task"])
+        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance", "answer_question", "complete_task"])
         let parameters = try XCTUnwrap(tools.first?["parameters"] as? [String: Any])
         let properties = try XCTUnwrap(parameters["properties"] as? [String: Any])
         let actions = try XCTUnwrap(properties["actions"] as? [String: Any])
@@ -486,7 +497,7 @@ final class OpenAIClientTests: XCTestCase {
             XCTAssertTrue(instructions.contains("no fixed command syntax or app-name allowlist"))
             XCTAssertTrue(instructions.contains("make this bigger"))
             XCTAssertTrue(instructions.contains("put that over there"))
-            XCTAssertTrue(instructions.contains("Ignore casual chat, informational"))
+            XCTAssertTrue(instructions.contains("Ignore background conversation"))
         }
     }
 
@@ -637,6 +648,106 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertFalse(ModelTurn(id: "normal", calls: [], message: "Done.").ignored)
     }
 
+    func testQuestionReturnsMultilineTextWithoutChangingAnActiveTask() async throws {
+        let text = "Press Command–Space.\nType Chrome, then press Return."
+        let payload = try responseData([function(["text": text], name: "answer_question")])
+        let recorder = RequestRecorder()
+        let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { request in
+            await recorder.add(request)
+            return (payload, Self.response())
+        })
+        for activeTask in ["", "Find the channel and open its store."] {
+            let turn = try await client.begin(command: "How do I open Chrome?", frame: frame,
+                                              context: "", activeTask: activeTask)
+            XCTAssertEqual(turn.answer, text)
+            XCTAssertTrue(turn.calls.isEmpty)
+            XCTAssertTrue(turn.message.isEmpty)
+            XCTAssertNil(turn.taskUpdate)
+            XCTAssertNil(turn.pauseReason)
+            XCTAssertFalse(turn.ignored)
+        }
+        let requests = await recorder.requests
+        XCTAssertEqual(requests.count, 2)
+        for request in requests {
+            let body = try json(request)
+            let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
+            XCTAssertTrue(tools.contains { $0["name"] as? String == "answer_question" })
+        }
+        XCTAssertNil(ModelTurn(id: "default", calls: []).answer)
+    }
+
+    func testTextAnswerBoundsAndClosedPayload() throws {
+        let maximum = String(repeating: "x", count: 4_000)
+        let turn = try OpenAIComputerClient.parseResponse(responseData([
+            function(["text": maximum], name: "answer_question")
+        ]))
+        XCTAssertEqual(turn.answer, maximum)
+        for arguments in [
+            [:], ["text": ""], ["text": " \n\t"], ["text": 42], ["text": NSNull()],
+            ["text": String(repeating: "x", count: 4_001)], ["text": "Invalid\u{1B}text"],
+            ["text": "Answer", "actions": []],
+            ["text": "Answer", "task_update": ["kind": "replace", "goal": "Answer question"]],
+            ["text": "Answer", "message": "Done."]
+        ] as [[String: Any]] {
+            try assertBlocked([function(arguments, name: "answer_question")])
+        }
+    }
+
+    func testTextAnswerCannotBeMixedWithActionsCompletionOrRawMessages() throws {
+        let answer = try function(["text": "The channel is visible."], name: "answer_question")
+        let action = try function(["description": "Opening Store", "actions": [["type": "wait"]]], callID: "call_2")
+        let completion = try function([
+            "task_update": ["kind": "revise", "goal": "Open the channel."], "message": "The channel is open."
+        ], name: "complete_task", callID: "call_2")
+        let raw: [String: Any] = ["type": "message", "content": [["type": "output_text", "text": "The channel is visible."]]]
+        for other in [action, completion, raw] {
+            try assertBlocked([answer, other])
+            try assertBlocked([other, answer])
+        }
+    }
+
+    func testContinuationAndReviewRejectAnswersEvenIfTheModelReturnsOne() async throws {
+        let payload = try responseData([function(["text": "Use Spotlight."], name: "answer_question")])
+        let modes = [(continuing: true, review: false), (continuing: false, review: true), (continuing: true, review: true)]
+        for mode in modes {
+            let recorder = RequestRecorder()
+            let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { request in
+                await recorder.add(request)
+                return (payload, Self.response())
+            })
+            do {
+                _ = try await client.begin(command: "Open Chrome", frame: frame, context: "",
+                                           activeTask: "Open Chrome.", continuingTask: mode.continuing,
+                                           reviewRequired: mode.review)
+                XCTFail("An answer cannot bypass an accepted task or a required review.")
+            } catch let error as MouseError {
+                let expected = mode.review
+                    ? "The review request returned neither clarification nor completion. No new actions were executed."
+                    : "The planner returned an answer without a new question. Completion was not confirmed."
+                XCTAssertEqual(error, .api(expected))
+            }
+            let requests = await recorder.requests
+            let body = try json(XCTUnwrap(requests.first))
+            let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
+            XCTAssertFalse(tools.contains { $0["name"] as? String == "answer_question" })
+        }
+        let recorder = RequestRecorder()
+        let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { request in
+            await recorder.add(request)
+            return (payload, Self.response())
+        })
+        do {
+            _ = try await client.continueTurn(responseID: "resp_previous", outputs: [("call_1", frame)])
+            XCTFail("Chained action screenshots cannot answer a nonexistent new question.")
+        } catch let error as MouseError {
+            XCTAssertEqual(error, .api("The planner returned an answer without a new question. Completion was not confirmed."))
+        }
+        let requests = await recorder.requests
+        let body = try json(XCTUnwrap(requests.first))
+        let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
+        XCTAssertFalse(tools.contains { $0["name"] as? String == "answer_question" })
+    }
+
     func testRejectsIgnoreCombinedWithAnyOtherOutput() throws {
         let ignore = try function([:], name: "ignore_utterance")
         let action = try function(["description": "Opening YouTube…", "actions": [["type": "wait"]]], callID: "call_2")
@@ -718,6 +829,7 @@ final class OpenAIClientTests: XCTestCase {
             try function(["description": "Opening YouTube…", "actions": [["type": "wait"]]]),
             try function(["reason": "Please confirm."], name: "pause_for_user"),
             try function([:], name: "ignore_utterance"),
+            try function(["text": "You can use Spotlight to open an app."], name: "answer_question"),
             try function([
                 "message": "The updated task is complete.",
                 "task_update": ["kind": "revise", "goal": "Open the requested page."]

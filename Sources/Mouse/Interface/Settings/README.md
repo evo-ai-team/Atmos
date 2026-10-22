@@ -2,8 +2,12 @@
 
 The secondary setup window and local diagnostics live here.
 
-- `MouseView.swift` provides Settings and Actions tabs. Settings assembles voice
+- `MouseView.swift` provides Settings, Actions, and Answers tabs. Settings assembles voice
   controls, permissions, API-key setup, login preferences, usage, and error display.
+- `QuestionAnswersView.swift` offers a question input and retains full text answers
+  newest first for the current session. Each answer includes the original question
+  and timestamp, wraps without truncation, and supports selection and copying.
+  It uses the same submission path as spoken questions and the command input.
 - `ActionHistoryView.swift` shows the session's dispatch history newest first,
   including the source route, goal, model description, timestamp, dispatch status,
   and exact action JSON. Payloads are expanded initially, selectable, and copyable.

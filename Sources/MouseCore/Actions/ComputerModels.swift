@@ -57,18 +57,21 @@ public struct ModelTurn: Sendable {
     public var id: String
     public var calls: [ComputerCall]
     public var message: String
+    /// A text answer to a new question; never a task completion or executable operation.
+    public var answer: String?
     /// A request for user input or review; never accompanied by executable actions.
     public var pauseReason: String?
-    /// The utterance was not a clear request for computer control. Stay silent and take no action.
+    /// The utterance was neither a clear computer request nor a question addressed to Mouse.
     public var ignored: Bool
-    /// Present with an action, pause, or complete_task; absent only for ignored speech.
+    /// Present with an action, pause, or complete_task; absent for ignored speech and text answers.
     public var taskUpdate: TaskUpdate?
     public var inputTokens: Int
     public var outputTokens: Int
-    public init(id: String, calls: [ComputerCall], message: String = "", pauseReason: String? = nil, ignored: Bool = false, taskUpdate: TaskUpdate? = nil, inputTokens: Int = 0, outputTokens: Int = 0) {
+    public init(id: String, calls: [ComputerCall], message: String = "", answer: String? = nil, pauseReason: String? = nil, ignored: Bool = false, taskUpdate: TaskUpdate? = nil, inputTokens: Int = 0, outputTokens: Int = 0) {
         self.id = id
         self.calls = calls
         self.message = message
+        self.answer = answer
         self.pauseReason = pauseReason
         self.ignored = ignored
         self.taskUpdate = taskUpdate

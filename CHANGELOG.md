@@ -8,6 +8,14 @@ Current source: `/Users/sameemsaleem/Product/Mouse`
 
 Current behavior and setup: [README.md](README.md)
 
+## 2026-10-22 — Answer questions and shorten notch action labels
+
+- Added `answer_question` as a text-only result for questions addressed to Mouse. Both Decisions modes route questions to Luna; action-shaped questions still request computer input. Answers cannot carry actions or task updates and are not offered during accepted-task continuation or review.
+- Published answers before task admission so they do not replace or complete ongoing computer work. Added an Answers tab with a question field, full selectable responses, and copy controls; idle answers also appear briefly in the notch. Answers stay in session memory.
+- Requested one- or two-word action descriptions and enforced a two-word display boundary for generated and native notch labels. Removed ellipses, handled unusually wide labels, and retained full descriptions and exact payloads in action history.
+
+Validation: 274 offline tests passed with zero failures, including question routing, answer/completion separation, continuation/review constraints, and compact labels. Release build and signature verification passed; the canonical app bundle was updated. A temporary native preview verified long, multi-paragraph answers using sample data. Preview, build, and test outputs were removed afterward. No live model requests were made; the running app needs reopening to load the update.
+
 ## 2026-10-22 — Complete from every Luna screenshot and expose action history
 
 - Made `complete_task` available on every Luna screenshot request, including initial commands, continuations, amendments, and review. The prompt checks the entire goal against the current image and actual dispatch history before choosing more work. Requests require one structured tool, and plain final messages cannot silently complete a task.

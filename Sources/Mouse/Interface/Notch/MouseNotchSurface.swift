@@ -315,7 +315,9 @@ private final class MouseNotchContent: NSView {
         self.horizontalInset = horizontalInset
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 3
-        paragraph.lineBreakMode = wraps ? .byWordWrapping : .byTruncatingTail
+        // Working labels are measured to fit their final width. While the panel
+        // resizes, never replace their ending with a transient ellipsis.
+        paragraph.lineBreakMode = wraps ? .byWordWrapping : .byClipping
         paragraph.alignment = wraps ? .left : .center
         let attributed = NSAttributedString(string: text, attributes: [
             .font: font, .foregroundColor: NSColor.white, .paragraphStyle: paragraph

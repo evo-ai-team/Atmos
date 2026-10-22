@@ -52,7 +52,7 @@ public actor OpenAIComputerClient {
             continuingTask: continuingTask
         )
         let policy = ComputerRequestPolicy(
-            reviewRequired: reviewRequired, allowIgnore: !continuingTask
+            reviewRequired: reviewRequired, allowIgnore: !continuingTask, allowAnswer: !continuingTask
         )
         preparationOutcome = .succeeded
         timing?.end(preparation, outcome: preparationOutcome)
@@ -84,7 +84,7 @@ public actor OpenAIComputerClient {
         timing?.end(preparation, outcome: preparationOutcome)
         preparation = nil
         return try await send(input: input, previousResponseID: responseID,
-                              policy: ComputerRequestPolicy(allowIgnore: false), timing: timing)
+                              policy: ComputerRequestPolicy(allowIgnore: false, allowAnswer: false), timing: timing)
     }
 
     private func validate(_ frame: ScreenshotFrame) throws {

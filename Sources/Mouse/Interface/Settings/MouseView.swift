@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// Secondary setup and action history. The notch is the everyday interface.
+/// Secondary setup, action history, and full answers. The notch is the everyday interface.
 struct MouseView: View {
     private enum Tab: String, CaseIterable {
         case settings = "Settings"
         case actions = "Actions"
+        case answers = "Answers"
     }
 
     @ObservedObject var model: AppModel
@@ -26,10 +27,13 @@ struct MouseView: View {
                 .padding(.horizontal, 28)
                 .padding(.top, 48)
 
-                if selectedTab == .settings {
+                switch selectedTab {
+                case .settings:
                     settingsContent
-                } else {
+                case .actions:
                     ActionHistoryView(model: model)
+                case .answers:
+                    QuestionAnswersView(model: model)
                 }
             }
         }

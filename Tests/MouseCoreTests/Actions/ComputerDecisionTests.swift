@@ -3,6 +3,21 @@ import XCTest
 @testable import MouseCore
 
 final class ComputerDecisionTests: XCTestCase {
+    func testQuestionsRouteToPlannerInBothDecisionModes() throws {
+        for includesScreenshot in [false, true] {
+            let instructions = ComputerDecisionOptions.instructions(includesScreenshot: includesScreenshot)
+            XCTAssertTrue(instructions.contains("For a question addressed to Mouse, use generate"))
+            XCTAssertTrue(instructions.contains("question alone must not complete or replace an active"))
+            XCTAssertTrue(instructions.contains("If task_relationship is asked for a question, choose needs_planner."))
+            let menu = ComputerDecisionOptions(snapshot: AccessibilitySnapshot(processID: 1, elements: []),
+                                               allowNativeActions: true, allowCompletion: false,
+                                               includesScreenshot: includesScreenshot)
+            let generate = try XCTUnwrap(menu.questions[0].choices.first { $0.value == "generate" })
+            XCTAssertTrue(generate.description.contains("answer a question"))
+            XCTAssertEqual(try menu.resolve(result("generate", for: menu)), .generate)
+        }
+    }
+
     func testImageModeUsesVisualEvidenceWithoutChangingNativeChoiceIdentity() throws {
         let target = control(id: "home", label: "Home")
         let snapshot = AccessibilitySnapshot(processID: 42, elements: [target])

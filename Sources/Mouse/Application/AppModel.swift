@@ -26,6 +26,7 @@ final class AppModel: ObservableObject {
     @Published var command = ""
     @Published var error: String?
     @Published var activity: [Activity] = []
+    @Published private(set) var answers: [QuestionAnswer] = []
     @Published private(set) var actionHistory = ActionHistory()
     @Published private(set) var timingTraces: [PipelineTiming] = []
     @Published private(set) var latestCommandTiming: PipelineTiming?
@@ -85,16 +86,24 @@ final class AppModel: ObservableObject {
         },
         onAccepted: { [weak self] command, captureID in
             guard let self else { return }
-            // Only model-accepted speech may retire work. Keep accepted fragments
-            // until the execution model incorporates them into its complete goal.
-            self.pendingInputs.append(command)
             let timing = self.screeningTiming
             self.screeningTiming = nil
-            self.latestCommandTiming = timing
             let prepared = self.preparedInput
             self.preparedInput = nil
             if let timing { self.submittedBehaviors.removeValue(forKey: timing.id) }
             if let captureID { self.voiceTimings.removeValue(forKey: captureID) }
+            // Answers are handled before accepting a new computer task. They
+            // must not cancel ongoing input, change its goal, or claim it is done.
+            if let answer = prepared?.turn.answer {
+                timing?.mark("Question answered without desktop input")
+                timing?.finish(.succeeded)
+                self.receiveAnswer(answer, to: command)
+                return
+            }
+            // Only model-accepted speech may retire work. Keep accepted fragments
+            // until the execution model incorporates them into its complete goal.
+            self.pendingInputs.append(command)
+            self.latestCommandTiming = timing
             timing?.mark("Command accepted")
             self.launchTask(captureID: captureID, timing: timing, prepared: prepared)
         },
@@ -680,6 +689,19 @@ final class AppModel: ObservableObject {
                 finishIgnoredTurn(newInput: newInput, token: token)
                 return
             }
+            if let answer = turn.answer {
+                // A stale prepared action can be reclassified as a question on
+                // refresh. Restore any prior task before publishing the answer.
+                timing.finish(.succeeded)
+                pendingInputs.removeAll()
+                if taskState != nil, !taskPausedForUser {
+                    launchTask()
+                } else {
+                    finishTask(token, keepingTask: taskState != nil)
+                }
+                receiveAnswer(answer, to: text)
+                return
+            }
             if newInput {
                 measureStage(timing, "Accept task update") {
                     acceptInput(text, selection: selection, turn: turn)
@@ -891,6 +913,18 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: - Accepted task and history
+
+    private func receiveAnswer(_ text: String, to question: String) {
+        let answer = QuestionAnswer(question: question, text: text)
+        answers.append(answer)
+        command = ""
+        log(text, detail: "Answer to: \(question)")
+        guard !working else { return }
+        error = nil
+        status = "Answered"
+        latestDecision = "Luna → Answer"
+        showNotice(answer.preview, duration: 20)
+    }
 
     private func finishIgnoredTurn(newInput: Bool, token: UUID) {
         if newInput {

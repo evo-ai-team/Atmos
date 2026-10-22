@@ -16,6 +16,8 @@ speech through observation, selection, input dispatch, and completion.
   generated, completion, or ignored operation and its diagnostic descriptions.
 - `UsageHistory.swift` loads and saves local usage, backs up unreadable counters,
   and falls back to counting in memory after a storage failure.
+- `QuestionAnswer.swift` retains full session answers and a bounded notch preview,
+  separate from accepted computer goals and action history.
 
 `AppModel` stays on the main actor. Its generation token owns both input and UI
 changes: a retired asynchronous request may finish, but cannot dispatch input or
@@ -55,6 +57,12 @@ payloads immediately before execution, then records dispatch completion or an
 uncertain result. Retiring a command marks its in-flight entries uncertain before
 changing generations; a late completion cannot make them successful. This local
 session log survives task completion and Stop and is not written to disk.
+
+Questions use the selected model route and return `answer_question` without input
+or task updates. Admission publishes these replies before launching or retiring
+computer work, so an answer cannot replace or complete an existing task. If a
+refreshed accepted turn becomes an answer, the previous task resumes. The Answers
+tab retains full text; the notch shows a short preview only while no task is running.
 
 Each command carries a `PipelineTiming` reference from speech replay or typed
 submission through screening and execution. Queued and retired tasks retain

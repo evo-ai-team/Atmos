@@ -10,10 +10,6 @@ struct MouseView: View {
         NativeGlassSurface {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Mouse").font(.system(size: 30, weight: .semibold)).tracking(-0.8)
-                        Text("Your Mac, by voice.").font(.subheadline).foregroundStyle(.secondary)
-                    }
                     voiceSection
                     permissionsSection
                     connectionSection
@@ -39,30 +35,20 @@ struct MouseView: View {
     private var voiceSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(voiceTitle).font(.headline)
-                    Text(voiceDetail).font(.callout).foregroundStyle(.secondary)
-                }
+                Text(voiceTitle).font(.headline)
                 Spacer()
                 Button(model.listening ? "Pause microphone" : "Enable voice") { model.toggleListening() }
                     .buttonStyle(.glass).controlSize(.small)
                     .disabled(model.startingVoice)
             }
-            Text("Once activated, Mouse stays ready between commands. Say “stop” to return to standby.")
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var voiceTitle: String {
         if model.startingVoice { return "Preparing voice…" }
         if model.listening && !model.voice.isRunning { return "Reconnecting microphone…" }
-        if model.active { return "Mouse is active" }
-        return model.listening ? "Ready for “Hey Mouse”" : "Voice is paused"
-    }
-
-    private var voiceDetail: String {
-        if model.startingVoice || (model.listening && !model.voice.isRunning) { return model.status }
-        return model.active ? "Speak your next command." : "Say “Hey Mouse” to begin."
+        if model.active { return "Active" }
+        return model.listening ? "Standby" : "Microphone paused"
     }
 
     private var permissionsSection: some View {
@@ -112,7 +98,6 @@ struct MouseView: View {
             } else {
                 Button("Change API key…") { editingKey = true }.controlSize(.small)
             }
-            Text("While active, Mouse checks completed speech as text. Accepted commands use screenshots, app accessibility data, and session history to act. Session history clears when Mouse quits.").font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -127,8 +112,6 @@ struct MouseView: View {
             Text("\(model.budget.inputTokens.formatted()) input · \(model.budget.outputTokens.formatted()) output tokens")
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             Text(String(format: "Approx. $%.4f · No request cap", model.budget.estimatedUSD)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            Text("Decisions for selection; Responses for speech checks and generated actions. Pauses 1 second between steps. This is an estimate; OpenAI reports actual billing.")
-                .font(.caption).foregroundStyle(.secondary)
             if let warning = model.usageWarning { Text(warning).font(.caption).foregroundStyle(.orange) }
         }
     }

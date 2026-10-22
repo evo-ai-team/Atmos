@@ -10,12 +10,13 @@ of the primary screen. It passes mouse events through to the app underneath.
   and each state's target size.
 - `MouseNotchSurface.swift` draws the glass body, concave shoulders, and text.
   Its contour follows the panel's actual animated size to avoid competing clocks.
-  Only the measured hardware cutout is fully black. A rounded, smooth fade spans
-  the full extension to its sides and bottom, scaling with each presentation's
-  size. The native clear material is softened without dimming the camera blend
-  or text, and has no extra full-panel black wash. Thin, varying side and bottom
-  reflections fade before the top corners. Screens without a cutout use glass
-  throughout, and Reduce Transparency substitutes opaque charcoal behind the content.
+  Only the measured hardware cutout is fully black. A full-width vertical tint
+  stays nearly black through the camera's height, then fades down to a 10% dark
+  backing at the bottom. It has no sideways falloff; the outer view clips it to
+  the silhouette. A brighter bottom reflection fades continuously up the sides
+  to the top corners. Native clear glass remains separate from the tint and text.
+  Screens without a cutout use the faint backing throughout, including the
+  shoulders. Reduce Transparency substitutes opaque charcoal behind the content.
 - `MouseThinkingIndicator.swift` draws and animates the compact thinking dots.
 
 Presentation never gates command execution. Reduced-motion and reduced-transparency

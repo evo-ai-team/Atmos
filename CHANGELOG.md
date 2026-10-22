@@ -8,6 +8,14 @@ Current source: `/Users/sameemsaleem/Product/Mouse`
 
 Current behavior and setup: [README.md](README.md)
 
+## 2026-10-22 — Vertical notch shading and brighter bottom highlights
+
+- Replaced the camera-centered rounded fade with a full-width vertical gradient, clipped to the existing notch silhouette. The tint stays near-black through the hardware camera height and fades downward to a 10% dark backing, with no left/right falloff.
+- Brightened the bottom outline and made its opacity decrease continuously as it rises up the sides, reaching zero before the upper corners.
+- Kept the hardware camera fully opaque and the glass material separate from text. On displays without a notch, the faint backing also covers the shoulders without dark corner wedges; Reduce Transparency retains opaque charcoal.
+
+Validation: Release build and signature verification passed. Native before/after previews checked active, thinking, the reported short notice, and transcript states over desktop and warm patterned backgrounds. A separate preview checked action and no-notch layouts. No model requests or microphone capture were used.
+
 ## 2026-10-21 — Clearer notch glass and finer reflections
 
 - Removed the forced dark material appearance and extra full-panel black wash, and reduced the native glass strength so the background remains visible through the extension.

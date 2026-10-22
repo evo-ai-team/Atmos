@@ -28,8 +28,8 @@ private struct MouseNotchContourResize {
     }
 }
 
-/// Native glass surrounds the measured camera cutout. Only that cutout stays
-/// black; its tint eases out across the extension to the visible panel edges.
+/// A vertical dark-to-glass tint fills the notch silhouette. Only the measured
+/// camera cutout is opaque; the bottom keeps a faint dark backing and bright rim.
 final class MouseNotchSurface: NSView {
     private let radius: CGFloat = 22
     private let glass = NSGlassEffectView()
@@ -38,9 +38,9 @@ final class MouseNotchSurface: NSView {
     private let glassFade = CAGradientLayer()
     private let edgeOverlay = NSView()
     private let edge = CAShapeLayer()
-    private let edgeLight = CAGradientLayer()
     private let edgeFade = CAGradientLayer()
     private var contourResize = MouseNotchContourResize()
+    private var hasCameraCutout = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -49,13 +49,13 @@ final class MouseNotchSurface: NSView {
         glass.style = .clear
         glass.cornerRadius = radius
         // The material supplies refraction, not another opaque dark backing.
-        // Keep it separate from the camera blend and text so its strength can
+        // Keep it separate from the vertical tint and text so its strength can
         // be reduced without exposing the hardware seam or dimming content.
         glass.tintColor = nil
         glass.wantsLayer = true
         glass.layer?.mask = glassFade
         addSubview(glass)
-        // Keep text and the camera blend outside the material's edge fade.
+        // Keep text and the dark tint outside the material's edge fade.
         // Fading the whole content view would make the camera seam reappear.
         content.layer?.cornerRadius = radius
         content.layer?.masksToBounds = true
@@ -63,21 +63,20 @@ final class MouseNotchSurface: NSView {
         layer?.addSublayer(shoulders)
         edge.fillColor = nil
         edge.strokeColor = NSColor.white.cgColor
-        edge.lineWidth = 0.6
-        // An uneven reflection reads as a thin glass edge instead of a bright
-        // outline around a frosted panel. The vertical mask removes it at top.
-        edgeLight.startPoint = CGPoint(x: 0, y: 0.5)
-        edgeLight.endPoint = CGPoint(x: 1, y: 0.5)
-        edgeLight.colors = [0.08, 0.24, 0.48, 0.16, 0.28].map {
+        edge.lineWidth = 0.85
+        // The bottom catches the light. Fade continuously as the outline rises
+        // up either side, leaving no highlight at the screen's upper corners.
+        edgeFade.startPoint = CGPoint(x: 0.5, y: 0)
+        edgeFade.endPoint = CGPoint(x: 0.5, y: 1)
+        edgeFade.colors = [0.78, 0.52, 0.16, 0, 0].map {
             NSColor.white.withAlphaComponent($0).cgColor
         }
-        edgeLight.locations = [0, 0.18, 0.52, 0.82, 1]
-        edgeLight.mask = edge
+        edgeFade.locations = [0, 0.18, 0.55, 0.9, 1]
         // An explicit view preserves this order when AppKit rebuilds the
         // material's backing layers during window resizing.
         edgeOverlay.wantsLayer = true
         edgeOverlay.layer?.mask = edgeFade
-        edgeOverlay.layer?.addSublayer(edgeLight)
+        edgeOverlay.layer?.addSublayer(edge)
         addSubview(edgeOverlay, positioned: .above, relativeTo: content)
         applyAccessibilityPreferences()
     }
@@ -124,9 +123,8 @@ final class MouseNotchSurface: NSView {
         // The native rim and the added glint disappear before reaching the
         // screen's top corners. The shoulders themselves have no white stroke.
         updateFade(glassFade, frame: glass.bounds, visibleTop: top)
-        updateFade(edgeFade, frame: bounds, visibleTop: top)
+        edgeFade.frame = bounds
         edgeOverlay.frame = bounds
-        edgeLight.frame = edgeOverlay.bounds
         edge.frame = edgeOverlay.bounds
         edge.path = edgePath(in: glass.frame, top: top - shoulder)
         edge.contentsScale = shoulders.contentsScale
@@ -148,6 +146,11 @@ final class MouseNotchSurface: NSView {
     }
 
     func setText(_ text: String, font: NSFont, cameraWidth: CGFloat, cameraHeight: CGFloat, horizontalInset: CGFloat, wraps: Bool, animate: Bool) {
+        let hasCamera = cameraWidth > 0 && cameraHeight > 0
+        if hasCameraCutout != hasCamera {
+            hasCameraCutout = hasCamera
+            applyAccessibilityPreferences()
+        }
         content.setText(text, font: font, cameraWidth: cameraWidth, cameraHeight: cameraHeight,
                         horizontalInset: horizontalInset, wraps: wraps, animate: animate)
     }
@@ -157,9 +160,10 @@ final class MouseNotchSurface: NSView {
         content.reduceTransparency = reduceTransparency
         glass.style = reduceTransparency ? .regular : .clear
         glass.alphaValue = reduceTransparency ? 1 : 0.42
+        // Match the body's top tint, including on displays with no camera.
         shoulders.fillColor = (reduceTransparency
             ? NSColor(white: 0.12, alpha: 1)
-            : NSColor.clear).cgColor
+            : NSColor.black.withAlphaComponent(hasCameraCutout ? 0.98 : 0.10)).cgColor
         needsLayout = true
     }
 
@@ -233,42 +237,44 @@ private final class MouseNotchContent: NSView {
             // reserving full black for the physical camera cutout.
             NSColor(white: 0.12, alpha: 1).setFill()
             bounds.fill()
+        } else {
+            drawGlassTint()
         }
-        drawCameraBlend()
+        drawCameraCutout()
     }
 
-    private func drawCameraBlend() {
-        // Displays without a camera cutout get glass throughout, not a fake
-        // black notch. AppKit coordinates begin at the bottom of this view.
+    private func drawGlassTint() {
+        // Keep every horizontal slice the same opacity. The outer view clips
+        // this vertical gradient to the silhouette; there is no sideways fade.
+        guard cameraWidth > 0, cameraHeight > 0 else {
+            NSColor.black.withAlphaComponent(0.10).setFill()
+            bounds.fill()
+            return
+        }
+        // Stay nearly black through the camera's height, then fade across the
+        // extension to a 10% backing at the bottom. Exclude the offscreen inset
+        // so short and expanded presentations meet the same hardware seam.
+        let fadeHeight = max(1, bounds.height - extraTopInset - cameraHeight)
+        NSGradient(colorsAndLocations:
+            (NSColor.black.withAlphaComponent(0.10), 0),
+            (NSColor.black.withAlphaComponent(0.22), 0.22),
+            (NSColor.black.withAlphaComponent(0.62), 0.55),
+            (NSColor.black.withAlphaComponent(0.93), 0.82),
+            (NSColor.black.withAlphaComponent(0.98), 1))?.draw(
+                from: NSPoint(x: bounds.midX, y: 0),
+                to: NSPoint(x: bounds.midX, y: fadeHeight),
+                options: [.drawsBeforeStartingLocation, .drawsAfterEndingLocation])
+    }
+
+    private func drawCameraCutout() {
+        // The exact hardware cutout remains black above the separate tint.
+        // Displays without a cutout never get a synthetic black camera region.
         guard cameraWidth > 0, cameraHeight > 0 else { return }
         let camera = NSRect(x: (bounds.width - cameraWidth) / 2,
                             y: bounds.height - extraTopInset - cameraHeight,
                             width: cameraWidth, height: cameraHeight + extraTopInset + 8)
-        let cameraCorner: CGFloat = 8
-        let panelCorner: CGFloat = 22
-        let steps = 128
-        var previousAlpha: CGFloat = 0
-        // Scale the transition to this presentation's sides and bottom rather
-        // than ending a fixed distance from the camera. A shared top, above the
-        // clipped screen edge, keeps every rounded contour nested while resizing.
-        // Smoothstep has zero slope at both ends, avoiding a visible cutoff at
-        // either the hardware seam or the clear outer glass.
-        for step in 1..<steps {
-            let progress = CGFloat(step) / CGFloat(steps)
-            let left = bounds.minX + (camera.minX - bounds.minX) * progress
-            let bottom = bounds.minY + (camera.minY - bounds.minY) * progress
-            let width = bounds.width + (camera.width - bounds.width) * progress
-            let contour = NSRect(x: left, y: bottom, width: width, height: camera.maxY - bottom)
-            let corner = panelCorner + (cameraCorner - panelCorner) * progress
-            let alpha = progress * progress * (3 - 2 * progress)
-            // Source-over compensation keeps overlapping fills at the desired
-            // opacity. Leave the opaque endpoint to the exact camera fill below.
-            NSColor.black.withAlphaComponent((alpha - previousAlpha) / (1 - previousAlpha)).setFill()
-            NSBezierPath(roundedRect: contour, xRadius: corner, yRadius: corner).fill()
-            previousAlpha = alpha
-        }
         NSColor.black.setFill()
-        NSBezierPath(roundedRect: camera, xRadius: cameraCorner, yRadius: cameraCorner).fill()
+        NSBezierPath(roundedRect: camera, xRadius: 8, yRadius: 8).fill()
     }
 
     override func layout() {

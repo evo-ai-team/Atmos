@@ -35,7 +35,6 @@ final class MouseNotchSurface: NSView {
     private let glass = NSGlassEffectView()
     private let content = MouseNotchContent()
     private let shoulders = CAShapeLayer()
-    private let glassFade = CAGradientLayer()
     private let edgeOverlay = NSView()
     private let edge = CAShapeLayer()
     private let edgeFade = CAGradientLayer()
@@ -48,18 +47,16 @@ final class MouseNotchSurface: NSView {
         layer?.masksToBounds = true
         glass.style = .clear
         glass.cornerRadius = radius
-        // The material supplies refraction, not another opaque dark backing.
-        // Keep it separate from the vertical tint and text so its strength can
-        // be reduced without exposing the hardware seam or dimming content.
+        // Leave native glass at full strength. Reducing its alpha blends the
+        // untreated background back in and weakens the material's refraction.
+        // Control darkness with the content's tint rather than material opacity.
         glass.tintColor = nil
-        glass.wantsLayer = true
-        glass.layer?.mask = glassFade
-        addSubview(glass)
-        // Keep text and the dark tint outside the material's edge fade.
-        // Fading the whole content view would make the camera seam reappear.
         content.layer?.cornerRadius = radius
         content.layer?.masksToBounds = true
-        addSubview(content)
+        // AppKit treats foreground content correctly when it belongs to the
+        // material. A sibling view above an empty glass view bypasses that path.
+        glass.contentView = content
+        addSubview(glass)
         layer?.addSublayer(shoulders)
         edge.fillColor = nil
         edge.strokeColor = NSColor.white.cgColor
@@ -77,7 +74,7 @@ final class MouseNotchSurface: NSView {
         edgeOverlay.wantsLayer = true
         edgeOverlay.layer?.mask = edgeFade
         edgeOverlay.layer?.addSublayer(edge)
-        addSubview(edgeOverlay, positioned: .above, relativeTo: content)
+        addSubview(edgeOverlay, positioned: .above, relativeTo: glass)
         applyAccessibilityPreferences()
     }
 
@@ -90,7 +87,7 @@ final class MouseNotchSurface: NSView {
         let shoulder = min(contourResize.radius(at: bounds.size), bounds.width / 2, bounds.height)
         glass.frame = NSRect(x: shoulder, y: 0, width: max(0, bounds.width - shoulder * 2),
                              height: bounds.height + radius)
-        content.frame = glass.frame
+        content.frame = glass.bounds
         content.extraTopInset = radius
 
         // These are outward shoulders, not rounded rectangle corners. Each
@@ -120,9 +117,8 @@ final class MouseNotchSurface: NSView {
         shoulders.frame = bounds
         shoulders.path = path
         shoulders.contentsScale = window?.backingScaleFactor ?? 2
-        // The native rim and the added glint disappear before reaching the
-        // screen's top corners. The shoulders themselves have no white stroke.
-        updateFade(glassFade, frame: glass.bounds, visibleTop: top)
+        // The native top edge sits offscreen, and the upper dark tint covers
+        // the side rim. Only the added bottom glint needs a separate fade.
         edgeFade.frame = bounds
         edgeOverlay.frame = bounds
         edge.frame = edgeOverlay.bounds
@@ -159,23 +155,11 @@ final class MouseNotchSurface: NSView {
         let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         content.reduceTransparency = reduceTransparency
         glass.style = reduceTransparency ? .regular : .clear
-        glass.alphaValue = reduceTransparency ? 1 : 0.42
         // Match the body's top tint, including on displays with no camera.
         shoulders.fillColor = (reduceTransparency
             ? NSColor(white: 0.12, alpha: 1)
             : NSColor.black.withAlphaComponent(hasCameraCutout ? 0.98 : 0.10)).cgColor
         needsLayout = true
-    }
-
-    private func updateFade(_ fade: CAGradientLayer, frame: NSRect, visibleTop: CGFloat) {
-        let height = max(1, frame.height)
-        fade.frame = frame
-        fade.startPoint = CGPoint(x: 0.5, y: 0)
-        fade.endPoint = CGPoint(x: 0.5, y: 1)
-        fade.colors = [NSColor.white.cgColor, NSColor.white.cgColor,
-                       NSColor.clear.cgColor, NSColor.clear.cgColor]
-        fade.locations = [0, NSNumber(value: max(0, visibleTop - 24) / height),
-                          NSNumber(value: max(0, visibleTop - 3) / height), 1]
     }
 
     private func edgePath(in body: NSRect, top: CGFloat) -> CGPath {

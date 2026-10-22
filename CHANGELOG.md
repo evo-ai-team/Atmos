@@ -8,6 +8,14 @@ Current source: `/Users/sameemsaleem/Product/Mouse`
 
 Current behavior and setup: [README.md](README.md)
 
+## 2026-10-22 — Restore the native glass effect behind the notch
+
+- Removed the 42% material opacity and custom mask from `NSGlassEffectView`. The native material now renders at full strength instead of allowing sharp, untreated background detail to dominate.
+- Moved the tint, camera cover, text, and loading indicator into the glass view's `contentView`, following AppKit's foreground-content model. Preserved the vertical tint, camera coverage, custom bottom highlight, and click-through panel behavior.
+- Corrected the visual verification approach: earlier patterned previews used content in the same window and did not establish that other windows were filtered.
+
+Validation: an isolated test placed production-style nonactivating panels over a separate window containing sharp text and a checkerboard. The previous view left that background legible; full-strength native glass with hosted content visibly filtered it while preserving foreground text. Also checked active, thinking, action, transcript, and no-notch layouts. Release build and signature verification passed. No microphone capture, model requests, or system settings changes were used.
+
 ## 2026-10-22 — Vertical notch shading and brighter bottom highlights
 
 - Replaced the camera-centered rounded fade with a full-width vertical gradient, clipped to the existing notch silhouette. The tint stays near-black through the hardware camera height and fades downward to a 10% dark backing, with no left/right falloff.

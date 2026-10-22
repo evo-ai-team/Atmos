@@ -59,6 +59,8 @@ struct MouseView: View {
                         .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
                 }
                 usageSection
+                // TESTING: Remove this hook with BenchmarkSettingsView.
+                BenchmarkSettingsView(model: model)
                 ActivityDiagnosticsView(model: model)
             }.padding(.horizontal, 28).padding(.bottom, 28)
         }.scrollIndicators(.hidden)
@@ -71,7 +73,8 @@ struct MouseView: View {
                 Spacer()
                 Button(model.listening ? "Pause microphone" : "Enable voice") { model.toggleListening() }
                     .buttonStyle(.glass).controlSize(.small)
-                    .disabled(model.startingVoice)
+                    // TESTING: Benchmark trials own microphone pause/restoration.
+                    .disabled(model.startingVoice || model.benchmarkEnabled || model.benchmarkTrialInProgress)
             }
         }
     }
@@ -143,7 +146,11 @@ struct MouseView: View {
             }
             Text("\(model.budget.inputTokens.formatted()) input · \(model.budget.outputTokens.formatted()) output tokens")
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            Text(String(format: "Approx. $%.4f · No request cap", model.budget.estimatedUSD)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            // TESTING: Remove the benchmark branch with the benchmark feature.
+            Text(String(format: "Approx. $%.4f · %@", model.budget.estimatedUSD,
+                        model.benchmarkEnabled || model.benchmarkTrialInProgress
+                        ? "Benchmark cap: 30 requests per session" : "No request cap"))
+                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             if let warning = model.usageWarning { Text(warning).font(.caption).foregroundStyle(.orange) }
         }
     }

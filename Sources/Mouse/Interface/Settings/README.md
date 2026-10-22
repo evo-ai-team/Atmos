@@ -23,6 +23,11 @@ The secondary setup window and local diagnostics live here.
 - `ActivityDiagnosticsView.swift` shows accepted goals, model selections, actual
   dispatched input, and the controls offered for the latest action. Its search
   and disclosure state remain local to the view.
+- `BenchmarkSettingsView.swift` is the temporary, collapsed benchmark opt-in.
+  It uses the existing behavior picker and command input, shows trial status,
+  limits, and the local export path, offers a stop button, and opens the exported
+  reports. The feature starts off in each app session. `TESTING` comments identify this view and its
+  `MouseView` hook for removal with the benchmark implementation.
 - `StageTimingsView.swift` expands the ten latest full command timelines in milliseconds
   and copies their reports. Running durations refresh only while expanded;
   completed reports are cached by the collector. These timings stay in memory.

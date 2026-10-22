@@ -11,3 +11,7 @@ The structured `snapshot` supplies the same timing boundaries to the settings su
 Use `annotate` for safe request metadata such as payload byte counts, correlation IDs, and provider-reported processing time. Reports interleave these annotations chronologically as `@+offset · metadata · message`; the offset is when the observation was recorded, not a measured interval. Reported provider time must never be recorded as a fabricated local span. Annotations retain at most 64 single-line messages of 1,024 characters each, independently of the stage limit so metadata cannot crowd out timing evidence. Extra annotations are counted as omitted. Like timed records, annotations cannot change a finished trace.
 
 Tests in `Tests/MouseCoreTests/Diagnostics` use an injected clock to check timeline accounting, lifecycle boundaries, concurrent recording, and invalid timestamps.
+
+## Removable benchmark support
+
+`BenchmarkSession.swift` supplies the opt-in trial deadline, action-batch ceiling, and session-wide request reservation limit. `BenchmarkReport.swift` freezes a terminal trace, this trial's action history, and usage deltas for local export. Both files and their hooks are marked `TESTING`. The app recorder and removal map live in [Mouse/Diagnostics/Benchmark](../../Mouse/Diagnostics/Benchmark/README.md). Benchmark traces request larger bounded capacities; the ordinary timing defaults above remain unchanged.

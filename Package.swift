@@ -4,7 +4,7 @@ import PackageDescription
 // Directory guides are for maintainers, not runtime resources. Listing them
 // explicitly also keeps SwiftPM from warning about unhandled Markdown files.
 let coreDomains = ["Accessibility", "Actions", "Diagnostics", "Inference", "Session", "Speech", "Usage"]
-let appDomains = ["Application", "ComputerControl", "Diagnostics", "Interface", "Interface/Notch", "Interface/Settings", "Security", "Speech"]
+let appDomains = ["Application", "ComputerControl", "Diagnostics", "Diagnostics/Benchmark", "Interface", "Interface/Notch", "Interface/Settings", "Security", "Speech"]
 
 func documentation(in domains: [String]) -> [String] {
     ["README.md"] + domains.map { "\($0)/README.md" }

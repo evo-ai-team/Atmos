@@ -139,6 +139,112 @@ final class AppModel: ObservableObject {
     private var started = false
     private var usageHistory = UsageHistory()
 
+    // TESTING BEGIN: opt-in diagnostics; never persisted or started automatically.
+    @Published private(set) var benchmarkEnabled = false
+    @Published private(set) var benchmarkTrialInProgress = false
+    @Published private(set) var benchmarkRequestCount = 0
+    @Published private(set) var benchmarkStatus: String?
+    @Published private(set) var benchmarkExportDirectory: URL?
+    @Published private(set) var benchmarkLatestResultURL: URL?
+    private var benchmarkRecorder: BenchmarkRecorder?
+    private var benchmarkPriorVoiceState: (listening: Bool, active: Bool)?
+    private var benchmarkOriginalContext: CommandContext?
+
+    func setBenchmarkEnabled(_ enabled: Bool) {
+        guard enabled != benchmarkEnabled else { return }
+        if enabled {
+            guard !working, !speechScreening.isScreening, !startingVoice,
+                  taskState == nil, benchmarkRecorder?.isRunning != true else {
+                benchmarkStatus = "Stop the current task before enabling benchmarks."
+                return
+            }
+            let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Mouse/Benchmarks", isDirectory: true)
+            do { benchmarkRecorder = try BenchmarkRecorder(directory: directory) }
+            catch { benchmarkStatus = "Could not create the benchmark export folder."; return }
+            benchmarkPriorVoiceState = (voice.isEnabled, active)
+            benchmarkOriginalContext = conversationContext
+            benchmarkEnabled = true
+            benchmarkRequestCount = 0
+            benchmarkExportDirectory = directory
+            voice.stop()
+            listening = false
+            active = false
+            benchmarkStatus = "Ready · microphone paused"
+        } else {
+            benchmarkEnabled = false
+            if benchmarkRecorder?.isRunning == true {
+                benchmarkStatus = "Stopping trial and saving results…"
+                benchmarkRecorder?.noteStop(.disabled)
+                cancel(silent: true)
+            } else {
+                benchmarkRecorder = nil
+                benchmarkOriginalContext = nil
+                restoreBenchmarkMicrophone()
+                benchmarkStatus = "Off"
+            }
+        }
+    }
+
+    func stopBenchmarkTrial() {
+        guard benchmarkRecorder?.isRunning == true else { return }
+        benchmarkStatus = "Stopping trial and saving results…"
+        benchmarkRecorder?.noteStop(.manualStop)
+        cancel(silent: true)
+    }
+
+    private func restoreBenchmarkMicrophone() {
+        guard let previous = benchmarkPriorVoiceState else { return }
+        benchmarkPriorVoiceState = nil
+        if previous.listening { startVoice(activate: previous.active) }
+    }
+
+    private func beginBenchmarkTrial(timing: PipelineTiming, command: String) -> Bool {
+        guard benchmarkEnabled, let recorder = benchmarkRecorder else { return true }
+        do {
+            try recorder.begin(timing: timing, command: command, behavior: preferences.behavior.title,
+                               budget: budget, firstActionIndex: actionHistory.entries.count,
+                               startingContextEntryCount: conversationContext.entries.count,
+                               onDeadline: { [weak self] in self?.cancel(silent: true) },
+                               onFinished: { [weak self] in await self?.finishBenchmarkTrial() })
+            benchmarkTrialInProgress = true
+            benchmarkStatus = "Running · 30-second limit"
+            return true
+        } catch {
+            timing.finish(.failed)
+            benchmarkStatus = "Benchmark session limit reached. Disable and enable to start a new session."
+            return false
+        }
+    }
+
+    private func finishBenchmarkTrial() async {
+        guard let recorder = benchmarkRecorder, let trial = recorder.trial else { return }
+        // Drain cancelled input first; late cleanup cannot change frozen timings
+        // but can still release a key/button and settle the action's status.
+        if taskState != nil { cancel(silent: true) } // Clear paused test goals before another trial.
+        await retiredWork?.value
+        if let original = benchmarkOriginalContext { conversationContext = original }
+        currentHistoryEntryID = nil
+        do {
+            benchmarkLatestResultURL = try recorder.finish(actions: actionHistory.entries, budget: budget)
+            benchmarkStatus = "Saved · " + trial.timing.snapshot.outcome.rawValue
+        } catch { benchmarkStatus = "Export failed; timings remain in Settings." }
+        benchmarkTrialInProgress = false
+        benchmarkRequestCount = recorder.session.requestCount
+        if !benchmarkEnabled {
+            benchmarkRecorder = nil
+            benchmarkOriginalContext = nil
+            restoreBenchmarkMicrophone()
+        }
+        // Export and focus changes happen only after the measured trace ends.
+        NSApp.activate()
+        for window in NSApp.windows where window.canBecomeMain || window.canBecomeKey {
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+    // TESTING END
+
+
     // MARK: - Initialization and voice events
 
     init() {
@@ -265,6 +371,9 @@ final class AppModel: ObservableObject {
     }
 
     private func startVoice(activate: Bool = false) {
+        // TESTING BEGIN: no speech may contaminate a bounded typed trial.
+        guard !benchmarkEnabled, !benchmarkTrialInProgress else { return }
+        // TESTING END
         guard !startingVoice else { return }
         startingVoice = true
         status = "Preparing voice…"
@@ -370,11 +479,22 @@ final class AppModel: ObservableObject {
             sleep()
             return
         }
+        // TESTING BEGIN: keep one trial and its terminal export isolated.
+        if benchmarkRecorder?.isRunning == true || (benchmarkEnabled && captureID != nil) {
+            benchmarkStatus = "Wait for this trial or use Stop trial."
+            return
+        }
+        // TESTING END
         command = ""
         // The queue takes ownership now; replay associations are independent of
         // the ten-report UI limit and are needed only until this handoff.
-        let timing = captureID.flatMap { voiceTimings.removeValue(forKey: $0) } ?? PipelineTiming(origin: .typed)
+        // TESTING BEGIN: larger bounded diagnostics only for opt-in trials.
+        let timing = captureID.flatMap { voiceTimings.removeValue(forKey: $0) }
+            ?? (benchmarkEnabled ? PipelineTiming(origin: .typed, maximumRecords: 2_048, maximumAnnotations: 512)
+                : PipelineTiming(origin: .typed))
         retainTiming(timing)
+        guard beginBenchmarkTrial(timing: timing, command: text) else { return }
+        // TESTING END
         submittedBehaviors[timing.id] = preferences.behavior
         timing.annotate("Chatbot behavior: \(preferences.behavior.title)")
         timing.mark("Command submitted for intent and action selection")
@@ -438,6 +558,9 @@ final class AppModel: ObservableObject {
                                              previousGeneration: generation, token: generation, timing: timing)
             }
         }
+        // TESTING BEGIN: references only; encoding and disk writes follow completion.
+        benchmarkRecorder?.captureFirst(observation, timing: timing)
+        // TESTING END
         var (selection, turn) = try await measureStage(timing, "Initial intent and action selection") {
             try await chooseNextAction(input: input, newInput: true, history: history,
                                        observation: observation, selector: DecisionsClient(apiKey: key),
@@ -725,6 +848,11 @@ final class AppModel: ObservableObject {
             }
             let actions = turn.calls.flatMap(\.actions)
             guard !actions.isEmpty, actions.count <= 12 else { throw MouseError.invalidAction("The model returned an empty or oversized action batch.") }
+            // TESTING BEGIN: allow terminal review after batch six; block batch seven before dispatch.
+            if let recorder = benchmarkRecorder, recorder.isRunning {
+                try recorder.checkBatch(timing: timing, completed: step)
+            }
+            // TESTING END
             try measureStage(timing, "Step \(step + 1): validate observation and actions") {
                 try screenObserver.validate(observation)
                 if native == nil {
@@ -745,6 +873,8 @@ final class AppModel: ObservableObject {
                     try await screenObserver.capture(timing: timing)
                 }
                 try checkCurrentTask(token)
+                // TESTING: retain the latest existing capture; no extra observation or disk work.
+                benchmarkRecorder?.captureLatest(observation, timing: timing)
                 log(call.description,
                     detail: "Step \(step + 1) · \(selection.route) · \(selection.choiceSummary)\n\(dispatchSummary)")
             }
@@ -766,7 +896,7 @@ final class AppModel: ObservableObject {
         let task = taskState
         let clarification = taskPausedForUser ? taskClarification : nil
         if !behavior.usesDecisions {
-            recordRequestStarted(timing: timing)
+            try recordRequestStarted(timing: timing) // TESTING: opt-in request cap
             let turn = try await measureStage(timing, "Luna intent and action generation") {
                 try await generator.begin(command: input, frame: observation.frame, context: history.full,
                                           activeTask: task?.contextText ?? "", pendingClarification: clarification,
@@ -778,6 +908,8 @@ final class AppModel: ObservableObject {
             let selection = SelectedAction(lunaTurn: turn, tree: observation.accessibility)
             if publish { latestDecision = selection.decisionSummary }
             timing.mark("Selected route: \(selection.route)")
+            // TESTING: include answer/ignore/completion routes even without actions.
+            benchmarkRecorder?.recordRoute(selection.route, timing: timing)
             return (selection, turn)
         }
         // Classify a new amendment beside the action in the same request.
@@ -800,7 +932,7 @@ final class AppModel: ObservableObject {
             let contextText = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
             return (options, contextText)
         }
-        recordRequestStarted(timing: timing)
+        try recordRequestStarted(timing: timing) // TESTING: opt-in request cap
         let decision = try await measureStage(timing, "Decisions selection") {
             try await selector.decide(instructions: ComputerDecisionOptions.instructions(includesScreenshot: behavior.decisionsUseScreenshot),
                                      context: contextText,
@@ -817,11 +949,13 @@ final class AppModel: ObservableObject {
         // remain distinguishable from an input that was actually dispatched.
         if publish { latestDecision = selection.decisionSummary }
         timing.mark("Selected route: \(selection.route)")
+        // TESTING: include answer/ignore/completion routes even without actions.
+        benchmarkRecorder?.recordRoute(selection.route, timing: timing)
         let turn: ModelTurn
         if let immediate = selection.immediateTurn {
             turn = immediate
         } else {
-            recordRequestStarted(timing: timing)
+            try recordRequestStarted(timing: timing) // TESTING: opt-in request cap
             turn = try await measureStage(timing, "Responses action generation") {
                 try await generator.begin(command: input, frame: observation.frame, context: history.full,
                                              activeTask: task?.contextText ?? "",
@@ -979,6 +1113,8 @@ final class AppModel: ObservableObject {
     // MARK: - Cancellation and completion
 
     func cancel(silent: Bool = false) {
+        // TESTING: record local cancellation before the trace freezes; first reason wins.
+        benchmarkRecorder?.noteStop(.manualStop)
         let wasWorking = working
         executionRevision += 1
         submittedBehaviors.removeAll()
@@ -1049,7 +1185,13 @@ final class AppModel: ObservableObject {
             self.showRestingState()
         }
     }
-    private func recordRequestStarted(timing: PipelineTiming? = nil) {
+    private func recordRequestStarted(timing: PipelineTiming? = nil) throws {
+        // TESTING BEGIN: reserve before every endpoint attempt, including fallback.
+        if let recorder = benchmarkRecorder, recorder.isRunning, let timing {
+            try recorder.reserveRequest(timing: timing)
+            benchmarkRequestCount = recorder.session.requestCount
+        }
+        // TESTING END
         budget.reserve()
         persistUsage(timing: timing)
     }

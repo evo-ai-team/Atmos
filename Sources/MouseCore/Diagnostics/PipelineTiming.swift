@@ -51,10 +51,11 @@ public final class PipelineTiming: @unchecked Sendable {
         let order: Int
     }
 
-    private static let recordLimit = 256
+    // TESTING: configurable only for opt-in bounded benchmark traces.
+    private let recordLimit: Int
     // Metadata cannot crowd out stage timings. A separate, small cap also keeps
     // transport diagnostics bounded when a command makes many requests.
-    private static let annotationLimit = 64
+    private let annotationLimit: Int
     private static let annotationCharacterLimit = 1024
     public let id = UUID()
     private let origin: Origin
@@ -74,8 +75,13 @@ public final class PipelineTiming: @unchecked Sendable {
     public init(
         origin: Origin,
         startedAt: TimeInterval? = nil,
+        maximumRecords: Int = 256, maximumAnnotations: Int = 64, // TESTING: ordinary defaults unchanged.
         clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
+        // TESTING BEGIN: generous but bounded opt-in capacity; no global mutation.
+        recordLimit = min(4_096, max(1, maximumRecords))
+        annotationLimit = min(1_024, max(0, maximumAnnotations))
+        // TESTING END
         let sample = clock()
         let now = Self.validTimestamp(sample) ? sample : 0
         self.origin = origin
@@ -149,7 +155,7 @@ public final class PipelineTiming: @unchecked Sendable {
         defer { lock.unlock() }
         guard endedAt == nil else { return }
         let now = observe(sample)
-        guard annotations.count < Self.annotationLimit else {
+        guard annotations.count < annotationLimit else {
             if droppedAnnotations < Int.max { droppedAnnotations += 1 }
             return
         }
@@ -234,10 +240,10 @@ public final class PipelineTiming: @unchecked Sendable {
         entries.sort { $0.at == $1.at ? $0.order < $1.order : $0.at < $1.at }
         lines.append(contentsOf: entries.map(\.line))
         if snapshot.droppedRecords > 0 {
-            lines.append("\(snapshot.droppedRecords) additional stage records omitted (limit \(Self.recordLimit)).")
+            lines.append("\(snapshot.droppedRecords) additional stage records omitted (limit \(recordLimit)).")
         }
         if snapshot.droppedAnnotations > 0 {
-            lines.append("\(snapshot.droppedAnnotations) additional metadata annotations omitted (limit \(Self.annotationLimit)).")
+            lines.append("\(snapshot.droppedAnnotations) additional metadata annotations omitted (limit \(annotationLimit)).")
         }
         if !snapshot.annotations.isEmpty {
             lines.append("Metadata offsets show when observations were recorded, not measured stage intervals.")
@@ -268,7 +274,7 @@ public final class PipelineTiming: @unchecked Sendable {
     }
 
     private func append(_ record: Record) {
-        guard records.count < Self.recordLimit else {
+        guard records.count < recordLimit else {
             if droppedRecords < Int.max { droppedRecords += 1 }
             return
         }

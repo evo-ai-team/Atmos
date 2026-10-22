@@ -8,6 +8,7 @@
   "Mouse/Application/README.md",
   "Mouse/ComputerControl/README.md",
   "Mouse/Diagnostics/README.md",
+  "Mouse/Diagnostics/Benchmark/README.md",
   "Mouse/Interface/Notch/README.md",
   "Mouse/Interface/README.md",
   "Mouse/Interface/Settings/README.md",

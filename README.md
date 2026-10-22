@@ -117,6 +117,14 @@ HTTP timings include network and server time together, not isolated model infere
 
 Metadata lines record the selected behavior, transcription mode, payload sizes, connection reuse/protocol, HTTP status, request IDs, and provider-reported processing milliseconds when supplied. Decisions additionally records screenshot presence, context byte size, choice counts, and token usage. Metadata offsets show when information was recorded; they are not durations. Traces remain in memory, retain at most 256 stage records and 64 metadata lines each, and exclude prompts, screenshots, credentials, and response content. Missing or late transport metrics do not delay a request or change its result.
 
+### Removable live benchmarks
+
+The collapsed **Benchmark** section in Settings enables bounded trials through the regular app's command field and selected behavior. It defaults to off each launch, pauses the microphone while enabled, and restores its previous state when disabled. Each trial has a 30-second deadline and a six-action-batch limit; the enabled session allows at most 30 API attempts, including Decisions-to-Luna fallback. These are testing limits only. A batch can contain several actions, and cancellation cannot undo an action already sent. For controlled comparisons, each trial starts with the same saved command context; test commands do not accumulate into the next trial, and paused test goals are cleared after export preparation.
+
+After completion or cancellation cleanup, Mouse saves a unique folder under `~/Library/Application Support/Mouse/Benchmarks` and reopens Settings. Exports contain the command, per-stage and HTTP timings, routes, actual action payloads/statuses, usage deltas, and captured screenshots, accessibility trees, and screen geometry. Screenshots, accessibility data, and actions can contain visible or typed private content. API authorization headers and raw request bodies are not logged. Exporting and reopening Settings happen after the measured trace ends. Benchmark traces have larger bounded log capacity; normal traces keep the limits above.
+
+Reported completion still needs independent visual verification. Token/cost figures are estimates from returned usage and can miss server work after cancellation. The implementation and removal steps are documented in [Diagnostics/Benchmark](Sources/Mouse/Diagnostics/Benchmark/README.md); source hooks are marked `TESTING`. Disabling the feature stops new benchmark exports but does not delete earlier results.
+
 ## How a command runs
 
 ```text

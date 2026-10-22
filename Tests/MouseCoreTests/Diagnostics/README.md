@@ -7,3 +7,5 @@ Metadata tests check chronological placement without fabricated durations, separ
 Structured-snapshot coverage checks live totals, stage durations, first-input latency, and frozen values after completion.
 
 Run `Scripts/test.sh --filter PipelineTimingTests` from the project root. These tests validate timing accounting; they do not measure live API, microphone, capture, or accessibility latency.
+
+`BenchmarkTests.swift` contains removable `TESTING` coverage for session-wide request limits, trial deadlines, batch limits, stale-trial rejection, isolated immutable action/usage reports, cutoff reasons, and larger benchmark-only timing capacity. Run with `--filter BenchmarkTests`. App focus, native cancellation cleanup, and actual export files additionally need live verification through the regular app's opt-in Benchmark section.

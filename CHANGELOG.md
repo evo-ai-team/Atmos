@@ -8,6 +8,13 @@ Current source: `/Users/sameemsaleem/Product/Mouse`
 
 Current behavior and setup: [README.md](README.md)
 
+## 2026-10-22 — Keep notch edge lighting steady during resizing
+
+- Removed the opening/closing highlight fade and its temporary dark rim cover after reported bottom-edge flicker. Edge brightness now stays steady while the panel expands and collapses.
+- Preserved the complete fade toward the top corners, native clear glass appearance, and existing geometry animation.
+
+Validation: Release build and signature verification passed; the canonical app was updated. Source review confirmed all transition-specific rim opacity code was removed. Temporary build files were deleted. No live visual test, microphone capture, or model requests were performed.
+
 ## 2026-10-22 — Fade the notch rim at the top and during activation
 
 - Finished the outline's vertical fade before the upper corners. A one-point dark stroke, clipped inside the body, also attenuates the native glass rim without masking or reducing the opacity of the glass material.

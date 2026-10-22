@@ -282,8 +282,10 @@ final class MouseThinkingIndicator: NSView {
         bead.backgroundColor = NSColor.white.cgColor
         bead.cornerRadius = Design.diameter / 2
         bead.shadowColor = NSColor.white.cgColor
-        bead.shadowOpacity = 0.22
-        bead.shadowRadius = 2
+        // A centered, diffuse halo softens each dot without blurring its core.
+        // It follows the bead's pulse and needs no extra animation or filter.
+        bead.shadowOpacity = 0.48
+        bead.shadowRadius = 3.2
         bead.shadowOffset = .zero
         bead.shadowPath = CGPath(ellipseIn: rect, transform: nil)
         envelope.addSublayer(bead)

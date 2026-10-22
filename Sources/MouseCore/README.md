@@ -5,7 +5,7 @@ MouseCore contains value types, state transitions, and model clients. It does no
 | Directory | Responsibility |
 |---|---|
 | [Accessibility](Accessibility/README.md) | Bounded tree traversal, serializable elements, and geometry. |
-| [Actions](Actions/README.md) | Action/result data, native choices, dispatch summaries, and progress checks. |
+| [Actions](Actions/README.md) | Action/result data, native choices, and dispatch summaries. |
 | [Diagnostics](Diagnostics/README.md) | Bounded command timelines, stage durations, and first-input latency. |
 | [Inference](Inference/README.md) | Selection, action planning, and speech-screening protocols. |
 | [Session](Session/README.md) | Wake/Stop behavior, accepted history, and task amendments. |

@@ -51,13 +51,8 @@ public actor OpenAIComputerClient {
             pendingClarification: pendingClarification, accessibility: accessibility,
             continuingTask: continuingTask
         )
-        // A fresh amendment can already be satisfied on screen. Even then, its
-        // resolved goal must reach the caller before the old task is completed.
-        let requiresCompletionUpdate = !activeTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !continuingTask && !reviewRequired
         let policy = ComputerRequestPolicy(
-            reviewRequired: reviewRequired, allowIgnore: !continuingTask,
-            requiresCompletionUpdate: requiresCompletionUpdate
+            reviewRequired: reviewRequired, allowIgnore: !continuingTask
         )
         preparationOutcome = .succeeded
         timing?.end(preparation, outcome: preparationOutcome)
@@ -80,7 +75,7 @@ public actor OpenAIComputerClient {
                 "type": "function_call_output",
                 "call_id": output.callID,
                 "output": [
-                    ["type": "input_text", "text": "The action batch finished. Inspect this fresh screenshot before deciding the next step. Screenshot size: \(output.frame.width) × \(output.frame.height) pixels."],
+                    ["type": "input_text", "text": "Continuing accepted task; no new user utterance. The action batch was dispatched; that alone does not prove success. Inspect this fresh screenshot against the entire goal and dispatched history. Call complete_task immediately if the goal is satisfied; otherwise choose the next necessary operation or pause. Screenshot size: \(output.frame.width) × \(output.frame.height) pixels."],
                     ["type": "input_image", "image_url": output.frame.dataURL, "detail": "original"]
                 ]
             ]
@@ -88,7 +83,8 @@ public actor OpenAIComputerClient {
         preparationOutcome = .succeeded
         timing?.end(preparation, outcome: preparationOutcome)
         preparation = nil
-        return try await send(input: input, previousResponseID: responseID, timing: timing)
+        return try await send(input: input, previousResponseID: responseID,
+                              policy: ComputerRequestPolicy(allowIgnore: false), timing: timing)
     }
 
     private func validate(_ frame: ScreenshotFrame) throws {

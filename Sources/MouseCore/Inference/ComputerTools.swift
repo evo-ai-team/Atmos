@@ -29,7 +29,7 @@ enum ComputerTools {
         ]
         let taskUpdate = object([
             "kind": ["type": "string", "enum": ["revise", "replace"], "description": "Revise the active task, or replace it for a new task. No active task means replace."],
-            "goal": ["type": "string", "minLength": 1, "maxLength": 2_000, "description": "The complete current goal after this utterance, preserving unaffected requirements when revising."]
+            "goal": ["type": "string", "minLength": 1, "maxLength": 2_000, "description": "The complete current goal, including any new amendment and preserving unaffected requirements when revising."]
         ])
         return [
             ["type": "function", "name": "execute_actions", "strict": true,
@@ -49,10 +49,10 @@ enum ComputerTools {
              "description": "Silently ignore speech that does not clearly request computer control now, including chat, informational questions, quoted/hypothetical/negated actions, or doubtful intent. No action or reply.",
              "parameters": object([:])],
             ["type": "function", "name": "complete_task", "strict": true,
-             "description": "Complete an amended task only after the latest screenshot verifies its entire updated goal. Preserve the complete updated intent even when no new UI input is needed.",
+             "description": "Complete immediately when the current screenshot shows the entire goal is satisfied and actual dispatched history is consistent with that result. Preserve the full current goal; do not add another action or observation.",
              "parameters": object([
                 "task_update": taskUpdate,
-                "message": ["type": "string", "minLength": 1, "maxLength": 180, "description": "A concise completion message for the updated task."]
+                "message": ["type": "string", "minLength": 1, "maxLength": 180, "description": "A concise completion message for the verified current goal."]
              ])]
         ]
     }()

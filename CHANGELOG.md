@@ -8,6 +8,15 @@ Current source: `/Users/sameemsaleem/Product/Mouse`
 
 Current behavior and setup: [README.md](README.md)
 
+## 2026-10-22 — Complete from every Luna screenshot and expose action history
+
+- Made `complete_task` available on every Luna screenshot request, including initial commands, continuations, amendments, and review. The prompt checks the entire goal against the current image and actual dispatch history before choosing more work. Requests require one structured tool, and plain final messages cannot silently complete a task.
+- Kept review constrained to asking for input or recognizing an already-achieved goal; it cannot execute further input. Removed the amendment-only completion policy and its conflicting plain-message path.
+- Deleted the unchanged-screen loop detector, its execution branch, and its tests. No replacement detector or step cap was added.
+- Added Settings and Actions tabs. Actions retains each dispatch's model description, exact generated payload or native AX target, goal, time, and status in memory. Entries share task-history IDs and retain uncertain status through cancellation and late callbacks.
+
+Validation: 264 offline tests passed with zero failures, including completion across all screenshot routes and exact action-history/cancellation behavior. Release build and signature verification passed; the canonical app bundle was updated. A temporary native preview of the production Actions view verified populated records and scrolling using clearly marked sample data. Preview and build files were removed afterward. No live model requests were made; the existing running app needs reopening to load the update.
+
 ## 2026-10-22 — Keep notch edge lighting steady during resizing
 
 - Removed the opening/closing highlight fade and its temporary dark rim cover after reported bottom-edge flicker. Edge brightness now stays steady while the panel expands and collapses.

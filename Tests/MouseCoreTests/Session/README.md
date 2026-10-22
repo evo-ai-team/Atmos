@@ -6,6 +6,7 @@ Tests of `Sources/MouseCore/Session`, using in-memory state and synthetic timest
 - `VoiceControlTests` checks the narrow local stop boundary.
 - `CommandContextTests` checks complete chronological history, referents, outcomes, and JSON escaping.
 - `TaskSteeringStateTests` checks accepted amendments, replacement goals, dispatch records, and uncertain interrupted actions.
+- `ActionHistoryTests` checks exact payloads alongside descriptions, observation actions, native target details, and dispatch/cancellation transitions scoped to their execution.
 - `CaptureStampTests` checks that a speculative capture cannot cross utterance, task, process, or freshness boundaries.
 - `MousePreferencesTests` verifies persisted behavior/audio choices, migration defaults, and invalid sensitivity values using isolated preference suites.
 

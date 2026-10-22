@@ -4,7 +4,8 @@ import XCTest
 
 final class OpenAIClientTests: XCTestCase {
     private let frame = ScreenshotFrame(data: Data([1, 2, 3]), width: 1280, height: 800, pointWidth: 1280, pointHeight: 800)
-    private static let answer = #"{"id":"resp_done","status":"completed","output":[{"type":"message","status":"completed","content":[{"type":"output_text","text":"Done."}]}],"usage":{"input_tokens":42,"output_tokens":7}}"#
+    private static let answer = #"{"id":"resp_done","status":"completed","output":[{"type":"function_call","status":"completed","name":"complete_task","call_id":"call_done","arguments":"{\"task_update\":{\"kind\":\"revise\",\"goal\":\"Complete the requested computer task.\"},\"message\":\"Done.\"}"}],"usage":{"input_tokens":42,"output_tokens":7}}"#
+    private static let plainAnswer = #"{"id":"resp_done","status":"completed","output":[{"type":"message","status":"completed","content":[{"type":"output_text","text":"Done."}]}]}"#
 
     func testBeginUsesStrictActionsAndOriginalScreenshot() async throws {
         let recorder = RequestRecorder()
@@ -28,13 +29,13 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertEqual(body["parallel_tool_calls"] as? Bool, false)
         XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "low")
         let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
-        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance"])
+        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance", "complete_task"])
         for tool in tools {
             XCTAssertEqual(tool["type"] as? String, "function")
             XCTAssertEqual(tool["strict"] as? Bool, true)
             try assertClosedObjects(XCTUnwrap(tool["parameters"] as? [String: Any]))
         }
-        let ignoreParameters = try XCTUnwrap(tools.last?["parameters"] as? [String: Any])
+        let ignoreParameters = try XCTUnwrap(tools.first { $0["name"] as? String == "ignore_utterance" }?["parameters"] as? [String: Any])
         XCTAssertTrue((ignoreParameters["properties"] as? [String: Any])?.isEmpty == true)
         XCTAssertEqual(ignoreParameters["required"] as? [String], [])
         XCTAssertEqual(ignoreParameters["additionalProperties"] as? Bool, false)
@@ -49,7 +50,7 @@ final class OpenAIClientTests: XCTestCase {
         let parameters = try XCTUnwrap(tools.first?["parameters"] as? [String: Any])
         let properties = try XCTUnwrap(parameters["properties"] as? [String: Any])
         XCTAssertEqual(Set(properties.keys), Set(["description", "actions", "task_update"]))
-        for tool in tools.prefix(2) {
+        for tool in tools where tool["name"] as? String != "ignore_utterance" {
             let toolParameters = try XCTUnwrap(tool["parameters"] as? [String: Any])
             let toolProperties = try XCTUnwrap(toolParameters["properties"] as? [String: Any])
             let update = try XCTUnwrap(toolProperties["task_update"] as? [String: Any])
@@ -70,7 +71,7 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertTrue(content[0]["text"]?.contains("Session context (background only): Finder is active") == true)
         XCTAssertEqual(content[1], ["type": "input_image", "image_url": frame.dataURL, "detail": "original"])
         XCTAssertEqual(turn.message, "Done.")
-        XCTAssertNil(turn.taskUpdate)
+        XCTAssertEqual(turn.taskUpdate, TaskUpdate(kind: .revise, goal: "Complete the requested computer task."))
         XCTAssertEqual(turn.inputTokens, 42)
         XCTAssertEqual(turn.outputTokens, 7)
     }
@@ -151,7 +152,7 @@ final class OpenAIClientTests: XCTestCase {
             "task_update": ["kind": "revise", "goal": "Open the channel only."],
             "message": "Done.", "actions": []
         ], name: "complete_task")])
-        for payload in [Data(Self.answer.utf8), missingGoal, invalidGoal, extraField] {
+        for payload in [Data(Self.plainAnswer.utf8), missingGoal, invalidGoal, extraField] {
             let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { _ in
                 (payload, Self.response())
             })
@@ -165,14 +166,17 @@ final class OpenAIClientTests: XCTestCase {
         }
     }
 
-    func testCompletionToolIsRejectedWhenNotOfferedIncludingReviewAndContinuation() async throws {
+    func testEveryScreenshotRequestOffersAndAcceptsStructuredCompletion() async throws {
+        let goal = "Open the channel only."
         let payload = try responseData([function([
-            "task_update": ["kind": "revise", "goal": "Open the channel only."], "message": "Done."
+            "task_update": ["kind": "revise", "goal": goal], "message": "The channel is open."
         ], name: "complete_task")])
         let modes = [
             (activeTask: "", continuing: false, review: false),
             (activeTask: "Open the channel.", continuing: true, review: false),
-            (activeTask: "Open the channel.", continuing: false, review: true)
+            (activeTask: "Open the channel and its store.", continuing: false, review: false),
+            (activeTask: "Open the channel.", continuing: false, review: true),
+            (activeTask: "Open the channel.", continuing: true, review: true)
         ]
         for mode in modes {
             let recorder = RequestRecorder()
@@ -180,26 +184,58 @@ final class OpenAIClientTests: XCTestCase {
                 await recorder.add(request)
                 return (payload, Self.response())
             })
+            let turn = try await client.begin(command: "Open the channel only", frame: frame, context: "",
+                                              activeTask: mode.activeTask, continuingTask: mode.continuing,
+                                              reviewRequired: mode.review)
+            XCTAssertEqual(turn.taskUpdate, TaskUpdate(kind: .revise, goal: goal))
+            XCTAssertEqual(turn.message, "The channel is open.")
+            XCTAssertTrue(turn.calls.isEmpty)
+            XCTAssertNil(turn.pauseReason)
+            XCTAssertFalse(turn.ignored)
+            let requests = await recorder.requests
+            XCTAssertEqual(requests.count, 1)
+            let body = try json(XCTUnwrap(requests.first))
+            XCTAssertEqual(body["tool_choice"] as? String, "required")
+            let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
+            let names = tools.compactMap { $0["name"] as? String }
+            XCTAssertTrue(names.contains("complete_task"))
+            XCTAssertEqual(names.contains("ignore_utterance"), !mode.continuing && !mode.review)
+            if mode.review { XCTAssertEqual(names, ["pause_for_user", "complete_task"]) }
+            let instructions = try XCTUnwrap(body["instructions"] as? String)
+            XCTAssertTrue(instructions.contains("On EVERY screenshot"))
+            XCTAssertTrue(instructions.contains("actual dispatched action history"))
+            XCTAssertTrue(instructions.contains("call complete_task immediately"))
+            XCTAssertTrue(instructions.contains("never a plain final message"))
+            XCTAssertFalse(instructions.contains("when complete_task is offered"))
+            XCTAssertFalse(instructions.contains("otherwise return a concise final message"))
+        }
+    }
+
+    func testEveryRequestRejectsPlainFinalCompletion() async throws {
+        let modes = [
+            (activeTask: "", continuing: false, review: false),
+            (activeTask: "Open the channel.", continuing: true, review: false),
+            (activeTask: "Open the channel and its store.", continuing: false, review: false),
+            (activeTask: "Open the channel.", continuing: true, review: true)
+        ]
+        for mode in modes {
+            let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { _ in
+                (Data(Self.plainAnswer.utf8), Self.response())
+            })
             do {
                 _ = try await client.begin(command: "Open the channel", frame: frame, context: "",
                                            activeTask: mode.activeTask, continuingTask: mode.continuing,
                                            reviewRequired: mode.review)
-                XCTFail("An unoffered completion tool must not be accepted.")
-            } catch let error as MouseError {
-                if mode.review {
-                    XCTAssertEqual(error, .api("The review request did not return a clarification. No new actions were executed."))
-                } else {
-                    XCTAssertEqual(error, .api("The planner returned a completion tool that was not offered. Completion was not confirmed."))
-                }
-            }
-            let requests = await recorder.requests
-            let body = try json(XCTUnwrap(requests.first))
-            XCTAssertNil(body["tool_choice"])
-            let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
-            let names = tools.compactMap { $0["name"] as? String }
-            XCTAssertFalse(names.contains("complete_task"))
-            if mode.review { XCTAssertEqual(names, ["pause_for_user"]) }
+                XCTFail("Completion requires complete_task and the full current goal.")
+            } catch { XCTAssertTrue(error is MouseError) }
         }
+        let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { _ in
+            (Data(Self.plainAnswer.utf8), Self.response())
+        })
+        do {
+            _ = try await client.continueTurn(responseID: "resp_previous", outputs: [("call_1", frame)])
+            XCTFail("Chained screenshot responses also require structured completion.")
+        } catch { XCTAssertTrue(error is MouseError) }
     }
 
     func testFollowUpCarriesResolvedHistoryAndPendingQuestionWithoutForcingReview() async throws {
@@ -226,7 +262,7 @@ final class OpenAIClientTests: XCTestCase {
         // An ordinary follow-up keeps executable actions available. A supplied
         // clarification is context, not the separate authorization-only review mode.
         let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
-        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance"])
+        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance", "complete_task"])
         XCTAssertEqual(content[1]["image_url"], frame.dataURL)
         XCTAssertNil(body["previous_response_id"])
     }
@@ -253,7 +289,7 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertTrue(instructions.contains("do not invent semantic IDs"))
         XCTAssertNil(body["previous_response_id"])
         let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
-        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance"])
+        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "ignore_utterance", "complete_task"])
         let parameters = try XCTUnwrap(tools.first?["parameters"] as? [String: Any])
         let properties = try XCTUnwrap(parameters["properties"] as? [String: Any])
         let actions = try XCTUnwrap(properties["actions"] as? [String: Any])
@@ -290,7 +326,7 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertTrue(instructions.contains("Discard any old\npending plan"))
         XCTAssertTrue(instructions.contains("redo completed steps"))
         let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
-        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user"])
+        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "complete_task"])
     }
 
     func testFallbackContinuationRejectsIgnoringAnAlreadyAcceptedTask() async throws {
@@ -323,7 +359,7 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty)
     }
 
-    func testRequiredReviewOnlyReturnsAPauseAndIncludesPreciseReviewInstructions() async throws {
+    func testRequiredReviewCanPauseAndIncludesPreciseReviewInstructions() async throws {
         let recorder = RequestRecorder()
         let payload = try responseData([function([
             "task_update": ["kind": "revise", "goal": "Send the prepared email after approval."],
@@ -342,27 +378,28 @@ final class OpenAIClientTests: XCTestCase {
         let body = try json(XCTUnwrap(requests.first))
         let instructions = try XCTUnwrap(body["instructions"] as? String)
         XCTAssertTrue(instructions.contains("REVIEW REQUIRED FOR THIS REQUEST"))
-        XCTAssertTrue(instructions.contains("Return only pause_for_user"))
+        XCTAssertTrue(instructions.contains("pause_for_user or complete_task"))
+        XCTAssertTrue(instructions.contains("claim an unfinished goal is complete to bypass review"))
         XCTAssertTrue(instructions.contains("does not authorize execution"))
         let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
-        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["pause_for_user"])
+        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["pause_for_user", "complete_task"])
     }
 
-    func testRequiredReviewRejectsExecutableActionsIgnoreAndCompletion() async throws {
+    func testRequiredReviewRejectsExecutableActionsAndIgnore() async throws {
         let action = try responseData([function([
             "description": "Sending email…",
             "actions": [["type": "click", "x": 20, "y": 40, "button": "left", "keys": []]]
         ])])
         let ignored = try responseData([function([:], name: "ignore_utterance")])
-        for payload in [action, ignored, Data(Self.answer.utf8)] {
+        for payload in [action, ignored] {
             let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { _ in
                 (payload, Self.response())
             })
             do {
                 _ = try await client.begin(command: "Prepare the email", frame: frame, context: "", reviewRequired: true)
-                XCTFail("A review-only request must not expose actions or silently bypass its pause.")
+                XCTFail("A review request must not dispatch further actions or silently ignore the accepted task.")
             } catch let error as MouseError {
-                XCTAssertEqual(error, .api("The review request did not return a clarification. No new actions were executed."))
+                XCTAssertEqual(error, .api("The review request returned neither clarification nor completion. No new actions were executed."))
             }
         }
     }
@@ -384,7 +421,7 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertTrue(pause.calls.isEmpty)
     }
 
-    func testRejectsMissingOrInvalidTaskUpdateBeforeReturningActionsOrPause() throws {
+    func testRejectsMissingOrInvalidTaskUpdateBeforeReturningAnyAcceptedOperation() throws {
         let invalid: [Any] = [
             NSNull(), [], "revise",
             [:] as [String: Any],
@@ -399,10 +436,13 @@ final class OpenAIClientTests: XCTestCase {
             ["kind": "revise", "goal": "Open\u{1B} Calculator."],
             ["kind": "replace", "goal": "Open Calculator.", "extra": true]
         ]
-        for name in ["execute_actions", "pause_for_user"] {
-            let base: [String: Any] = name == "execute_actions"
-                ? ["description": "Opening Calculator…", "actions": [["type": "wait"]]]
-                : ["reason": "Which calculator?"]
+        for name in ["execute_actions", "pause_for_user", "complete_task"] {
+            let base: [String: Any]
+            switch name {
+            case "execute_actions": base = ["description": "Opening Calculator…", "actions": [["type": "wait"]]]
+            case "pause_for_user": base = ["reason": "Which calculator?"]
+            default: base = ["message": "Calculator is open."]
+            }
             try assertBlocked([function(base, name: name, includeTaskUpdate: false)])
             for update in invalid {
                 var arguments = base
@@ -456,13 +496,18 @@ final class OpenAIClientTests: XCTestCase {
             await recorder.add(request)
             return (Data(Self.answer.utf8), Self.response())
         })
-        _ = try await client.continueTurn(responseID: "resp_previous", outputs: [("call_1", frame)])
+        let turn = try await client.continueTurn(responseID: "resp_previous", outputs: [("call_1", frame)])
+        XCTAssertEqual(turn.message, "Done.")
+        XCTAssertNotNil(turn.taskUpdate)
         let requests = await recorder.requests
         let body = try json(XCTUnwrap(requests.first))
         XCTAssertEqual(body["previous_response_id"] as? String, "resp_previous")
         XCTAssertEqual(body["model"] as? String, "gpt-6-luna")
         XCTAssertEqual(body["service_tier"] as? String, "fast")
         XCTAssertNotNil(body["instructions"])
+        XCTAssertEqual(body["tool_choice"] as? String, "required")
+        let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
+        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["execute_actions", "pause_for_user", "complete_task"])
         let input = try XCTUnwrap(body["input"] as? [[String: Any]])
         XCTAssertEqual(input.count, 1)
         let item = try XCTUnwrap(input.first)
@@ -472,7 +517,22 @@ final class OpenAIClientTests: XCTestCase {
         let output = try XCTUnwrap(item["output"] as? [[String: String]])
         XCTAssertEqual(output[0]["type"], "input_text")
         XCTAssertTrue(output[0]["text"]?.contains("1280 × 800") == true)
+        XCTAssertTrue(output[0]["text"]?.contains("no new user utterance") == true)
+        XCTAssertTrue(output[0]["text"]?.contains("Call complete_task immediately") == true)
         XCTAssertEqual(output[1], ["type": "input_image", "image_url": frame.dataURL, "detail": "original"])
+    }
+
+    func testChainedContinuationRejectsIgnore() async throws {
+        let payload = try responseData([function([:], name: "ignore_utterance")])
+        let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { _ in
+            (payload, Self.response())
+        })
+        do {
+            _ = try await client.continueTurn(responseID: "resp_previous", outputs: [("call_1", frame)])
+            XCTFail("An accepted task cannot silently become ignored conversation.")
+        } catch let error as MouseError {
+            XCTAssertEqual(error, .api("The planner returned an invalid ignore for an accepted task. Completion was not confirmed."))
+        }
     }
 
     func testParsesDescriptionWithOrderedActions() throws {
@@ -521,7 +581,7 @@ final class OpenAIClientTests: XCTestCase {
             XCTAssertEqual(body["model"] as? String, "gpt-6-luna")
             XCTAssertEqual(body["service_tier"] as? String, "fast")
             XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], "low")
-            XCTAssertNil(body["tool_choice"])
+            XCTAssertEqual(body["tool_choice"] as? String, "required")
             let inputs = try XCTUnwrap(body["input"] as? [[String: Any]])
             let content = try XCTUnwrap((inputs[0]["content"] ?? inputs[0]["output"]) as? [[String: String]])
             XCTAssertEqual(content[1], ["type": "input_image", "image_url": expectedFrame.dataURL, "detail": "original"])

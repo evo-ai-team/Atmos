@@ -19,9 +19,6 @@ enum ComputerResponseParser {
             throw MouseError.api("OpenAI returned an incomplete response structure. No new actions were executed.")
         }
         var operation: ModelTurn?
-        var messages: [String] = []
-        var hasMessageOutput = false
-        var hasFinalMessage = false
         for item in output {
             if let status = item.status, status != "completed" {
                 throw invalidResponse("A model output did not complete.")
@@ -33,42 +30,23 @@ enum ComputerResponseParser {
                 }
                 operation = try parseFunction(item, responseID: id)
             case "message":
-                hasMessageOutput = true
-                for content in item.content ?? [] {
-                    if content.type == "refusal" {
-                        throw invalidResponse("The model declined this request.")
-                    }
-                    if content.type == "output_text", let text = content.text, !text.isEmpty {
-                        messages.append(text)
-                        if item.phase != "commentary" { hasFinalMessage = true }
-                    }
+                if item.content?.contains(where: { $0.type == "refusal" }) == true {
+                    throw invalidResponse("The model declined this request.")
                 }
+                // Completion is a structured operation with the complete goal.
+                // A final message must never silently complete the caller's task.
+                throw invalidResponse("The model returned a message instead of exactly one tool call.")
             case "reasoning": break
             default:
                 throw invalidResponse("The model returned an unsupported output.")
             }
         }
-        if var operation {
-            // Even an empty message is mixed output. Finish checking every output
-            // before returning the operation, so no valid prefix can leak through.
-            guard !hasMessageOutput else {
-                let reason = operation.ignored
-                    ? "The model combined an ignore operation with other output."
-                    : "The model combined an operation with a message."
-                throw invalidResponse(reason)
-            }
-            operation.inputTokens = response.usage?.inputTokens ?? 0
-            operation.outputTokens = response.usage?.outputTokens ?? 0
-            return operation
+        guard var operation else {
+            throw invalidResponse("The model returned no tool call.")
         }
-        guard hasFinalMessage else {
-            throw invalidResponse("The model returned no actions or answer.")
-        }
-        return ModelTurn(
-            id: id, calls: [], message: messages.joined(separator: "\n"),
-            inputTokens: response.usage?.inputTokens ?? 0,
-            outputTokens: response.usage?.outputTokens ?? 0
-        )
+        operation.inputTokens = response.usage?.inputTokens ?? 0
+        operation.outputTokens = response.usage?.outputTokens ?? 0
+        return operation
     }
 
     private static func parseFunction(_ item: ResponseOutput, responseID: String) throws -> ModelTurn {
@@ -232,14 +210,13 @@ private struct ResponseEnvelope: Decodable {
 private struct ResponseOutput: Decodable {
     var type: String
     var status: String?
-    var phase: String?
     var callID: String?
     var name: String?
     var arguments: String?
     var content: [Content]?
     enum CodingKeys: String, CodingKey {
-        case type, status, phase, name, arguments, content
+        case type, status, name, arguments, content
         case callID = "call_id"
     }
-    struct Content: Decodable { var type: String; var text: String? }
+    struct Content: Decodable { var type: String }
 }

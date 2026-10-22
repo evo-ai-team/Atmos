@@ -32,12 +32,12 @@ enum ComputerRequest {
             "service_tier": serviceTier,
             "instructions": policy.instructions,
             "tools": policy.tools,
+            "tool_choice": "required",
             "parallel_tool_calls": false,
             "input": input,
             "max_output_tokens": 2048,
             "reasoning": ["effort": reasoningEffort]
         ]
-        if policy.requiresCompletionUpdate { body["tool_choice"] = "required" }
         if let previousResponseID { body["previous_response_id"] = previousResponseID }
         return try JSONSerialization.data(withJSONObject: body)
     }
@@ -48,37 +48,30 @@ enum ComputerRequest {
 struct ComputerRequestPolicy {
     var reviewRequired = false
     var allowIgnore = true
-    var requiresCompletionUpdate = false
 
     var instructions: String {
         let reviewInstructions = reviewRequired ? """
 
 
         REVIEW REQUIRED FOR THIS REQUEST: the selector has determined that user clarification,
-        authorization, or authentication is needed before further input. Return only pause_for_user,
-        including the complete task_update and a precise, brief question or explanation based on
-        the current goal and observed UI. Do not execute actions, ignore the utterance, or report
-        completion. This request can only obtain the user's input; it does not authorize execution.
+        authorization, or authentication may be needed before further input. You may only use
+        pause_for_user or complete_task. If the current screenshot and actual dispatched history
+        establish that the entire accepted goal is already satisfied, call complete_task immediately
+        with the full current goal. Otherwise use pause_for_user with the complete task_update and
+        a precise, brief question or explanation. Do not execute actions, ignore the utterance,
+        invent authorization, or claim an unfinished goal is complete to bypass review. This request
+        does not authorize execution.
         """ : ""
-        let completionInstructions = requiresCompletionUpdate ? """
-
-
-        AMENDED TASK COMPLETION: return exactly one offered tool for this request. If the latest
-        screenshot verifies that the entire updated goal is already satisfied, use complete_task
-        with task_update containing the full revised or replacement goal and a brief completion
-        message. Do not return a plain final message or discard the amendment's updated intent.
-        Unrelated speech may still use ignore_utterance without changing the accepted goal.
-        """ : ""
-        return ComputerPrompt.instructions + reviewInstructions + completionInstructions
+        return ComputerPrompt.instructions + reviewInstructions
     }
 
     var tools: [[String: Any]] {
         // Constrain the offered tools as well as validating the response. An
-        // accepted task has no new utterance to ignore; review can only ask input.
+        // accepted task has no new utterance to ignore. Review can recognize an
+        // already-achieved goal, but can never dispatch further input.
         return ComputerTools.definitions.filter { tool in
             let name = tool["name"] as? String
-            if reviewRequired { return name == "pause_for_user" }
-            if name == "complete_task" { return requiresCompletionUpdate }
+            if reviewRequired { return name == "pause_for_user" || name == "complete_task" }
             return allowIgnore || name != "ignore_utterance"
         }
     }
@@ -86,19 +79,13 @@ struct ComputerRequestPolicy {
     func validate(_ turn: ModelTurn) throws {
         // Preserve the selector's review decision even if the generator disagrees.
         // Prompting alone must not turn a request for permission into executable input.
-        guard !reviewRequired || (turn.pauseReason != nil && turn.calls.isEmpty) else {
-            throw MouseError.api("The review request did not return a clarification. No new actions were executed.")
+        let completed = turn.calls.isEmpty && turn.pauseReason == nil && !turn.ignored
+            && turn.taskUpdate != nil && !turn.message.isEmpty
+        guard !reviewRequired || (turn.calls.isEmpty && (turn.pauseReason != nil || completed)) else {
+            throw MouseError.api("The review request returned neither clarification nor completion. No new actions were executed.")
         }
         guard allowIgnore || !turn.ignored else {
             throw MouseError.api("The planner returned an invalid ignore for an accepted task. Completion was not confirmed.")
-        }
-        let structuredCompletion = turn.calls.isEmpty && turn.pauseReason == nil && turn.taskUpdate != nil
-        guard requiresCompletionUpdate || !structuredCompletion else {
-            throw MouseError.api("The planner returned a completion tool that was not offered. Completion was not confirmed.")
-        }
-        guard !requiresCompletionUpdate || turn.ignored || turn.pauseReason != nil
-                || !turn.calls.isEmpty || structuredCompletion else {
-            throw MouseError.api("The planner completed an amendment without its updated goal. Completion was not confirmed.")
         }
     }
 }

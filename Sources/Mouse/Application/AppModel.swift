@@ -26,6 +26,7 @@ final class AppModel: ObservableObject {
     @Published var command = ""
     @Published var error: String?
     @Published var activity: [Activity] = []
+    @Published private(set) var actionHistory = ActionHistory()
     @Published private(set) var timingTraces: [PipelineTiming] = []
     @Published private(set) var latestCommandTiming: PipelineTiming?
     @Published var preferences = MousePreferences.load() {
@@ -464,6 +465,7 @@ final class AppModel: ObservableObject {
     /// Wait for cancelled input cleanup before taking a replacement screenshot.
     /// An interrupted drag must release its button before the next task can act.
     private func retireCurrentWork(outcome: PipelineTiming.Outcome = .superseded) {
+        actionHistory.markUnfinishedUncertain(executionID: generation)
         generation = UUID()
         runningTiming?.finish(outcome)
         runningTiming = nil
@@ -656,7 +658,6 @@ final class AppModel: ObservableObject {
         var observation = initial
         var step = 0
         var firstTurn = true
-        var progressGuard = ActionProgressGuard()
         while true {
             try checkCurrentTask(token)
             status = "Choosing the next action…"
@@ -709,7 +710,6 @@ final class AppModel: ObservableObject {
                 }
             }
             for call in turn.calls {
-                let before = observation
                 let dispatchSummary = try await measureStage(timing, "Step \(step + 1): dispatch input") {
                     try await dispatch(call, selection: selection, observation: observation, token: token, timing: timing)
                 }
@@ -725,32 +725,6 @@ final class AppModel: ObservableObject {
                 try checkCurrentTask(token)
                 log(call.description,
                     detail: "Step \(step + 1) · \(selection.route) · \(selection.choiceSummary)\n\(dispatchSummary)")
-                // Stop an exact unchanged-state replay, not a long task. This
-                // does not infer success from an AX return code or retry input.
-                let stalled: String?
-                let progress = timing.begin("Step \(step + 1): progress check")
-                if let native {
-                    stalled = progressGuard.recordNative(action: native.action, element: native.element,
-                                                         before: before.frame, after: observation.frame,
-                                                         processIDBefore: before.processID, processIDAfter: observation.processID)
-                } else {
-                    stalled = progressGuard.recordGenerated(call.actions,
-                                                            before: before.frame, after: observation.frame,
-                                                            processIDBefore: before.processID, processIDAfter: observation.processID)
-                }
-                timing.end(progress)
-                if let stalled {
-                    error = stalled
-                    status = "No visible progress"
-                    latestDispatch += "\nPaused: repeatedly observed an unchanged screen."
-                    finishHistory(status: .paused, outcome: stalled)
-                    taskPausedForUser = true
-                    taskClarification = stalled
-                    log(stalled, detail: "Repeated action paused")
-                    finishTask(token, keepingTask: true, outcome: .paused)
-                    showNotice("No visible progress · paused", duration: 12)
-                    return
-                }
             }
             step += 1
             try checkCurrentTask(token)
@@ -867,6 +841,19 @@ final class AppModel: ObservableObject {
             try checkCurrentTask(token)
             executionRevision += 1
             let dispatchID = taskState?.beginAction(action: action, description: call.description)
+            if let dispatchID {
+                // Share the dispatch record's identity: this is the action added
+                // to model history, not a separate reconstruction from its label.
+                let target = native.map {
+                    ActionHistory.NativeTarget(action: $0.action, elementID: $0.element.id,
+                                               snapshotID: observation.accessibility.id,
+                                               role: $0.element.role, label: $0.element.label,
+                                               screenBounds: $0.element.screenBounds)
+                }
+                actionHistory.begin(id: dispatchID, executionID: token, goal: taskState?.goal ?? "",
+                                    source: selection.route, description: call.description,
+                                    action: action, nativeTarget: target)
+            }
             do {
                 if let native {
                     // AX revalidates the exact retained element before acting.
@@ -878,14 +865,20 @@ final class AppModel: ObservableObject {
                 } else {
                     try await computer.execute(action, frame: observation.frame, timing: timing)
                 }
+                try checkCurrentTask(token)
             } catch {
+                if let dispatchID {
+                    actionHistory.markUncertain(id: dispatchID, detail: error.localizedDescription)
+                }
                 if generation == token {
                     latestDispatch = "Dispatch interrupted or failed · \(selection.route)\n\(summary)"
                 }
                 throw error
             }
-            try checkCurrentTask(token)
-            if let dispatchID { taskState?.finishAction(id: dispatchID) }
+            if let dispatchID {
+                taskState?.finishAction(id: dispatchID)
+                actionHistory.finish(id: dispatchID)
+            }
             if let historyID = currentHistoryEntryID,
                !["wait", "screenshot"].contains(action.type.lowercased()) {
                 conversationContext.recordDispatchedAction(id: historyID, description: call.description)

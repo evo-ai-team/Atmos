@@ -1,36 +1,63 @@
 import SwiftUI
 
-/// Secondary setup and preferences. The notch is the everyday interface.
+/// Secondary setup and action history. The notch is the everyday interface.
 struct MouseView: View {
+    private enum Tab: String, CaseIterable {
+        case settings = "Settings"
+        case actions = "Actions"
+    }
+
     @ObservedObject var model: AppModel
+    @State private var selectedTab = Tab.settings
     @State private var keyInput = ""
     @State private var editingKey = false
 
     var body: some View {
         NativeGlassSurface {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    voiceSection
-                    BehaviorSettingsView(model: model)
-                    permissionsSection
-                    connectionSection
-                    Toggle("Open Mouse at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLogin($0) }))
-                        .toggleStyle(.switch)
-                    if let error = model.error {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label("Needs attention", systemImage: "exclamationmark.circle").font(.subheadline.weight(.medium))
-                            Text(error).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                            Button("Dismiss") { model.error = nil }.controlSize(.small)
-                        }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                            .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+            VStack(spacing: 20) {
+                // Keep navigation above the scroll view so history remains easy
+                // to reach even when the settings or action payloads are long.
+                Picker("Window section", selection: $selectedTab) {
+                    ForEach(Tab.allCases, id: \.self) { tab in
+                        Text(tab.rawValue).tag(tab)
                     }
-                    usageSection
-                    ActivityDiagnosticsView(model: model)
-                }.padding(.horizontal, 28).padding(.top, 48).padding(.bottom, 28)
-            }.scrollIndicators(.hidden)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 28)
+                .padding(.top, 48)
+
+                if selectedTab == .settings {
+                    settingsContent
+                } else {
+                    ActionHistoryView(model: model)
+                }
+            }
         }
         .ignoresSafeArea()
         .containerBackground(.clear, for: .window)
+    }
+
+    private var settingsContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                voiceSection
+                BehaviorSettingsView(model: model)
+                permissionsSection
+                connectionSection
+                Toggle("Open Mouse at login", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLogin($0) }))
+                    .toggleStyle(.switch)
+                if let error = model.error {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Needs attention", systemImage: "exclamationmark.circle").font(.subheadline.weight(.medium))
+                        Text(error).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                        Button("Dismiss") { model.error = nil }.controlSize(.small)
+                    }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+                }
+                usageSection
+                ActivityDiagnosticsView(model: model)
+            }.padding(.horizontal, 28).padding(.bottom, 28)
+        }.scrollIndicators(.hidden)
     }
 
     private var voiceSection: some View {

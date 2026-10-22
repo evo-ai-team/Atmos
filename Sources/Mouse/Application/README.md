@@ -44,6 +44,18 @@ image mode may additionally establish completion from the screenshot. Unsupporte
 use the screenshot-capable Responses planner. Luna-only uses that planner directly on
 every step, including ignore, completion, and amendments, without calling Decisions.
 
+Every Luna screenshot request offers `complete_task`: when the current screen and
+dispatch history establish that the accepted goal is achieved, it completes in
+that response. There is no loop detector. Input validation, explicit user pauses,
+request timeouts, and immediate cancellation remain part of execution.
+
+`AppModel.actionHistory` publishes the same dispatch IDs recorded in task history
+to the Actions tab. It captures model descriptions and exact generated/native
+payloads immediately before execution, then records dispatch completion or an
+uncertain result. Retiring a command marks its in-flight entries uncertain before
+changing generations; a late completion cannot make them successful. This local
+session log survives task completion and Stop and is not written to disk.
+
 Each command carries a `PipelineTiming` reference from speech replay or typed
 submission through screening and execution. Queued and retired tasks retain
 their own references, so late callbacks cannot alter a replacement's report.

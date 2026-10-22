@@ -61,7 +61,7 @@ public struct ModelTurn: Sendable {
     public var pauseReason: String?
     /// The utterance was not a clear request for computer control. Stay silent and take no action.
     public var ignored: Bool
-    /// Present with an action or pause; absent for ignored speech and final messages.
+    /// Present with an action, pause, or complete_task; absent only for ignored speech.
     public var taskUpdate: TaskUpdate?
     public var inputTokens: Int
     public var outputTokens: Int

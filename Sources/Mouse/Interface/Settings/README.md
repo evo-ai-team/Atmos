@@ -2,8 +2,13 @@
 
 The secondary setup window and local diagnostics live here.
 
-- `MouseView.swift` assembles voice controls, permissions, API-key setup, login
-  preferences, usage, and error display.
+- `MouseView.swift` provides Settings and Actions tabs. Settings assembles voice
+  controls, permissions, API-key setup, login preferences, usage, and error display.
+- `ActionHistoryView.swift` shows the session's dispatch history newest first,
+  including the source route, goal, model description, timestamp, dispatch status,
+  and exact action JSON. Payloads are expanded initially, selectable, and copyable.
+  A dispatched action is not proof of UI success; waits and screenshots produce
+  no input. Entries remain after each command and live only in memory.
 - `BehaviorSettingsView.swift` groups the three model routes, audio sensitivity,
   second-transcription-pass switch, and timing logs. Bindings go through persisted
   `AppModel.preferences`; an in-flight command keeps its selected route.

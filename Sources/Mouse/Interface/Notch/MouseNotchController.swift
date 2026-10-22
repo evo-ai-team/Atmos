@@ -131,6 +131,13 @@ private final class MouseNotchPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
+    // Private AppKit appearance hook: clear glass otherwise becomes frosted in
+    // this non-key panel. Report active appearance without changing real focus
+    // or input routing. If macOS stops consulting this selector, native glass
+    // falls back to its normal inactive appearance.
+    @objc(_hasActiveAppearance)
+    func hasActiveGlassAppearance() -> Bool { true }
+
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         // AppKit otherwise pushes the panel below the menu-bar/notch safe area.
         // Our geometry already anchors it to the physical top edge of the screen.

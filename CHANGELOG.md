@@ -8,6 +8,14 @@ Current source: `/Users/sameemsaleem/Product/Mouse`
 
 Current behavior and setup: [README.md](README.md)
 
+## 2026-10-22 — Keep notch glass active without taking focus
+
+- Added AppKit's private `_hasActiveAppearance` selector to the notch panel, returning `true` so native clear glass can retain its active appearance while another app has focus.
+- Kept the panel nonactivating, unable to become key or main, and click-through. The override changes appearance only; it does not activate Mouse or alter keyboard routing.
+- Documented the unsupported API dependency beside the implementation and in the notch and root guides. If AppKit stops consulting the selector, the native material returns to its ordinary inactive appearance.
+
+Validation: Release build and signature verification passed, and the canonical `Mouse.app` was updated. A standalone harness compiled the exact production notch sources and confirmed the action and thinking panels remained visible, non-key, non-main, nonactivating, and click-through while a separate app received typed text. Clear-glass refraction with both app and window inactive was verified in the preceding isolated native-glass experiment. The capture tool omitted the independent production panel, so its screenshots do not establish a visual comparison of the complete notch. No microphone capture or model requests were used.
+
 ## 2026-10-22 — Restore the native glass effect behind the notch
 
 - Removed the 42% material opacity and custom mask from `NSGlassEffectView`. The native material now renders at full strength instead of allowing sharp, untreated background detail to dominate.

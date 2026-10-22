@@ -6,6 +6,13 @@ of the primary screen. It passes mouse events through to the app underneath.
 - `MouseNotchController.swift` accepts `MouseOverlayState`, owns the panel, and
   sequences state transitions. Transition IDs prevent old animation completions
   from hiding or replacing a newer state.
+  The panel answers AppKit's private `_hasActiveAppearance` selector with `true`
+  so native clear glass keeps its refractive appearance while another app has
+  focus. This changes appearance only: the panel remains nonactivating, cannot
+  become key or main, and passes mouse events through. The undocumented hook
+  may change with macOS updates; if AppKit stops consulting it, the material
+  returns to its normal inactive appearance. Reduce Transparency still uses
+  the surface's opaque fallback.
 - `MouseNotchLayout.swift` calculates screen/camera geometry, text measurements,
   and each state's target size.
 - `MouseNotchSurface.swift` draws the glass body, concave shoulders, and text.

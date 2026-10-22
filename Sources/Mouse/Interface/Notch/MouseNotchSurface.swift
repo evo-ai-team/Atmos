@@ -36,6 +36,10 @@ final class MouseNotchSurface: NSView {
     private let content = MouseNotchContent()
     private let shoulders = CAShapeLayer()
     private let edgeOverlay = NSView()
+    private let edgeClip = CAShapeLayer()
+    private let rimShade = CAShapeLayer()
+    private let rimShadeFade = CAGradientLayer()
+    private let transitionShade = CAShapeLayer()
     private let edge = CAShapeLayer()
     private let edgeFade = CAGradientLayer()
     private var contourResize = MouseNotchContourResize()
@@ -61,18 +65,37 @@ final class MouseNotchSurface: NSView {
         edge.fillColor = nil
         edge.strokeColor = NSColor.white.cgColor
         edge.lineWidth = 0.85
-        // The bottom catches the light. Fade continuously as the outline rises
-        // up either side, leaving no highlight at the screen's upper corners.
+        // Finish the fade before the shoulders, leaving the upper sides fully
+        // unlit. Native glass has its own rim, so a thin dark stroke above the
+        // material attenuates that rim with the inverse of this same fade.
         edgeFade.startPoint = CGPoint(x: 0.5, y: 0)
         edgeFade.endPoint = CGPoint(x: 0.5, y: 1)
-        edgeFade.colors = [0.78, 0.52, 0.16, 0, 0].map {
+        let light: [CGFloat] = [0.78, 0.52, 0.16, 0, 0]
+        edgeFade.colors = light.map {
             NSColor.white.withAlphaComponent($0).cgColor
         }
-        edgeFade.locations = [0, 0.18, 0.55, 0.9, 1]
-        // An explicit view preserves this order when AppKit rebuilds the
-        // material's backing layers during window resizing.
+        edgeFade.locations = [0, 0.18, 0.48, 0.72, 1]
+        rimShadeFade.startPoint = edgeFade.startPoint
+        rimShadeFade.endPoint = edgeFade.endPoint
+        rimShadeFade.locations = edgeFade.locations
+        rimShadeFade.colors = light.map {
+            NSColor.black.withAlphaComponent(1 - $0 / light[0]).cgColor
+        }
+        for shade in [rimShade, transitionShade] {
+            shade.fillColor = nil
+            shade.strokeColor = NSColor.black.cgColor
+            shade.lineWidth = 1
+        }
+        rimShade.mask = rimShadeFade
+        edge.mask = edgeFade
+        edge.opacity = 0
+        // Clip the narrow cover to the body so it cannot draw a dark outline
+        // outside the glass. The material itself stays unmasked at full alpha.
         edgeOverlay.wantsLayer = true
-        edgeOverlay.layer?.mask = edgeFade
+        edgeClip.fillColor = NSColor.black.cgColor
+        edgeOverlay.layer?.mask = edgeClip
+        edgeOverlay.layer?.addSublayer(rimShade)
+        edgeOverlay.layer?.addSublayer(transitionShade)
         edgeOverlay.layer?.addSublayer(edge)
         addSubview(edgeOverlay, positioned: .above, relativeTo: glass)
         applyAccessibilityPreferences()
@@ -117,14 +140,41 @@ final class MouseNotchSurface: NSView {
         shoulders.frame = bounds
         shoulders.path = path
         shoulders.contentsScale = window?.backingScaleFactor ?? 2
-        // The native top edge sits offscreen, and the upper dark tint covers
-        // the side rim. Only the added bottom glint needs a separate fade.
-        edgeFade.frame = bounds
         edgeOverlay.frame = bounds
-        edge.frame = edgeOverlay.bounds
-        edge.path = edgePath(in: glass.frame, top: top - shoulder)
-        edge.contentsScale = shoulders.contentsScale
+        edgeClip.frame = bounds
+        edgeClip.path = CGPath(roundedRect: glass.frame, cornerWidth: radius,
+                               cornerHeight: radius, transform: nil)
+        edgeFade.frame = bounds
+        rimShadeFade.frame = bounds
+        let outline = edgePath(in: glass.frame, top: top - shoulder)
+        let nativeRim = edgePath(in: glass.frame, top: top)
+        for stroke in [rimShade, transitionShade, edge] {
+            stroke.frame = edgeOverlay.bounds
+            stroke.path = stroke === edge ? outline : nativeRim
+            stroke.contentsScale = shoulders.contentsScale
+        }
         CATransaction.commit()
+    }
+
+    func setHighlightVisible(_ visible: Bool, animated: Bool) {
+        let opacity: Float = visible ? 1 : 0
+        // Fade the drawn glint and cover Apple's rim together. On interruption,
+        // continue from what is actually on screen, rather than the old target.
+        for (stroke, target) in [(edge, opacity), (transitionShade, 1 - opacity)] {
+            let current = stroke.presentation()?.opacity ?? stroke.opacity
+            stroke.removeAnimation(forKey: "highlightVisibility")
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            stroke.opacity = target
+            CATransaction.commit()
+            guard animated, current != target else { continue }
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = current
+            fade.toValue = target
+            fade.duration = visible ? 0.14 : 0.10
+            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            stroke.add(fade, forKey: "highlightVisibility")
+        }
     }
 
     func resetCollapsedContour() {
@@ -167,7 +217,8 @@ final class MouseNotchSurface: NSView {
         let left = body.minX + inset
         let right = body.maxX - inset
         let bottom = inset
-        let corner = max(0, min(radius, (right - left) / 2, top - bottom))
+        // Keep the inset stroke concentric with the native glass corner.
+        let corner = max(0, min(radius - inset, (right - left) / 2, top - bottom))
         let path = CGMutablePath()
         path.move(to: CGPoint(x: left, y: max(bottom, top)))
         path.addLine(to: CGPoint(x: left, y: bottom + corner))

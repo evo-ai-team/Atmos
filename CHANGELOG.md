@@ -8,6 +8,14 @@ Current source: `/Users/sameemsaleem/Product/Mouse`
 
 Current behavior and setup: [README.md](README.md)
 
+## 2026-10-22 — Fade the notch rim at the top and during activation
+
+- Finished the outline's vertical fade before the upper corners. A one-point dark stroke, clipped inside the body, also attenuates the native glass rim without masking or reducing the opacity of the glass material.
+- Kept the light hidden while opening, then faded it in over 140 ms after expansion. Closing fades it out over 100 ms, ahead of the 300 ms collapse.
+- Continued interrupted fades from their visible opacity and guarded restoration with the existing transition ID. Reduce Motion applies the final values immediately.
+
+Validation: Release build and signature verification passed. A temporary native preview used the production surface over text to compare lit/unlit edges and a slowed close/open cycle; the upper corners stayed dark and the lower highlight returned after expansion. Interruption guards and reduced-motion paths were reviewed. The canonical app was updated, and temporary preview/build artifacts were removed after verification. No microphone or model calls were used.
+
 ## 2026-10-22 — Keep notch glass active without taking focus
 
 - Added AppKit's private `_hasActiveAppearance` selector to the notch panel, returning `true` so native clear glass can retain its active appearance while another app has focus.

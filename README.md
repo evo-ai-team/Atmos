@@ -4,6 +4,8 @@ Mouse is a native Mac voice interface for clicking, typing, scrolling, and navig
 
 The notch keeps native clear glass active through AppKit's private `_hasActiveAppearance` hook, without becoming the key window or activating Mouse. This undocumented appearance override may need revision after macOS updates; if the system stops consulting it, glass returns to its normal inactive appearance.
 
+The edge light fades completely before the upper corners, including the native glass rim. It stays hidden during opening, returns after the expansion settles, and fades away early during closing. Interrupted transitions preserve the current light level; Reduce Motion applies the final appearance immediately.
+
 **This is the canonical project README.** It covers current behavior, setup, architecture, data handling, verification, limitations, and proposed work. The proposals at the end are not implemented behavior. Source review date: **2026-10-22**. The descriptive history is in [CHANGELOG.md](CHANGELOG.md).
 
 The app to open is **`/Users/sameemsaleem/Product/Mouse.app`**. This source project is **`/Users/sameemsaleem/Product/Mouse`**. Build and diagnostic intermediates stay in a temporary directory unless an optional workspace `work/` directory or an output override is provided. Source, fixtures, and the runnable app are kept separately.

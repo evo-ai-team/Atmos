@@ -57,6 +57,7 @@ final class MouseNotchController {
                             cameraHeight: geometry.cameraHeight,
                             horizontalInset: 24, wraps: false, animate: false)
             guard panel.isVisible else { return }
+            surface.setHighlightVisible(false, animated: !reduceMotion)
             panel.alphaValue = 1
             surface.prepareResize(to: geometry.collapsedFrame.size, shoulderRadius: 0)
             NSAnimationContext.runAnimationGroup { context in
@@ -85,6 +86,11 @@ final class MouseNotchController {
         surface.applyAccessibilityPreferences()
         if nextState == .thinking { surface.startThinking(reduceMotion: reduceMotion) }
 
+        if previousState == .standby || !panel.isVisible {
+            // Keep the rim dark during expansion, including a reversal of a
+            // closing animation. The latest completed resize restores it.
+            surface.setHighlightVisible(false, animated: panel.isVisible && !reduceMotion)
+        }
         if !panel.isVisible {
             panel.alphaValue = 1
             panel.setFrame(geometry.collapsedFrame, display: false)
@@ -99,6 +105,11 @@ final class MouseNotchController {
             context.duration = duration
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.8, 0.25, 1)
             panel.animator().setFrame(targetFrame, display: true)
+        } completionHandler: { [weak self] in
+            Task { @MainActor in
+                guard let self, self.transitionID == currentTransition else { return }
+                self.surface.setHighlightVisible(true, animated: !reduceMotion)
+            }
         }
     }
 

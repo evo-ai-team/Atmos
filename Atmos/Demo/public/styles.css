@@ -1712,3 +1712,42 @@ h1 em {
   border: 1px solid var(--line);
   border-radius: 7px;
 }
+
+.guide-response {
+  padding: 18px 21px;
+  margin-bottom: 15px;
+  border: 1px solid #ccd8ca;
+  border-left: 4px solid #58785f;
+  border-radius: 7px;
+  background: #eef3ea;
+}
+
+.guide-response .card-heading {
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.guide-response .btn {
+  min-height: 33px;
+  padding: 5px 10px;
+}
+
+.guide-intro {
+  font-size: 1.07rem;
+  line-height: 1.5;
+}
+
+.guide-detail {
+  margin-top: 12px;
+}
+
+.guide-detail summary {
+  color: var(--blue);
+  font-size: .9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.guide-detail p {
+  margin-top: 10px;
+}

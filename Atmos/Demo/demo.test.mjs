@@ -72,7 +72,10 @@ test('browser memories are isolated and survive a restart, native handoffs are s
     const cookie = res.headers.get('set-cookie').split(';')[0];
     assert.equal((await res.json()).state.started,false);
     res = await post(app.url+'/api/demo',{action:'start',transcript:intro},{Cookie:cookie});
-    assert.equal((await res.json()).state.profile.discretion,true);
+    const built = await res.json();
+    assert.equal(built.state.profile.discretion,true);
+    assert.match(built.briefing[0],/9:30 AM/);
+    assert.ok(built.briefing.join(' ').includes('1:30 PM'));
     const recall = (scope,query,headers={}) => post(app.url+'/api/recall',{scope,query},headers).then(r=>r.json());
     assert.ok((await recall('private','boss',{Cookie:cookie})).results.some(f=>f.includes('sick')));
     assert.equal((await recall('private','boss')).results.length,0);

@@ -295,9 +295,26 @@ function trackerView(catalog,state,tracker,memoryStatus,evidence) {
    </details>
    ${state.started ? `<button type="button" class="text-button reset-button" data-reset>Reset demo</button>` : ""}</aside>`;
 }
+function guideBriefing(paragraphs) {
+  const [intro,...rest] = (paragraphs ?? []).filter(text => typeof text === "string" && text.trim());
+  if (!intro) return "";
+  const supportsSpeech = "speechSynthesis" in window && typeof window.SpeechSynthesisUtterance === "function";
+  return `<section class="guide-response" aria-labelledby="guide-response-heading">
+    <div class="card-heading">
+      <h3 id="guide-response-heading">Atmos’ briefing</h3>
+      ${supportsSpeech ? '<button class="btn secondary" type="button" id="read-guide" aria-pressed="false">Read aloud</button>' : ""}
+    </div>
+    <p class="guide-intro">${esc(intro)}</p>
+    ${rest.length ? `<details class="guide-detail"><summary>Full briefing</summary>
+      ${rest.map(text => `<p>${esc(text)}</p>`).join("")}
+    </details>` : ""}
+    <span id="reading-status" role="status" class="sr-only"></span>
+  </section>`;
+}
 export function dashboard(data,expanded) {
   const {catalog,state,tracker}=data;
   return `<div class="workspace"><div class="plan-column"><section id="day-plan" aria-labelledby="plan-heading"><div class="heading-row"><h2 id="plan-heading">Your itinerary</h2>${catalog.date ? `<span class="context-date">${icon("calendar")}${esc(prettyDate(catalog.date))}</span>` : ""}<a class="text-button tracker-link" href="#tracker">Trip tracker</a></div>
+  ${state.started ? guideBriefing(data.briefing) : ""}
   ${eventCard(catalog.event)}${transitCard(catalog,state,expanded)}
   ${["breakfast","lunch","dinner"].map(slot=>mealCard(slot,catalog[slot],state)).join("")}
   </section>${people(catalog,state)}

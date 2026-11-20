@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, extname, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { catalog, catalogRevision, InputError, newState, trackerFor, updateState, searchLocalMemory, guideForVisit } from './scenario.mjs';
+import { catalog, catalogRevision, InputError, newState, trackerFor, updateState, searchLocalMemory, guideForVisit, itineraryBriefing } from './scenario.mjs';
 import { createMemoryWorker } from './memory.mjs';
 import { createObserver } from './observer.mjs';
 
@@ -113,7 +113,8 @@ export function createDemo({filename=':memory:',env={}} = {}) {
         }
         const evidence = observer.snapshot();
         const guide = guideForVisit(sharedGuide,v.state,evidence);
-        return json(res,200,{catalog:guide,state:v.state,tracker:trackerFor(v.state),memoryStatus:memory.status(v.id),evidence});
+        const tracker = trackerFor(v.state);
+        return json(res,200,{catalog:guide,state:v.state,tracker,briefing:itineraryBriefing(v.state,tracker),memoryStatus:memory.status(v.id),evidence});
       }
       if (url.pathname === '/api/recall' && req.method === 'POST') {
         const input = await body(req);

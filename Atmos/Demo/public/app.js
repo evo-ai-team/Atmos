@@ -16,6 +16,54 @@ let noticeTimer;
 let recognition;
 let navObserver;
 let replayTimer;
+let activeReading;
+
+function stopReading() {
+  if (!activeReading) return;
+  activeReading = null;
+  window.speechSynthesis.cancel();
+  const button = $("#read-guide");
+  if (button) {
+    button.textContent = "Read aloud";
+    button.setAttribute("aria-pressed","false");
+    $("#reading-status").textContent = "Reading stopped.";
+  }
+}
+
+function readGuide(button) {
+  if (activeReading) {stopReading(); return;}
+  const paragraphs = data.briefing.filter(text => typeof text === "string" && text.trim());
+  const speech = window.speechSynthesis;
+  const voice = speech.getVoices().find(v => v.localService && /^en\b/i.test(v.lang));
+  const sentences = paragraphs.map(text => {
+    const utterance = new window.SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    if (voice) utterance.voice = voice;
+    return utterance;
+  });
+  if (!sentences.length) return;
+  activeReading = sentences;
+  button.textContent = "Stop reading";
+  button.setAttribute("aria-pressed","true");
+  const status = $("#reading-status");
+  status.textContent = "Reading Atmos’ briefing.";
+  function finished(message) {
+    if (activeReading !== sentences) return;
+    stopReading();
+    status.textContent = message;
+  }
+  sentences.at(-1).onend = () => finished("Finished reading the briefing.");
+  try {
+    for (const utterance of sentences) {
+      utterance.onerror = () => finished("Audio is unavailable. The full briefing is on this page.");
+      speech.speak(utterance);
+    }
+  } catch {
+    finished("Audio is unavailable. The full briefing is on this page.");
+  }
+}
+
+window.addEventListener("pagehide",stopReading);
 
 function notice(message) {
   const element = $("#notice");
@@ -29,6 +77,7 @@ function show(dialog) {
 }
 function showBrief(queued) {
   if (!data) return;
+  stopReading();
   queuedChoice = queued;
   transcript.value = data.state.transcript || data.catalog.intro?.transcript || data.catalog.intro || "";
   $("#start-button").textContent = data.state.started ? "Update my day" : "Build my day";
@@ -54,6 +103,7 @@ function openedDetails() {
   return new Set([...content.querySelectorAll("details[open]")].map(el=>el.querySelector("summary")?.textContent));
 }
 function render(newData, preserve = true) {
+  stopReading();
   clearTimeout(replayTimer);
   const prior = preserve ? openedDetails() : new Set();
   data = newData;
@@ -290,6 +340,7 @@ document.addEventListener("click",event=>{
   const button=event.target.closest("button");
   if(!button) return;
   if(button.id==="retry") {load();return;}
+  if(button.id==="read-guide") {readGuide(button);return;}
   if(button.hasAttribute("data-commute")) {replayCommute(button);return;}
   if(button.dataset.close) {
     if(button.dataset.close==="alert-dialog") act({action:"dismiss"});

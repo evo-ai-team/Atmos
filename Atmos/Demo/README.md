@@ -8,7 +8,7 @@ node Atmos/Demo/server.mjs
 
 ## Replay the trip
 
-1. Open **Start trip briefing**. Read the prefilled Richmond/Singapore request, type an edit, or dictate on a browser that supports speech recognition. Select **Build my day**. The demo understands the SF hackathon scenario and extracts supported trip details, budget and step goals. Open **Preferences in memory** to inspect the result.
+1. Open **Start trip briefing**. Read the prefilled Richmond/Singapore request, type an edit, or dictate on a browser that supports speech recognition. Select **Build my day**. Atmos replies with the event, meals, travel and totals for your selections. Use **Read aloud** on supported browsers. Open **Preferences in memory** to inspect the trip details, budget and step goals extracted from the briefing.
 2. Select a transport icon and a breakfast. Replay the simulated trip from the Richmond pickup. Google Maps links open the selected legs. The tracker adjusts departure times, walking and fares from the chosen stops.
 3. Compare the host’s lunch with the nearby alternatives. Each stop includes its evidence, ingredient caveats and available information about queues. Select dinner and prepare a reservation or invitation draft.
 4. Confirm nightlife to reveal the fictional team post. You can also use **Show interruption**. The demo matches the transcribed restaurant and street signs in the generated photo to a fictional venue. Accept the alternative to change dinner and update the evening route. Dinner-specific drafts clear when their venue changes.

@@ -204,3 +204,20 @@ export function trackerFor(s) {
   const spent = Math.round((s.expenses ?? []).reduce((sum,e) => sum+e.amount,0)*100)/100;
   return {lines,cost,spent,steps,calories:Math.round(steps*0.04)};
 }
+
+export function itineraryBriefing(state, tracker) {
+  if (!state.started) return [];
+  const morning = selected(state,'breakfast');
+  const noon = selected(state,'lunch');
+  const evening = selected(state,'dinner');
+  const night = selected(state,'nightlife');
+  const transit = selected(state,'transit');
+  const opening = state.profile.trip.includes('First visit') ? 'Welcome to San Francisco. ' : '';
+  return [
+    opening+'Your Personal Agents Hackathon opens at 9:30 AM on the second floor of 525 Market Street. Use the courtyard entrance and bring your physical photo ID.',
+    `For your 8 AM coffee stop, leave the Richmond pickup around ${tracker.lines[0].time} by ${transit.id === 'muni' ? 'Muni' : transit.title}. I’ve penciled in ${morning.title}. ${morning.diet}`,
+    `The organizer provides lunch at 1:30 PM and hasn’t published dietary accommodations. ${noon.id === 'lunch-host' ? 'You selected the hosted meal. Ask the caterer before eating.' : 'Your backup is '+noon.title+'. '+noon.diet}`,
+    `The hackathon ends at 7:30 PM. Your dinner pick is ${evening.title}. ${evening.reservable ? 'You can draft a reservation and invite Gio or Andrew after confirming dinner.' : 'Check availability before leaving the Loft.'} After dinner, your plan takes you to ${night.title}.`,
+    `Friday’s selected stops and travel come to about $${tracker.cost.toFixed(2)} against your $${state.profile.budget} budget. The walking legs add up to about ${tracker.steps.toLocaleString('en-US')} steps toward your ${state.profile.walkingGoal.toLocaleString('en-US')}-step goal.`,
+  ];
+}

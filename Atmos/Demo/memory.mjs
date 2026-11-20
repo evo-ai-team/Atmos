@@ -40,6 +40,10 @@ function visitorSnapshot(state, catalog) {
   if (Number.isFinite(preferences.budget)) lines.push(`Trip budget: USD ${preferences.budget}.`);
   if (Number.isFinite(preferences.walkingGoal)) lines.push(`Walking goal: ${preferences.walkingGoal} steps.`);
   for (const slot of choiceSlots) {
+    if (state.skippedSlots?.includes(slot)) {
+      lines.push(`${slot}: skipped for this visit.`);
+      continue;
+    }
     const item = catalog?.[slot]?.find(entry => entry.id === state.choices?.[slot]);
     if (item) lines.push(`${slot}: ${item.title}.`);
   }

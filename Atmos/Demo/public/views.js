@@ -1,4 +1,16 @@
+import { menuPhotos } from './menu-photos.js';
+import { transportArt } from './transport-art.js';
+import { routeMap } from './route-map.js';
+
 const iconPaths = {
+  locate:'<path d="m21 3-6.8 18-3.1-8.1L3 9.8 21 3Z"/>',
+  chevron:'<path d="m9 5 7 7-7 7"/>',
+  close:'<path d="m6 6 12 12M18 6 6 18"/>',
+  route:'<circle cx="5" cy="18" r="2"/><circle cx="19" cy="6" r="2"/><path d="M7 18h5a4 4 0 0 0 0-8H9a2 2 0 0 1 0-4h8"/>',
+  mic:'<rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3m-4 0h8"/>',
+  people:'<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 5"/>',
+  layers:'<path d="m12 3 10 5-10 5L2 8l10-5Zm-9 10 9 5 9-5m-18 5 9 5 9-5"/>',
+  energy:'<path d="M14 2c1 5-2 6-1 10 2-1 3-3 3-5 4 3 6 8 3 12a8 8 0 0 1-14-3c-1-5 3-8 5-10 0 2 0 4 1 5 2-3 1-6 3-9Z"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 10h18"/>',
   event: '<path d="M4 21h16M6 21V6l8-3v18m0-13h4v13M9 9v2m0 3v2m7-5v2"/>',
   transit: '<rect x="5" y="3" width="14" height="15" rx="4"/><path d="M5 10h14m-11 4h.1m7.9 0h.1M8 18l-2 3m10-3 2 3"/>',
@@ -60,7 +72,7 @@ function sources(item) {
   if (!valid.length) return "";
   return `<div class="source-links"><span class="sourcelabel">Sources</span>${valid.map(s=>link(s.url, esc(s.label || new URL(s.url).hostname) + icon("external"))).join("")}</div>`;
 }
-export function credit(value) {
+function credit(value) {
   if (!value) return "";
   if (typeof value === "string") return esc(value);
   return link(value.url, esc(value.label || value.name || "Photo credit"));
@@ -92,120 +104,6 @@ function stats(item) {
 function info(item, withTitle = true) {
   if (!item) return "";
   return `${withTitle ? `<h4 class="venue-title">${esc(item.title)}</h4>` : ""}${mapAddress(item)}${item.notes ? `<p class="option-note">${esc(readable(item.notes))}</p>` : ""}${stats(item)}${detailList(item)}${sources(item)}`;
-}
-function cardHead(kind, label, right = "") {
-  const color = ["event","transit","nightlife"].includes(kind) ? "blue" : kind === "lunch" ? "green" : "";
-  return `<div class="card-heading"><div class="head-left"><span class="tile-icon ${color}">${icon(kind)}</span><h3>${esc(label)}</h3></div>${right}</div>`;
-}
-function eventCard(event) {
-  if (!event) return "";
-  const image = photo(event);
-  const eventTime = event.time || [event.starts,event.ends].filter(Boolean).join(" – ");
-  return `<article class="guide-card"><div class="card-inner">${cardHead("event","Your event",time(eventTime))}<div class="${image ? "event-grid" : ""}"><div>${info(event)}</div>${image}</div></div></article>`;
-}
-function transitIcon(option) {
-  const name = (option.title+" "+option.id).toLowerCase();
-  return /walk|foot/.test(name) ? "walk" : /car|taxi|uber|lyft|ride|waymo|tesla/.test(name) ? "car" : "transit";
-}
-function chooseButton(slot, option, label, classes="text-button") {
-  return `<button class="${classes}" type="button" data-action="choose" data-slot="${esc(slot)}" data-id="${esc(option.id)}">${esc(label)}</button>`;
-}
-function transitCard(catalog,state,expanded) {
-  const options = catalog.transit;
-  if (!options?.length) return "";
-  const chosen=options.find(o=>o.id===state.choices?.transit);
-  const collapsed=chosen && state.confirmedSlots?.includes("transit") && !expanded;
-  const origin = `<p class="origin"><strong>Starting point</strong> · ${esc(catalog.origin)}<br>${link((chosen || options[0]).url,"Map from the public pickup","address")}</p>`;
-  const modes = options.map(opt=>`
-    <div class="mode-option">
-      <button class="mode ${chosen?.id === opt.id ? "selected" : ""}" type="button" aria-pressed="${chosen?.id === opt.id}" data-action="choose" data-slot="transit" data-id="${esc(opt.id)}">
-        ${icon(transitIcon(opt))}<span>${esc(opt.title)}</span><small>${esc([money(opt.price),opt.minutes != null ? opt.minutes+" min" : ""].filter(Boolean).join(" · "))}</small>
-      </button>
-      ${sources({sources:opt.sources?.slice(0,1)})}
-    </div>`).join("");
-  const compare = `<div class="choice-list" aria-label="Choose transportation">${modes}</div>
-    <div class="transit-details">${options.map(opt=>`<details class="compared" ${opt.id === chosen?.id ? "open" : ""}><summary>${esc(opt.title)} details</summary>${info(opt,false)}</details>`).join("")}</div>`;
-  const selected = chosen ? `<div class="choice-top"><h4 class="venue-title chosen-title">${icon("check")}${esc(chosen.title)}</h4><button class="text-button" data-toggle-transit type="button">Change mode</button></div>${info(chosen,false)}` : "";
-  return `<article class="guide-card" id="transit"><div class="card-inner">
-    ${cardHead("transit","Getting there",chosen ? time(chosen.time) : "")}${origin}${collapsed ? selected : compare}
-    <div class="commute"><button type="button" class="btn secondary" data-commute>${icon("pin")}Replay commute</button><div id="commute-replay" role="status" aria-live="polite"></div></div>
-  </div></article>`;
-}
-const mealLabels={breakfast:"Breakfast",lunch:"Lunch",dinner:"Dinner",nightlife:"Nightlife"};
-function mealCard(slot, options, state) {
-  if (!options?.length) return "";
-  const current = options.find(o=>o.id === state.choices?.[slot]) || options[0];
-  const image = photo(current);
-  const selected = state.choices?.[slot] === current.id && state.confirmedSlots?.includes(slot);
-  const draft = state.reservation;
-  const canReserve=slot === "dinner" && current.reservable === true && selected;
-  return `<article class="guide-card" id="slot-${slot}"><div class="card-inner">${cardHead(slot,mealLabels[slot],time(current.time))}
-   <div class="select-wrap"><label class="sr-only" for="select-${slot}">Choose ${mealLabels[slot].toLowerCase()}</label><select id="select-${slot}" data-choose-slot="${slot}">${options.map(opt=>`<option value="${esc(opt.id)}" ${opt.id === current.id ? "selected" : ""} ${opt.available===false ? "disabled" : ""}>${esc(opt.title)}${opt.price != null ? " · "+esc(money(opt.price)) : ""}${opt.available===false ? " · unavailable" : ""}</option>`).join("")}</select></div>
-   <div class="${image ? "meal-grid" : ""}"><div>${info(current,false)}</div>${image}</div>
-   ${!selected ? `<div class="actions">${chooseButton(slot,current,"Confirm "+mealLabels[slot].toLowerCase(),"btn secondary")}</div>` : '<p class="small-state">Confirmed in your plan</p>'}
-   ${canReserve ? `<div class="actions"><button class="btn secondary" data-action="reserve" type="button">${icon("calendar")}${draft ? "Review reservation draft" : "Draft a reservation"}</button></div>` : ""}
-   ${options.length>1 ? `<details class="compared"><summary>Compare alternatives (${options.length-1})</summary>${options.filter(opt=>opt.id!==current.id).map(opt=>`<div class="alternative">${info(opt)}<div class="actions">${opt.available===false ? "Unavailable" : chooseButton(slot,opt,"Choose "+opt.title)}</div></div>`).join("")}</details>` : ""}
-   </div></article>`;
-}
-function contactIsInvited(state,id) {
-  return (state.invitations ?? []).some(value=>value===id || value.id===id || value.contactId===id);
-}
-function socialPost(contact, state) {
-  const name = esc(contact.name);
-  const initials = esc(contact.name.split(" ").map(word => word[0]).slice(0, 2).join(""));
-  const isStory = /instagram/i.test(contact.platform);
-  const actions = `<div class="actions">
-    <button class="btn secondary" type="button" data-action="invite" data-id="${esc(contact.id)}">
-      ${icon("message")}${contactIsInvited(state,contact.id) ? "Review invite draft" : "Draft an invite"}
-    </button>
-  </div>`;
-  const byline = `<div class="post-byline">
-    <span class="post-avatar" aria-hidden="true">${initials}</span>
-    <div><h3>${name}</h3><span class="post-platform">${esc(contact.platform)} · fictional</span></div>
-  </div>`;
-  const place = contact.place
-    ? `<span class="post-place">${icon("pin")}${esc(contact.place)}</span>`
-    : "";
-  if (isStory) {
-    return `<article class="social story-post">
-      <div class="story-picture">
-        ${photo(contact,"social-media")}
-        <div class="story-byline">${byline}</div>
-        ${place}
-      </div>
-      <div class="card-inner"><p class="option-note">${esc(contact.caption)}</p>${actions}</div>
-    </article>`;
-  }
-  return `<article class="social x-post">
-    <div class="card-inner">
-      <div class="post-heading">${byline}<span class="platform-symbol" aria-hidden="true">𝕏</span></div>
-      <p class="option-note">${esc(contact.caption)}</p>
-      ${place}${photo(contact,"social-media")}${actions}
-    </div>
-  </article>`;
-}
-function people(catalog,state) {
-  const interruptionStatus = {
-    rerouted: "The alternative route is in your plan.",
-    dismissed: "You kept your original route."
-  }[state.alert] || "See how a new post can change the evening.";
-  return `<section class="group" id="people" aria-labelledby="people-heading">
-    <h2 class="group-title" id="people-heading">People nearby</h2>
-    <div class="social-grid">${(catalog.contacts || []).map(c => socialPost(c,state)).join("")}</div>
-    ${catalog.alert ? `<div class="interrupt">
-      <div><strong>Social interruption</strong><p>${interruptionStatus}</p></div>
-      <button data-action="alert" type="button" class="btn secondary">
-        ${state.alert==="idle" ? "Show interruption" : "Review interruption"}
-      </button>
-    </div>` : ""}
-  </section>`;
-}
-function prettyDate(value,compact=false) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  return new Intl.DateTimeFormat("en-US",{weekday:compact ? "short" : "long",month:"short",day:"numeric",timeZone:"UTC"}).format(new Date(value+"T12:00:00Z"));
-}
-function weekend(items) {
-  return `<section class="group" id="weekend" aria-labelledby="weekend-heading"><h2 class="group-title" id="weekend-heading">This weekend</h2><div class="weekend-grid">${(items || []).map(item=>`<article class="weekend"><div class="card-inner">${time([prettyDate(item.date,true),item.time].filter(Boolean).join(" · "))}<h3>${esc(item.title)}</h3>${info(item,false)}</div></article>`).join("")}</div></section>`;
 }
 const checkDateFormat = new Intl.DateTimeFormat("en-US", {
   month:"short", day:"numeric", year:"numeric", hour:"numeric", minute:"2-digit",
@@ -255,32 +153,10 @@ function evidencePanel(evidence,catalog) {
     <ul>${rows}</ul>
   </details>`;
 }
-function trackerView(catalog,state,tracker,memoryStatus,evidence) {
-  const lines = tracker.lines ?? [];
-  const metrics = [
-    [money(tracker.cost ?? 0), "Est. spend", "of "+money(state.profile.budget)+" budget"],
-    [Number(tracker.steps ?? 0).toLocaleString("en-US"), "Steps", Number(state.profile.walkingGoal).toLocaleString("en-US")+" goal"],
-    [Number(tracker.calories ?? 0).toLocaleString("en-US"), "kcal", "estimated"]
-  ];
-  const timeline = lines.map(line => `<li><div class="timeline-line">
-    <time>${esc(line.time)}</time>${link(line.url,esc(line.title))}
-  </div></li>`).join("");
-  return `<aside class="sidebar" id="tracker" aria-label="Trip estimates">
-   <section class="tracker">
-     <div class="tracker-head">
-       <div class="title-with-icon">${icon("chart")}<h2>Trip tracker</h2></div>
-       <span class="tracker-state">${state.started ? "Planned" : "Preview"}</span>
-     </div>
-     <div class="metrics">${metrics.map(([value,label,goal])=>`<div class="metric">
-       <strong class="metric-value">${esc(value)}</strong><span class="metric-label">${label}</span>
-       <span class="metric-goal">${esc(goal)}</span>
-     </div>`).join("")}</div>
-     <div class="timeline-wrap">
-       <h3>Your schedule</h3>
-       ${lines.length ? `<ol class="timeline">${timeline}</ol>` : '<p class="subtle">Start your briefing to build your schedule.</p>'}
-     </div>
-     <p class="tracker-foot">Projected from your itinerary. Route and activity estimates change with your choices.</p>
-   </section>
+function toolsPanel(data) {
+  const {catalog,state,memoryStatus,evidence}=data;
+  const tracker = data.tracker;
+  return `<details class="trip-tools glass"><summary>${icon("layers")}Trip tools</summary><div class="tools-body">
    <details class="tips expenses"><summary>Spending log · ${esc(money(tracker.spent ?? 0))}</summary><p>Daily budget · ${esc(money(state.profile.budget))}</p>
    ${(state.expenses || []).length ? `<ul class="expense-list">${state.expenses.map(entry=>`<li><span>${esc(entry.label)}</span><strong>${esc(money(entry.amount))}</strong></li>`).join("")}</ul>` : ""}
    <form id="expense-form"><label>Expense<input name="label" maxlength="80" placeholder="e.g. Clipper fare" required></label><label>Amount (USD)<input name="amount" type="number" min="0.01" max="10000" step="0.01" placeholder="0.00" required></label><button class="btn secondary" type="submit">Log expense</button></form></details>
@@ -293,35 +169,232 @@ function trackerView(catalog,state,tracker,memoryStatus,evidence) {
        <button class="btn secondary" type="submit">Search</button>
      </form><p id="recall-status" role="status">${esc(memoryStatus)}</p><ul id="recall-results"></ul>
    </details>
-   ${state.started ? `<button type="button" class="text-button reset-button" data-reset>Reset demo</button>` : ""}</aside>`;
-}
-function guideBriefing(paragraphs) {
-  const [intro,...rest] = (paragraphs ?? []).filter(text => typeof text === "string" && text.trim());
-  if (!intro) return "";
-  const supportsSpeech = "speechSynthesis" in window && typeof window.SpeechSynthesisUtterance === "function";
-  return `<section class="guide-response" aria-labelledby="guide-response-heading">
-    <div class="card-heading">
-      <h3 id="guide-response-heading">Atmos’ briefing</h3>
-      ${supportsSpeech ? '<button class="btn secondary" type="button" id="read-guide" aria-pressed="false">Read aloud</button>' : ""}
-    </div>
-    <p class="guide-intro">${esc(intro)}</p>
-    ${rest.length ? `<details class="guide-detail"><summary>Full briefing</summary>
-      ${rest.map(text => `<p>${esc(text)}</p>`).join("")}
-    </details>` : ""}
-    <span id="reading-status" role="status" class="sr-only"></span>
-  </section>`;
-}
-export function dashboard(data,expanded) {
-  const {catalog,state,tracker}=data;
-  return `<div class="workspace"><div class="plan-column"><section id="day-plan" aria-labelledby="plan-heading"><div class="heading-row"><h2 id="plan-heading">Your itinerary</h2>${catalog.date ? `<span class="context-date">${icon("calendar")}${esc(prettyDate(catalog.date))}</span>` : ""}<a class="text-button tracker-link" href="#tracker">Trip tracker</a></div>
-  ${state.started ? guideBriefing(data.briefing) : ""}
-  ${eventCard(catalog.event)}${transitCard(catalog,state,expanded)}
-  ${["breakfast","lunch","dinner"].map(slot=>mealCard(slot,catalog[slot],state)).join("")}
-  </section>${people(catalog,state)}
-  <section class="group" aria-label="Nightlife options">${mealCard("nightlife",catalog.nightlife,state)}</section>
-  ${weekend(catalog.weekend)}</div>
-  ${trackerView(catalog,state,tracker,data.memoryStatus,data.evidence)}</div>`;
+   <button type="button" class="text-button" data-action="alert">Show demo notification</button>
+   ${state.started ? `<button type="button" class="text-button reset-button" data-reset>Reset demo</button>` : ""}
+   </div></details>`;
 }
 export function alertView(alert) {
   return `<div class="dialog-heading"><span class="eyebrow">Fictional social update</span><button type="button" class="icon-button" data-close="alert-dialog" aria-label="Close interruption">×</button></div><h2 id="alert-title">${esc(alert.title || "A change of plans")}</h2>${photo(alert,"alert-photo")}${alert.place ? `<p class="address">${icon("pin")}${esc(alert.place)}</p>` : ""}<p class="option-note">${esc(alert.caption)}</p><p class="subtle">${esc(readable(alert.notes))}</p>${alert.alternative ? `<p class="option-note">Alternative · ${esc(readable(alert.alternative))}</p>` : ""}<div class="dialog-actions"><button type="button" class="btn secondary" data-action="dismiss">Keep my plan</button><button type="button" class="btn primary" data-action="reroute">Reroute my evening</button></div>`;
+}
+
+const slotNames = { transit:"Transportation", breakfast:"Breakfast", event:"Hackathon", lunch:"Lunch", dinner:"Dinner", nightlife:"Nightlife" };
+const clockFormat = new Intl.DateTimeFormat("en-US", { hour:"numeric", minute:"2-digit", timeZone:"America/Los_Angeles" });
+export function updateClock() {
+  const clock = document.getElementById("local-clock");
+  if (!clock) return;
+  const now = new Date();
+  const parts = Object.fromEntries(clockFormat.formatToParts(now).map(p=>[p.type,p.value]));
+  clock.dateTime = now.toISOString();
+  clock.querySelector("b").textContent = parts.hour+":"+parts.minute;
+  clock.querySelector("small").textContent = parts.dayPeriod;
+}
+function displayTime(value) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value || "");
+  if (!match) return value || "";
+  const hour = Number(match[1]);
+  return (hour % 12 || 12)+":"+match[2]+(hour>=12 ? " PM" : " AM");
+}
+function activeOption(data,slot) {
+  const rows = data.catalog[slot];
+  return rows.find(o=>o.id === data.state.choices[slot]) || rows.find(o=>o.available !== false);
+}
+function tracking(data) {
+  return data.state.started ? data.tracker : data.previewTracker || data.tracker;
+}
+function venueName(o) { return o.title.split(" · ")[0]; }
+function roundButton(attributes, symbol, label, className="") {
+  return `<button type="button" ${attributes} class="round ${className}" title="${esc(label)}" aria-label="${esc(label)}">${icon(symbol)}</button>`;
+}
+function travelDock(data,expanded) {
+  const saved = data.state.choices.transit;
+  const collapsed = data.state.confirmedSlots.includes("transit") && !expanded;
+  const shown = collapsed ? data.catalog.transit.filter(t=>t.id===saved) : data.catalog.transit;
+  return `<section class="travel-dock glass" id="transit" aria-label="Transportation">
+    <div class="provider-row">${shown.map(o=>{
+      const art = transportArt[o.id];
+      const label = {muni:"Muni",waymo:"Waymo",tesla:"Tesla Robotaxi",taxi:"Taxi"}[o.id] || o.title;
+      return `<button class="provider" data-action="choose" data-slot="transit" data-id="${esc(o.id)}"
+        aria-label="${esc(label)}, estimated ${esc(money(o.price))}, ${o.minutes} minutes" aria-pressed="${saved===o.id}">
+        <span class="brand-box ${esc(o.id)}">${art ? `<img src="${esc(art.src)}" alt="">` : icon("car")}</span>
+        <span class="provider-type">${esc(label)}</span>
+        <span class="provider-meta">${esc(money(o.price))} · ${o.minutes} min</span>
+      </button>`;
+    }).join("")}
+    ${collapsed ? '<button class="change-transport" data-toggle-transit>Change ride</button>' : ""}
+    </div>
+    ${roundButton('data-detail="transit"','chevron','Ride details and directions','dock-detail')}
+  </section>`;
+}
+function locationMap(data) {
+  return `<section class="map-stage" aria-labelledby="location-title">
+    ${routeMap(data)}
+    <div class="map-inner">
+      <div class="location glass"><div class="location-context"><i class="gps-dot"></i>Current location <span>· Demo GPS</span></div>
+        <time id="local-clock"><b></b><small></small></time>
+        <h1 id="location-title">Richmond District</h1><p>San Francisco, CA</p>
+      </div>
+      <button type="button" id="brief-button" class="brief-trigger glass" aria-label="Trip briefing">${icon("mic")}<span>Trip briefing</span></button>
+      <div class="map-actions">
+        ${roundButton('data-detail="map"','locate','View route and simulated GPS','glass')}
+      </div>
+    </div>
+  </section>`;
+}
+function stopCard(data,slot) {
+  const meal = ["breakfast","lunch","dinner"].includes(slot);
+  const item = slot === "event" ? data.catalog.event : activeOption(data,slot);
+  if (!item) return "";
+  const skipped = data.state.skippedSlots?.includes(slot);
+  const at = tracking(data).lines.find(line=>line.title===item.title)?.time;
+  const label = slotNames[slot];
+  const when = displayTime(at || (slot==="event" ? item.starts : item.time));
+  const status = meal ? roundButton(
+    `data-action="${skipped ? "choose" : "skip"}" data-slot="${slot}" data-id="${esc(item.id)}"`,
+    skipped ? "close" : "check", skipped ? `Restore ${label.toLowerCase()} to route` : `Skip ${label.toLowerCase()} on route`,
+    skipped ? "excluded" : "included"
+  ) : roundButton(`data-detail="${slot}"`, "chevron", label+" details");
+  const photos = meal ? menuPhotos[item.id] || [] : [];
+  return `<article id="slot-${slot}" class="stop glass stop-${slot}${skipped ? " skipped" : ""}">
+    <div class="stop-head">
+      <span class="stop-pin pin-${slot}">${icon(slot)}</span>
+      <button type="button" class="stop-name" data-detail="${slot}" aria-label="${esc(label+' details and options: '+item.title)}">
+        <span class="stop-type">${label}<i></i><time>${esc(when)}</time>${skipped ? " · Skipped" : ""}</span>
+        <h2>${esc(slot==="event" ? "AWS Builder Loft" : venueName(item))}</h2>
+      </button>${status}
+    </div>
+    ${photos.length ? `<div class="menu-strip${photos.length>3 ? " scrollable" : ""}" aria-label="${label} menu photos">${photos.map((p,i)=>`
+      <button type="button" class="dish" data-menu-slot="${slot}" data-menu-index="${i}" aria-label="${esc(p.label)} · view menu photo">
+        <img src="${esc(p.src)}" alt="" loading="${slot==="breakfast" ? "eager" : "lazy"}"><span>${esc(p.label)}</span>
+      </button>`).join("")}</div>` : meal ? '<p class="menu-unknown">Menu photos unavailable</p>' : ""}
+  </article>`;
+}
+function nearby(data) {
+  return `<section class="people glass" id="people" aria-labelledby="nearby-title">
+    <div class="section-label"><span class="section-symbol">${icon("people")}</span><h2 id="nearby-title">People nearby</h2></div>
+    ${data.catalog.contacts.map(person=>`<button class="person" data-detail="person" data-person="${esc(person.id)}">
+      <span class="person-avatar"><img src="${esc(person.image)}" alt=""><i>${person.id==="gio" ? "◎" : "𝕏"}</i></span>
+      <span class="person-text"><strong>${esc(person.name)}</strong><small>${esc(person.place)}</small></span>
+      ${icon("chevron")}
+    </button>`).join("")}
+    <button class="group-invite" type="button" data-group-invite ${data.state.skippedSlots?.includes("dinner") ? "disabled" : ""}>
+      ${icon("message")}${data.state.sentDinnerTexts?.some(m=>m.key===data.dinnerTextDraft?.key) ? "Replay dinner invitation" : "Invite both to dinner"}
+    </button>
+    ${data.state.sentDinnerTexts?.length ? '<button type="button" class="sheet-link" data-show-messages>View messages</button>' : ""}
+  </section>`;
+}
+function groupAvatars() {
+  return '<span class="group-avatars" aria-hidden="true"><b>G</b><b>A</b></span>';
+}
+export function messageApproval(draft) {
+  return `<div class="approval-to">${groupAvatars()}<div><small>To</small><strong>${draft.recipients.map(esc).join(" &amp; ")}</strong></div></div>
+    <p class="preview-bubble">${esc(draft.body)}</p>
+    <p class="subtle">Simulated iMessage · 2 recipients</p>
+    <div class="dialog-actions">
+      <button class="btn secondary" data-close="detail-dialog">Cancel</button>
+      <button class="btn primary" data-approve-text data-key="${esc(draft.key)}">Approve to send</button>
+    </div><p id="approval-status" role="status"></p>`;
+}
+function conversation(state, options) {
+  if (!options.open || !state.sentDinnerTexts?.length) return "";
+  const history = state.sentDinnerTexts;
+  return `<section class="imessage glass" id="group-thread" tabindex="-1" aria-labelledby="thread-heading">
+    <div class="message-top"><span>iMessage · Demo</span>${roundButton("data-hide-messages","close","Hide conversation")}</div>
+    <div class="conversation-head">${groupAvatars()}<h2 id="thread-heading">Gio &amp; Andrew</h2></div>
+    <ol class="messages">${history.map(m=>{
+      const pending = options.sendingId === m.id;
+      const sentTime = clockFormat.format(new Date(m.sentAt));
+      return `<li${pending ? ' class="message-new"' : ''}><time datetime="${esc(m.sentAt)}">${esc(sentTime)}</time>
+        <div class="sent-bubble">${esc(m.body)}</div>
+        ${link(m.url,`${icon("pin")}<span><strong>${esc(m.venue.split(" · ")[0])} · ${esc(displayTime(m.time))}</strong><small>${esc(m.address)}</small></span>`,"shared-place")}
+        <span class="delivery" role="status">${pending ? "Sending…" : "Delivered"}</span>
+      </li>`;
+    }).join("")}</ol>
+  </section>`;
+}
+function trackerCard(data) {
+  const {profile} = data.state;
+  const track = tracking(data);
+  const summaries = [];
+  for (const slot of ["breakfast","event","lunch","dinner","nightlife"]) {
+    if (data.state.skippedSlots?.includes(slot)) continue;
+    const o = slot==="event" ? data.catalog.event : activeOption(data,slot);
+    if (!o) continue;
+    const found = track.lines.find(line => line.title===o.title);
+    summaries.push(`<li><i class="dot-${slot}"></i><span>${esc(slot==="event" ? "AWS Builder Loft" : venueName(o))}</span>
+      <time>${esc(displayTime(found?.time || (slot==="event" ? o.starts : o.time)))}</time></li>`);
+  }
+  return `<section class="tracker glass" id="tracker">
+    <div class="section-label"><span class="section-symbol">${icon("route")}</span><h2>Trip tracker</h2></div>
+    <div class="metrics">
+      <div><span>${icon("money")} Est. spend</span><strong>${esc(money(track.cost))}</strong><small>of ${esc(money(profile.budget))}</small></div>
+      <div><span>${icon("walk")} Steps</span><strong>${Number(track.steps).toLocaleString("en-US")}</strong><small>of ${Number(profile.walkingGoal).toLocaleString("en-US")}</small></div>
+      <div><span>${icon("energy")} Energy</span><strong>${track.calories}</strong><small>est. kcal</small></div>
+    </div>
+    <ol class="mini-route">${summaries.join("")}</ol>
+    <button class="sheet-link" data-detail="schedule">Full schedule ${icon("chevron")}</button>
+  </section>`;
+}
+export function dashboard(data,expanded,thread = {}) {
+  return `${locationMap(data)}
+    <div class="workspace">
+      <section class="route-column" id="day-plan" aria-label="Today's route">
+        ${travelDock(data,expanded)}
+        <div class="stops">${["breakfast","event","lunch","dinner","nightlife"].map(s=>stopCard(data,s)).join("")}</div>
+      </section>
+      <aside class="sidebar">${nearby(data)}${conversation(data.state,thread)}${trackerCard(data)}${toolsPanel(data)}</aside>
+    </div>`;
+}
+function picker(data,slot) {
+  const selected = activeOption(data,slot);
+  return `<label for="select-${slot}">Choose ${slotNames[slot].toLowerCase()}</label>
+    <select id="select-${slot}" data-choose-slot="${slot}">${data.catalog[slot].map(o=>`
+      <option value="${esc(o.id)}" ${o.id===selected.id ? "selected" : ""} ${o.available===false?"disabled":""}>
+      ${esc(o.title)} · ${esc(money(o.price))}</option>`).join("")}</select>`;
+}
+export function detailsFor(data,kind,id) {
+  const {catalog,state} = data;
+  if (kind==="transit" || kind==="map") {
+    const opt = activeOption(data,"transit");
+    const art = transportArt[opt.id];
+    return { title:kind==="map" ? "Current location" : "Your ride", body:`
+      <p>${esc(catalog.origin)}</p>${picker(data,"transit")}
+      ${info(opt)}${art?.source ? link(art.source,"Service icon source","photo-credit") : ""}
+      <button class="btn secondary" data-commute>${icon("route")}Replay commute</button>
+      <div id="commute-replay" role="status"></div>
+      <p class="photo-credit">Map data · ${link("https://www.openstreetmap.org/copyright","OpenStreetMap contributors")} · ${link("https://openfreemap.org/","OpenFreeMap")} · ${link("https://openmaptiles.org/","OpenMapTiles")} · ${link("https://data.sf.gov/d/9exe-acju","SFMTA routes")}</p>` };
+  }
+  if (kind==="person") {
+    const c = catalog.contacts.find(p=>p.id===id);
+    if (!c) return;
+    return {title:c.name,body:`<p class="subtle">${esc(c.platform)} · fictional post</p>
+      ${photo(c,"post-photo")}<p>${esc(c.caption)}</p><p class="address">${icon("pin")}${esc(c.place)}</p>
+      ${state.skippedSlots?.includes("dinner") ? "" : `<button class="btn primary" data-group-invite>Invite Gio &amp; Andrew</button>
+      <button class="btn secondary" type="button" data-action="invite" data-id="${esc(c.id)}">
+      ${state.invitations.includes(c.id)?"Review individual draft":"Draft individual invite"}</button>`}`};
+  }
+  if (kind==="schedule") {
+    const schedule = tracking(data).lines.map(l=>`<li><time>${esc(displayTime(l.time))}</time>${link(l.url,esc(l.title))}</li>`).join("");
+    return {title:"Full schedule",body:`<ol class="schedule">${schedule}</ol>`};
+  }
+  if (kind==="event") return {title:catalog.event.title,body:photo(catalog.event)+info(catalog.event,false)};
+  const item = activeOption(data,kind);
+  if (!item) return;
+  const canReserve = kind==="dinner" && !state.skippedSlots?.includes(kind) && item.reservable;
+  return {title:slotNames[kind],body:`${picker(data,kind)}${info(item)}
+      ${kind==="nightlife" && !state.confirmedSlots.includes(kind) ? `<button class="btn primary" data-action="choose" data-slot="nightlife" data-id="${esc(item.id)}">Confirm nightlife stop</button>` : ""}
+      ${canReserve ? '<button class="btn secondary" data-action="reserve">Draft reservation</button>' : ""}
+      ${kind==="dinner" && !state.skippedSlots?.includes(kind) ? '<button class="btn primary" data-group-invite>Invite Gio &amp; Andrew</button>' : ""}`};
+}
+export function menuPhotoFor(data,slot,index) {
+  const food = activeOption(data,slot);
+  const p = menuPhotos[food.id]?.[index];
+  if (!p) return;
+  return { title:p.label, body:`<img class="dish-full" src="${esc(p.src)}" alt="${esc(p.label)}">
+    <p>${esc(venueName(food))} · ${link(p.source,"Photo source")}</p>${detailList({diet:food.diet})}`};
+}
+export function briefingView(data) {
+  return data.state.started && data.briefing?.length ? `<details class="brief-response"><summary>Atmos’ itinerary</summary>
+    ${data.briefing.map(p=>`<p>${esc(p)}</p>`).join("")}
+    ${window.speechSynthesis && window.SpeechSynthesisUtterance ? '<button class="btn secondary" id="read-guide" type="button">Read aloud</button><p id="reading-status" role="status"></p>' : ""}
+  </details>` : "";
 }

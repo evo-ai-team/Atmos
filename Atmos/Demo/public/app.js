@@ -1,4 +1,4 @@
-import { alertView, credit, dashboard, esc, profileView, safeUrl } from "./views.js";
+import { alertView, briefingView, dashboard, detailsFor, esc, menuPhotoFor, messageApproval, profileView, updateClock } from "./views.js";
 
 const $ = selector => document.querySelector(selector);
 const content = $("#dashboard");
@@ -10,13 +10,15 @@ const voiceButton = $("#voice-button");
 const voiceStatus = $("#voice-status");
 let data;
 let sending = false;
-let transitExpanded = false;
-let queuedChoice;
+let transitExpanded = true;
 let noticeTimer;
 let recognition;
-let navObserver;
+const detailDialog = $("#detail-dialog");
 let replayTimer;
 let activeReading;
+let threadOpen = false;
+let sendingMessageId;
+let deliveryTimer;
 
 function stopReading() {
   if (!activeReading) return;
@@ -75,29 +77,20 @@ function notice(message) {
 function show(dialog) {
   if (!dialog.open) dialog.showModal();
 }
-function showBrief(queued) {
+function showBrief() {
   if (!data) return;
   stopReading();
-  queuedChoice = queued;
   transcript.value = data.state.transcript || data.catalog.intro?.transcript || data.catalog.intro || "";
   $("#start-button").textContent = data.state.started ? "Update my day" : "Build my day";
-  voiceStatus.textContent = queued ? "Start your briefing to make choices for this trip." : "";
-  $("#memory-profile").innerHTML = profileView(data.state.profile);
+  voiceStatus.textContent = "";
+  $("#memory-profile").innerHTML = briefingView(data) + profileView(data.state.profile);
   show(brief);
 }
-function watchNavigation() {
-  navObserver?.disconnect();
-  if (!("IntersectionObserver" in window)) return;
-  navObserver=new IntersectionObserver(entries=>{
-    for (const entry of entries.filter(e=>e.isIntersecting)) {
-      document.querySelectorAll("nav a").forEach(a=>{
-        a.classList.toggle("nav-active",a.hash==="#"+entry.target.id);
-        if (a.hash==="#"+entry.target.id) a.setAttribute("aria-current","location");
-        else a.removeAttribute("aria-current");
-      });
-    }
-  },{rootMargin:"0px 0px -70% 0px"});
-  for(const id of ["day-plan","people","weekend"]) {const target=document.getElementById(id); if(target) navObserver.observe(target);}
+function openDetail(view) {
+  if (!view) return;
+  $("#detail-title").textContent = view.title;
+  $("#detail-content").innerHTML = view.body;
+  show(detailDialog);
 }
 function openedDetails() {
   return new Set([...content.querySelectorAll("details[open]")].map(el=>el.querySelector("summary")?.textContent));
@@ -107,21 +100,17 @@ function render(newData, preserve = true) {
   clearTimeout(replayTimer);
   const prior = preserve ? openedDetails() : new Set();
   data = newData;
-  content.innerHTML = dashboard(data,transitExpanded);
+  content.innerHTML = dashboard(data,transitExpanded,{open:threadOpen,sendingId:sendingMessageId});
   content.querySelectorAll("details").forEach(el=>{
     if(prior.has(el.querySelector("summary")?.textContent)) el.open=true;
   });
   content.setAttribute("aria-busy","false");
-  const hero = safeUrl(data.catalog.heroImage,true);
-  if (hero) { $("#hero-photo").src = hero; $("#hero-photo-link").href = hero; }
-  $("#hero-credit").innerHTML = credit(data.catalog.heroCredit);
-  $("#brief-button span").textContent = data.state.started ? "Review trip briefing" : "Start trip briefing";
-  $("#brief-button").disabled = false;
+  updateClock();
   if (data.state.alert === "shown" && !brief.open && !draftDialog.open) {
     $("#alert-content").innerHTML=alertView(data.catalog.alert);
     show(interruption);
   } else if(interruption.open && data.state.alert!=="shown") interruption.close();
-  watchNavigation();
+
 }
 async function request(payload) {
   const options=payload ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...payload,revision:data.state.revision})} : {};
@@ -161,17 +150,7 @@ function showDraft(action,id) {
 }
 async function act(payload) {
   if (sending || !data) return;
-  if (!data.state.started && !["start","reset"].includes(payload.action)) {
-    showBrief(payload);
-    return;
-  }
-  if (["invite","reserve"].includes(payload.action) && !data.state.confirmedSlots.includes("dinner")) {
-    notice("Confirm a dinner choice to prepare your draft.");
-    $("#slot-dinner")?.scrollIntoView();
-    $("#select-dinner")?.focus({preventScroll:true});
-    return;
-  }
-  if(payload.action==="alert" && !data.state.profile.discretion) {
+  if(payload.action==="alert" && data.state.started && !data.state.profile.discretion) {
     notice("The workplace interruption is available with the sample trip briefing.");
     return;
   }
@@ -179,17 +158,38 @@ async function act(payload) {
   content.setAttribute("aria-busy","true");
   $("#start-button").disabled=true;
   document.body.classList.add("pending");
-  let next;
   try {
+    if (!data.state.started && !["start","reset"].includes(payload.action)) {
+      data = await request({action:"start",transcript:data.catalog.intro});
+    }
+    if (["invite","reserve"].includes(payload.action) && !data.state.confirmedSlots.includes("dinner")) {
+      if (data.state.skippedSlots?.includes("dinner")) throw new Error("Restore dinner before preparing a draft.");
+      data = await request({action:"choose",slot:"dinner",id:data.state.choices.dinner});
+    }
     const result=await request(payload);
+    if (detailDialog.open) detailDialog.close();
+    if (payload.action === "sendDinnerText") {
+      threadOpen = true;
+      const message = result.state.sentDinnerTexts.find(m=>m.key===payload.key);
+      if (message) {
+        clearTimeout(deliveryTimer);
+        sendingMessageId = message.id;
+        deliveryTimer = setTimeout(()=>{
+          sendingMessageId = undefined;
+          const status = $("#group-thread .message-new .delivery");
+          if (status) status.textContent = "Delivered";
+          status?.closest("li")?.classList.remove("message-new");
+        },1150);
+      }
+    }
     if(payload.action==="start") {
-      next=queuedChoice; queuedChoice=null;
       if(brief.open) brief.close();
     }
     if(payload.action==="choose" && payload.slot === "transit") transitExpanded=false;
-    if(payload.action==="reset") {transitExpanded=false; queuedChoice=null;}
+    if(payload.action==="reset") {transitExpanded=false; threadOpen=false; clearTimeout(deliveryTimer); sendingMessageId=undefined;}
     render(result,payload.action!=="reset");
     if(["invite","reserve"].includes(payload.action)) showDraft(payload.action,payload.id);
+    if(payload.action==="sendDinnerText") focusConversation();
     if(payload.action==="reroute") {
       $("#slot-dinner")?.scrollIntoView();
       notice("Your dinner and evening route have been updated. Review the new dinner choice before preparing new drafts.");
@@ -197,16 +197,23 @@ async function act(payload) {
     if(payload.action==="dismiss") notice("Kept your original evening plan.");
     if(payload.action==="expense") notice("Expense added to your spending log.");
     if(payload.action==="reset") {window.scrollTo({top:0,behavior:"smooth"}); notice("Trip demo reset.");}
-    if(payload.action==="choose" && data.state.alert!=="shown") notice("Trip choice saved. Your tracker is up to date.");
-    if(payload.action==="start" && !next) {
-      $("#day-plan")?.scrollIntoView();
+    if(payload.action==="skip") notice("Stop removed from your route.");
+    if(payload.action==="choose" && data.state.alert!=="shown") notice("Route updated.");
+    if(payload.action==="start") {
       notice("Your briefing is saved. Choose how you’ll get there.");
     }
   } catch(error) {
     if(error.status===409) {
       try {render(await request());} catch { /* Keep the current plan while offline. */ }
     }
-    if(brief.open) voiceStatus.textContent=error.message;
+    if (payload.action !== "start") render(data);
+    if (detailDialog.open && payload.action==="sendDinnerText") {
+      if (data.dinnerTextDraft) {
+        openDetail({title:"Dinner invitation",body:messageApproval(data.dinnerTextDraft)});
+        $("#approval-status").textContent = error.message;
+      } else { detailDialog.close(); notice(error.message); }
+    }
+    else if(brief.open) voiceStatus.textContent=error.message;
     else if(interruption.open) $("#alert-feedback").textContent=error.message;
     else notice(error.message);
     if(payload.action==="choose" && payload.slot!=="transit") {
@@ -219,7 +226,7 @@ async function act(payload) {
     content.setAttribute("aria-busy","false");
     $("#start-button").disabled=false;
   }
-  if(next) await act(next);
+
 }
 function beginVoice() {
   if(recognition) {recognition.stop(); return;}
@@ -287,7 +294,7 @@ function replayCommute(button) {
   const breakfast=catalog.breakfast.find(option=>option.id===state.choices.breakfast) || catalog.breakfast[0];
   const stops=[
     {title:"Clement St & 14th Ave · public pickup",coords:catalog.originCoords},
-    breakfast,
+    ...(!state.skippedSlots?.includes("breakfast") ? [breakfast] : []),
     {title:"AWS Builder Loft · 525 Market St",coords:catalog.event.coords}
   ];
   const box=$("#commute-replay");
@@ -310,15 +317,26 @@ function replayCommute(button) {
       <polyline points="${line}" fill="none" stroke="#71879b" stroke-width="2" stroke-dasharray="4 3"/>
       ${points.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#fff" stroke="#344b6b" stroke-width="2"/>`).join("")}
       <circle cx="${mx}" cy="${my}" r="10" fill="#ae4b2e" opacity=".2"/><circle cx="${mx}" cy="${my}" r="5" fill="#aa4029"/>
-      </svg><p><strong>Simulated GPS · ${index+1} of 3</strong><br>${esc(stop.title)}<br><span class="subtle">${stop.coords.map(n=>n.toFixed(5)).join(", ")}</span></p>`;
+      </svg><p><strong>Simulated GPS · ${index+1} of ${stops.length}</strong><br>${esc(stop.title)}<br><span class="subtle">${stop.coords.map(n=>n.toFixed(5)).join(", ")}</span></p>`;
     if(index < stops.length-1) replayTimer = setTimeout(()=>showStop(index+1),1800);
     else button.disabled=false;
   }
   showStop(0);
 }
-$("#brief-button").addEventListener("click",()=>showBrief());
+function focusConversation() {
+  const panel = $("#group-thread");
+  if (!panel) return;
+  panel.focus({preventScroll:true});
+  panel.scrollIntoView({block:"nearest"});
+  const messages = panel.querySelector(".messages");
+  const outgoing = messages.querySelector(".message-new");
+  if (outgoing) outgoing.scrollIntoView({block:"nearest"});
+  else messages.scrollTop = messages.scrollHeight;
+}
+setInterval(updateClock, 15000);
+detailDialog.addEventListener("close",()=>clearTimeout(replayTimer));
 voiceButton.addEventListener("click",beginVoice);
-brief.addEventListener("close",()=>{recognition?.abort(); queuedChoice=null;});
+brief.addEventListener("close",()=>{recognition?.abort(); stopReading();});
 $("#brief-form").addEventListener("submit",event=>{
   event.preventDefault();
   recognition?.stop();
@@ -339,6 +357,32 @@ document.addEventListener("submit",event=>{
 document.addEventListener("click",event=>{
   const button=event.target.closest("button");
   if(!button) return;
+  if(button.id==="brief-button") {showBrief();return;}
+  if(button.hasAttribute("data-group-invite")) {
+    const draft = data.dinnerTextDraft;
+    if (!draft) {notice("Include dinner to invite Gio and Andrew.");return;}
+    openDetail({title:"Dinner invitation",body:messageApproval(draft)});
+    return;
+  }
+  if(button.hasAttribute("data-approve-text")) {
+    act({action:"sendDinnerText",key:button.dataset.key});
+    return;
+  }
+  if(button.hasAttribute("data-show-messages") || button.hasAttribute("data-hide-messages")) {
+    threadOpen = button.hasAttribute("data-show-messages");
+    render(data);
+    if (threadOpen) focusConversation();
+    else $("[data-show-messages]")?.focus({preventScroll:true});
+    return;
+  }
+  if(button.hasAttribute("data-detail")) {
+    openDetail(detailsFor(data,button.dataset.detail,button.dataset.person));
+    return;
+  }
+  if(button.hasAttribute("data-menu-slot")) {
+    openDetail(menuPhotoFor(data,button.dataset.menuSlot,Number(button.dataset.menuIndex)));
+    return;
+  }
   if(button.id==="retry") {load();return;}
   if(button.id==="read-guide") {readGuide(button);return;}
   if(button.hasAttribute("data-commute")) {replayCommute(button);return;}

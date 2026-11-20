@@ -3,45 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f8f8f4">
+  <meta name="theme-color" content="#e6eff3">
   <meta name="description" content="Plan a San Francisco visit with Atmos, from the first transit ride to the last stop of the night.">
-  <title>San Francisco field guide · Atmos</title>
+  <title>San Francisco route · Atmos</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232b427c'/%3E%3Cpath d='m5 22 10-13 12 13M8 23l9-7 8 7' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linejoin='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/styles.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <a class="skip" href="#day-plan">Skip to itinerary</a>
-  <header class="masthead">
-    <div class="masthead-inner">
-      <a class="wordmark" href="#top" aria-label="Atmos, top of page">
-        <svg aria-hidden="true" viewBox="0 0 42 34" fill="none"><path d="M2 27 19 5a3 3 0 0 1 4 0l17 22M7 28l12-12a3 3 0 0 1 4 0l13 12M13 29l6-5a3 3 0 0 1 4 0l7 5" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Atmos
-      </a>
-      <nav aria-label="Field guide sections">
-        <a class="nav-active" href="#day-plan">Day plan</a><a href="#people">People</a><a href="#weekend">Weekend</a>
-      </nav>
-      <span class="header-location"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>San Francisco, CA</span>
-    </div>
-  </header>
-  <main id="top" class="page">
-    <section class="hero" aria-labelledby="city-title">
-      <div class="hero-copy">
-        <div class="eyebrow guide-label"><span class="short-rule"></span>City field guide</div>
-        <h1 id="city-title">A day in<br><em>San Francisco.</em></h1>
-        <p>Your event, your people, and a route through the city.</p>
-        <button class="btn primary" id="brief-button" disabled>
-          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 10v4m4-7v10m5-14v18m5-15v12m4-8v4"/></svg>
-          <span>Start trip briefing</span>
-        </button>
-      </div>
-      <div class="hero-art">
-        <a id="hero-photo-link" href="/assets/san-francisco.jpg" target="_blank" rel="noopener"><img id="hero-photo" src="/assets/san-francisco.jpg" alt="Golden Gate Bridge across San Francisco Bay. Open photograph."></a>
-        <span class="plate-label">37°46′ N &nbsp; 122°25′ W</span><span id="hero-credit"></span>
-      </div>
-    </section>
-    <div id="dashboard" aria-busy="true"><p class="loading-note">Loading your field guide…</p></div>
+  <a class="skip" href="#day-plan">Skip to stops</a>
+  <main id="top">
+    <div id="dashboard" aria-busy="true"><p class="loading-note">Loading route…</p></div>
   </main>
+  <dialog id="detail-dialog" class="dialog" aria-labelledby="detail-title">
+    <div class="sheet-header">
+      <h2 id="detail-title"></h2>
+      <button class="icon-button" data-close="detail-dialog" aria-label="Close details">×</button>
+    </div>
+    <div id="detail-content"></div>
+  </dialog>
   <dialog id="brief-dialog" class="dialog" aria-labelledby="brief-title">
     <form id="brief-form">
       <div class="dialog-heading"><span class="eyebrow">Trip briefing</span><button type="button" class="icon-button" data-close="brief-dialog" aria-label="Close briefing">×</button></div>

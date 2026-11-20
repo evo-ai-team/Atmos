@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { event, transit, nightlife, weekend, visitorTips, visitorSources, weather, weatherSources, origin, originCoords } from './city.mjs';
 import { breakfast, lunch, dinner } from './food.mjs';
 
@@ -21,12 +21,15 @@ const alert = {
 };
 export const catalog = { date: '2026-11-20', intro, heroImage, heroCredit: { label: 'Rich Niewiroski Jr. · CC BY 2.5', url: 'https://commons.wikimedia.org/wiki/File:GoldenGateBridge-001.jpg' }, origin, originCoords, event, transit, breakfast, lunch, dinner, nightlife, weekend, contacts, visitorTips, visitorSources, weather, weatherSources, alert };
 export const catalogRevision = createHash('sha256').update(JSON.stringify(catalog)).digest('hex');
-const slots = ['transit','breakfast','lunch','dinner','nightlife'];
+const meals = ['breakfast','lunch','dinner'];
+const slots = ['transit',...meals,'nightlife'];
 export const defaultProfile = { diet: 'Vegan, dairy-free, gluten-free', walkingGoal: 2000, budget: 400, socialStatus: 'Socialize', habits: 'Coffee and breakfast around 8 AM. Likes an evening drink.' };
 export function searchLocalMemory(guide, state, scope, query) {
   const facts = scope === 'private'
     ? [...Object.entries(state.profile).filter(([,v])=>typeof v !== 'boolean').map(([k,v]) => `${k}: ${v}`),
-      ...Object.entries(state.choices).map(([slot,id])=>`${slot}: ${guide[slot]?.find(o=>o.id===id)?.title ?? ''}`)]
+      ...Object.entries(state.choices).map(([slot,id]) => state.skippedSlots?.includes(slot)
+        ? `${slot}: skipped for this visit`
+        : `${slot}: ${guide[slot]?.find(o=>o.id===id)?.title ?? ''}`)]
     : [guide.event,...guide.transit,...guide.breakfast,...guide.lunch,...guide.dinner,...guide.nightlife,...guide.weekend]
       .map(o=>[o.title,o.address,o.notes,o.diet,o.sources?.[0]?.url].filter(Boolean).join(' · ')).concat(guide.weather,guide.visitorTips);
   const ignored = new Set(['what','which','where','when','would','could','should','about','that','the','and','for','are','was','can','does','will','you','how','tell']);
@@ -37,7 +40,7 @@ export function searchLocalMemory(guide, state, scope, query) {
   return ranked.sort((a,b)=>b.score-a.score).slice(0,5).map(x=>x.fact);
 }
 export function newState() {
-  return { started: false, transcript: '', revision: 0, profile: { ...defaultProfile }, choices: {}, confirmedSlots: [], invitations: [], reservation: null, expenses: [], alert: 'idle' };
+  return { started: false, transcript: '', revision: 0, profile: { ...defaultProfile }, choices: {}, confirmedSlots: [], skippedSlots: [], invitations: [], sentDinnerTexts: [], reservation: null, expenses: [], alert: 'idle' };
 }
 export class InputError extends Error {}
 
@@ -61,21 +64,24 @@ function profileFrom(text) {
   if (steps && Number(steps[1].replaceAll(',', '')) > 0) profile.walkingGoal = Math.round(Number(steps[1].replaceAll(',', '')) * (steps[2] ? 1000 : 1));
   return profile;
 }
-function selected(s, slot) { return catalog[slot].find(o => o.id === s.choices[slot]); }
+function selected(s, slot) {
+  if (s.skippedSlots?.includes(slot)) return undefined;
+  return catalog[slot].find(o => o.id === s.choices[slot]);
+}
 function alternateDinner(s) {
   const candidates = dinner.filter(o => o.available !== false && o.id !== s.choices.dinner && km(o, teamVenue) > 1);
   return candidates.sort((a,b) => Number(!!b.reservable) - Number(!!a.reservable) || km(b,teamVenue) - km(a,teamVenue))[0];
 }
 
 export function guideForVisit(guide,s,evidence) {
-  const pm = selected(s,'dinner');
+  const eveningOrigin = selected(s,'dinner') ?? loft;
   const alternate = alternateDinner(s);
   return {
     ...guide,
     weather:evidence?.weather ?? guide.weather,
     alert:{...guide.alert,alternative:alternate && `${alternate.title} at ${alternate.address}. ${alternate.diet}`},
-    nightlife:pm ? guide.nightlife.map(night=>({
-      ...night,url:route(pm,night,km(pm,night)>1.6 ? 'transit' : 'walking').url,
+    nightlife:s.started ? guide.nightlife.map(night=>({
+      ...night,url:route(eveningOrigin,night,km(eveningOrigin,night)>1.6 ? 'transit' : 'walking').url,
     })) : guide.nightlife,
   };
 }
@@ -83,9 +89,15 @@ function changeDinner(s, id) {
   if (s.choices.dinner !== id) { s.invitations = []; s.reservation = null; }
   s.choices.dinner = id;
 }
+function confirm(s,slot) {
+  s.skippedSlots = s.skippedSlots.filter(item => item !== slot);
+  if (!s.confirmedSlots.includes(slot)) s.confirmedSlots.push(slot);
+}
 export function updateState(previous, input) {
   if (!input || typeof input !== 'object') throw new InputError('Choose a demo action.');
   const s = structuredClone(previous);
+  s.skippedSlots ??= [];
+  s.sentDinnerTexts ??= [];
   if (input.action === 'reset') return { ...newState(), revision: s.revision + 1 };
   if (input.action === 'start') {
     if (typeof input.transcript !== 'string' || !input.transcript.trim() || input.transcript.length > 6000) throw new InputError('Enter a trip briefing of up to 6,000 characters.');
@@ -102,14 +114,36 @@ export function updateState(previous, input) {
         if (!o || o.available === false) throw new InputError('This option is unavailable.');
         if (input.slot === 'dinner') changeDinner(s, o.id);
         else s.choices[input.slot] = o.id;
-        if (!s.confirmedSlots.includes(input.slot)) s.confirmedSlots.push(input.slot);
+        confirm(s,input.slot);
         if (input.slot === 'nightlife' && s.profile.discretion && s.alert === 'idle') s.alert = 'shown';
         break;
       }
+      case 'skip': {
+        if (!meals.includes(input.slot)) throw new InputError('Choose breakfast, lunch or dinner to skip.');
+        if (s.skippedSlots.includes(input.slot)) return s;
+        s.skippedSlots.push(input.slot);
+        s.confirmedSlots = s.confirmedSlots.filter(slot => slot !== input.slot);
+        if (input.slot === 'dinner') {
+          s.invitations = [];
+          s.reservation = null;
+        }
+        break;
+      }
       case 'invite':
-        if (!contacts.some(c => c.id === input.id) || s.profile.socialStatus !== 'Socialize' || !s.confirmedSlots.includes('dinner')) throw new InputError('Confirm a dinner venue before drafting an invitation.');
+        if (!contacts.some(c => c.id === input.id) || s.profile.socialStatus !== 'Socialize' || !s.confirmedSlots.includes('dinner') || !selected(s,'dinner')) throw new InputError('Confirm a dinner venue before drafting an invitation.');
         if (!s.invitations.includes(input.id)) s.invitations.push(input.id);
         break;
+      case 'sendDinnerText': {
+        if (Object.keys(input).some(key => !['action','key','revision'].includes(key))) {
+          throw new InputError('Approve the displayed group draft for Gio and Andrew.');
+        }
+        const draft = dinnerTextFor(s,trackerFor(s));
+        if (!draft) throw new InputError('Include dinner in the plan before sending the demo group text.');
+        if (input.key !== draft.key) throw new InputError('Review the current dinner text before approving it.');
+        if (s.sentDinnerTexts.some(message => message.key === draft.key)) return s;
+        s.sentDinnerTexts.push({id:randomUUID(),sentAt:new Date().toISOString(),...draft});
+        break;
+      }
       case 'reserve':
         if (!s.confirmedSlots.includes('dinner') || !selected(s,'dinner')?.reservable) throw new InputError('Confirm a restaurant that accepts reservations.');
         s.reservation = s.choices.dinner;
@@ -131,7 +165,7 @@ export function updateState(previous, input) {
         const alternate = alternateDinner(s);
         if (!alternate) throw new InputError('There is no other verified dinner option away from the venue.');
         changeDinner(s, alternate.id);
-        if (!s.confirmedSlots.includes('dinner')) s.confirmedSlots.push('dinner');
+        confirm(s,'dinner');
         s.alert = 'rerouted'; break;
       }
       default: throw new InputError('Unknown demo action.');
@@ -171,23 +205,30 @@ export function trackerFor(s) {
     }
     return at+travel.minutes;
   };
-  const breakfastTime = minutes(am.time);
-  const firstTravel = route(home,am,transportMode);
-  const firstMode = transportMode === 'transit' && km(am,loft)>1.6 ? 'Muni' : transport.title;
-  leg(home,am,breakfastTime-firstTravel.minutes,transportMode,`${firstMode} to ${am.title}`);
-  add(breakfastTime,am.title,am.url);
-  const onward = km(am,loft)>1.6 ? transportMode : 'walking';
-  const secondLeg = route(am,loft,onward);
-  if (onward === 'driving' && secondLeg.minutes > 0) fares += transport.price;
-  const leave = Math.max(breakfastTime + (am.minutes ?? 20), 9*60+15-secondLeg.minutes-(onward === 'transit' ? 15 : 0));
-  const onwardsLabel = onward === 'transit' ? 'Muni' : transport.title;
-  const arrival = leg(am,loft,leave,onward,onward === 'walking' ? 'Walk to AWS Builder Loft' : `${onwardsLabel} to AWS Builder Loft`);
+  const checkIn = 9*60+15;
+  const firstStop = am ?? loft;
+  const firstTime = am ? minutes(am.time) : checkIn;
+  const firstTravel = route(home,firstStop,transportMode);
+  const firstMode = am && transportMode === 'transit' && km(am,loft)>1.6 ? 'Muni' : transport.title;
+  let arrival = leg(home,firstStop,firstTime-firstTravel.minutes,transportMode,
+    `${firstMode} to ${am?.title ?? 'AWS Builder Loft'}`);
+  if (am) {
+    add(firstTime,am.title,am.url);
+    const onward = km(am,loft)>1.6 ? transportMode : 'walking';
+    const secondLeg = route(am,loft,onward);
+    if (onward === 'driving' && secondLeg.minutes > 0) fares += transport.price;
+    const leave = Math.max(firstTime + (am.minutes ?? 20), checkIn-secondLeg.minutes-(onward === 'transit' ? 15 : 0));
+    const onwardsLabel = onward === 'transit' ? 'Muni' : transport.title;
+    arrival = leg(am,loft,leave,onward,onward === 'walking' ? 'Walk to AWS Builder Loft' : `${onwardsLabel} to AWS Builder Loft`);
+  }
   add(Math.max(arrival,555),'Arrive at the Loft · courtyard check-in');
   add(570,'Hackathon doors & opening remarks');
   add(660,'Kickoff & building time');
-  let at = leg(loft,noon,810,'walking',`Walk to ${noon.title}`);
-  add(at,noon.title,noon.url);
-  leg(noon,loft,at+(noon.minutes ?? 30),'walking','Return to the hackathon');
+  if (noon) {
+    const at = leg(loft,noon,810,'walking',`Walk to ${noon.title}`);
+    add(at,noon.title,noon.url);
+    leg(noon,loft,at+(noon.minutes ?? 30),'walking','Return to the hackathon');
+  }
   add(990,'Project submission'); add(1020,'Finalist demos & judging'); add(1140,'Awards & closing'); add(1170,'Hackathon ends');
   const nightLeg = (from,to,time) => {
     const mode = km(from,to)>1.6 ? 'transit' : 'walking';
@@ -198,11 +239,35 @@ export function trackerFor(s) {
     return leg(from,to,time,mode,`${mode === 'transit' ? 'Muni' : 'Walk'} to ${to.title}`);
   };
   let lastPaid = -Infinity;
-  at = nightLeg(loft,pm,1170); add(at,pm.title,pm.url);
-  at = nightLeg(pm,night,at+(pm.minutes ?? 60)); add(Math.max(at,minutes(night.time)),night.title,night.sources[0]?.url);
-  const cost = Math.round((fares+[transport,am,noon,pm,night].reduce((sum,o) => sum+o.price,0))*100)/100;
+  let leaveForNightlife = 1170;
+  if (pm) {
+    const dinnerArrival = nightLeg(loft,pm,1170);
+    lines.push({time:clock(dinnerArrival),title:pm.title,url:pm.url,slot:'dinner'});
+    leaveForNightlife = dinnerArrival+(pm.minutes ?? 60);
+  }
+  const nightArrival = nightLeg(pm ?? loft,night,leaveForNightlife);
+  add(Math.max(nightArrival,minutes(night.time)),night.title,night.sources[0]?.url);
+  const itemTotal = [transport,am,noon,pm,night].reduce((sum,item) => sum+(item?.price ?? 0),0);
+  const cost = Math.round((fares+itemTotal)*100)/100;
   const spent = Math.round((s.expenses ?? []).reduce((sum,e) => sum+e.amount,0)*100)/100;
   return {lines,cost,spent,steps,calories:Math.round(steps*0.04)};
+}
+
+export function dinnerTextFor(state,tracker) {
+  const restaurant = selected(state,'dinner');
+  const time = tracker.lines.find(line => line.slot === 'dinner')?.time;
+  if (!restaurant || !time) return null;
+
+  const recipientIds = ['gio','andrew'];
+  const recipients = recipientIds.map(id => contacts.find(contact => contact.id === id).name);
+  const {id:dinnerId,title:venue,address} = restaurant;
+  const [hour,minute] = time.split(':');
+  const localTime = `${Number(hour)%12 || 12}:${minute} ${Number(hour)<12 ? 'AM' : 'PM'}`;
+  const url = 'https://www.google.com/maps/search/?'+new URLSearchParams({api:'1',query:venue+', '+address});
+  const body = `Hey Gio and Andrew! I’m heading to ${venue} at ${localTime} after the hackathon. It’s at ${address}. Want to join me for dinner?`;
+  const draft = {dinnerId,venue,address,time,recipientIds,recipients,body,url};
+  const key = createHash('sha256').update(JSON.stringify([catalog.date,draft])).digest('hex');
+  return {...draft,key};
 }
 
 export function itineraryBriefing(state, tracker) {
@@ -215,9 +280,13 @@ export function itineraryBriefing(state, tracker) {
   const opening = state.profile.trip.includes('First visit') ? 'Welcome to San Francisco. ' : '';
   return [
     opening+'Your Personal Agents Hackathon opens at 9:30 AM on the second floor of 525 Market Street. Use the courtyard entrance and bring your physical photo ID.',
-    `For your 8 AM coffee stop, leave the Richmond pickup around ${tracker.lines[0].time} by ${transit.id === 'muni' ? 'Muni' : transit.title}. I’ve penciled in ${morning.title}. ${morning.diet}`,
-    `The organizer provides lunch at 1:30 PM and hasn’t published dietary accommodations. ${noon.id === 'lunch-host' ? 'You selected the hosted meal. Ask the caterer before eating.' : 'Your backup is '+noon.title+'. '+noon.diet}`,
-    `The hackathon ends at 7:30 PM. Your dinner pick is ${evening.title}. ${evening.reservable ? 'You can draft a reservation and invite Gio or Andrew after confirming dinner.' : 'Check availability before leaving the Loft.'} After dinner, your plan takes you to ${night.title}.`,
+    morning
+      ? `For your 8 AM coffee stop, leave the Richmond pickup around ${tracker.lines[0].time} by ${transit.id === 'muni' ? 'Muni' : transit.title}. I’ve penciled in ${morning.title}. ${morning.diet}`
+      : `Leave the Richmond pickup around ${tracker.lines[0].time} and head directly to the Loft by ${transit.title}.`,
+    ...(noon ? [`The organizer provides lunch at 1:30 PM and hasn’t published dietary accommodations. ${noon.id === 'lunch-host' ? 'You selected the hosted meal. Ask the caterer before eating.' : 'Your backup is '+noon.title+'. '+noon.diet}`] : []),
+    evening
+      ? `The hackathon ends at 7:30 PM. Your dinner pick is ${evening.title}. ${evening.reservable ? 'You can draft a reservation and invite Gio or Andrew after confirming dinner.' : 'Check availability before leaving the Loft.'} After dinner, your plan takes you to ${night.title}.`
+      : `After the 7:30 PM close, head from the Loft to ${night.title}.`,
     `Friday’s selected stops and travel come to about $${tracker.cost.toFixed(2)} against your $${state.profile.budget} budget. The walking legs add up to about ${tracker.steps.toLocaleString('en-US')} steps toward your ${state.profile.walkingGoal.toLocaleString('en-US')}-step goal.`,
   ];
 }

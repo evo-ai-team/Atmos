@@ -117,6 +117,26 @@ test('per-visitor search, replacement and reset are isolated from the public gui
   await worker.stop(); db.close();
 });
 
+test('removing and restoring lunch updates only the visitor’s indexed plan', async () => {
+  const {worker,db} = harness();
+  try {
+    worker.queueVisitor('A',visitor(100));
+    await worker.flush();
+    worker.queueVisitor('A',{...visitor(100,2),skippedSlots:['lunch']});
+    await worker.flush();
+    const skipped = (await worker.recall('A','lunch','private')).results.join(' ');
+    assert.match(skipped,/lunch: skipped for this visit/);
+    assert.doesNotMatch(skipped,/Rice bowl/);
+    assert.match((await worker.recall('A','lunch','shared')).results.join(' '),/Rice bowl/);
+    worker.queueVisitor('A',{...visitor(100,3),skippedSlots:[]});
+    await worker.flush();
+    assert.match((await worker.recall('A','lunch','private')).results.join(' '),/lunch: Rice bowl/);
+  } finally {
+    await worker.stop();
+    db.close();
+  }
+});
+
 test('rate limits survive worker replacement and a fresh edit supersedes an in-flight revision', async () => {
   const {worker,db,control,makeWorker,datasets} = harness();
   control.fail = true;

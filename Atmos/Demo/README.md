@@ -8,13 +8,13 @@ node Atmos/Demo/server.mjs
 
 ## Replay the trip
 
-1. Open **Start trip briefing**. Read the prefilled Richmond/Singapore request, type an edit, or dictate on a browser that supports speech recognition. Select **Build my day**. Atmos replies with the event, meals, travel and totals for your selections. Use **Read aloud** on supported browsers. Open **Preferences in memory** to inspect the trip details, budget and step goals extracted from the briefing.
-2. Select a transport icon and a breakfast. Replay the simulated trip from the Richmond pickup. Google Maps links open the selected legs. The tracker adjusts departure times, walking and fares from the chosen stops.
-3. Compare the host’s lunch with the nearby alternatives. Each stop includes its evidence, ingredient caveats and available information about queues. Select dinner and prepare a reservation or invitation draft.
-4. Confirm nightlife to reveal the fictional team post. You can also use **Show interruption**. The demo matches the transcribed restaurant and street signs in the generated photo to a fictional venue. Accept the alternative to change dinner and update the evening route. Dinner-specific drafts clear when their venue changes.
-5. Compare estimated spend and walking with the saved goals. **Spending log** records actual test expenses. **Recall a memory** can search the visitor’s plan or the shared guide. Use **Reset demo** to replay the trip in the current browser.
+1. The map opens at the simulated Richmond District pickup, with a clock in San Francisco time. Choose a ride, or open **Trip briefing** to edit or dictate the sample itinerary request. After building the day, the briefing includes Atmos’s reply and optional read-aloud.
+2. Open any stop name to change the venue, inspect dietary information and sources, or get directions. Menu photos show examples offered by the venue. Tap a green check to skip that meal or its red × to restore it. The tracker recalculates the route and estimates.
+3. Under **People nearby**, select **Invite both to dinner**. Review the recipients, venue, address and time, then select **Approve to send**. A simulated iMessage conversation opens beside the route. The local history keeps the approved wording if dinner changes later. Use **View messages** to reopen it.
+4. Select a nightlife option or use **Show demo notification** in **Trip tools** to replay the fictional team post. The demo matches the transcribed restaurant and street signs in the generated photo to a fictional venue. Accept the alternative to update dinner and the evening route.
+5. Use **Trip tools** to record expenses, check sources or search memory. **Reset demo** clears this browser’s test itinerary and message history.
 
-The replay covers Friday, November 20 through Sunday, November 22, 2026. Friday’s event, venue, menus and nightlife listings have source links. Saturday and Sunday have suggested outings. The home location, contacts and social posts are fictional. Transit durations use approximate coordinates and grid distances. Fares for rideshare are planning allowances. Walking estimates use 1,350 steps per km on planned walking legs and 0.04 kcal per step. The Friday budget includes selected stops and modeled inter-stop fares. A return journey, optional drinks and purchases are outside that projection. Invitations, payments and reservations stay in the local demo.
+The Friday replay is dated November 20, 2026. The clock shows current San Francisco time. The event, menus and nightlife listings include sources. The home location, social posts and group messages are fictional. Transit times and rideshare prices are planning estimates. Walking estimates use 1,350 steps per km and 0.04 kcal per step. The Friday budget includes selected stops and modeled inter-stop fares. A return journey, optional drinks and purchases are outside that projection.
 
 ## Native macOS entry
 
@@ -41,4 +41,6 @@ Run the behavioral tests from the repository root.
 node --test Atmos/Demo/demo.test.mjs Atmos/Demo/memory.test.mjs Atmos/Demo/observer.test.mjs
 ```
 
-The building photo is by Gianluca Cogoli (CC BY 3.0, resized). The Golden Gate Bridge photo is by Rich Niewiroski Jr. (CC BY 2.5). Restaurant photos link to the venue’s own images. The team dinner and conference images were generated for fictional social posts. [Building photo and license](https://commons.wikimedia.org/wiki/File:Looking_up,_525_Market,_SF.jpg) · [Bridge photo and license](https://commons.wikimedia.org/wiki/File:GoldenGateBridge-001.jpg)
+Each menu photo opens its venue or manufacturer attribution. The ride details link to the source of the selected service icon. The local map uses OpenStreetMap data, OpenFreeMap and OpenMapTiles. Its downtown 38R segment follows the SFMTA route geometry. Dotted segments illustrate connections between stops. [OpenStreetMap attribution](https://www.openstreetmap.org/copyright) · [SFMTA route data](https://data.sf.gov/d/9exe-acju)
+
+The building photo is by Gianluca Cogoli (CC BY 3.0, resized). The Golden Gate Bridge photo is by Rich Niewiroski Jr. (CC BY 2.5). The team dinner and conference images were generated for fictional social posts. [Building photo and license](https://commons.wikimedia.org/wiki/File:Looking_up,_525_Market,_SF.jpg) · [Bridge photo and license](https://commons.wikimedia.org/wiki/File:GoldenGateBridge-001.jpg)

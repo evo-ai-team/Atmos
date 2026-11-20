@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BuildMachineOSBuild</key>
+	<string>25G76</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Atmos</string>
+	<key>CFBundleExecutable</key>
+	<string>Atmos</string>
+	<key>CFBundleIconFile</key>
+	<string>Atmos</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.evoai.atmos</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Atmos</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.0</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>MacOSX</string>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>2</string>
+	<key>DTCompiler</key>
+	<string>com.apple.compilers.llvm.clang.1_0</string>
+	<key>DTPlatformBuild</key>
+	<string>26B118</string>
+	<key>DTPlatformName</key>
+	<string>macosx</string>
+	<key>DTPlatformVersion</key>
+	<string>27.2</string>
+	<key>DTSDKBuild</key>
+	<string>26B118</string>
+	<key>DTSDKName</key>
+	<string>macosx27.2</string>
+	<key>DTXcode</key>
+	<string>2720</string>
+	<key>DTXcodeBuild</key>
+	<string>27B52</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Atmos listens locally for Hey Atmos. When VIVA Pro is enabled, active command audio is sent to Krisp for voice isolation.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Atmos captures your screen during a command so the model can locate controls.</string>
+</dict>
+</plist>

@@ -1,0 +1,718 @@
+{
+  "audioDuration": 11.005351473922902,
+  "configuration": {
+    "attributeOptions": [
+      "audioTimeRange"
+    ],
+    "locale": "en-US",
+    "reportingOptions": [
+      "volatileResults",
+      "fastResults"
+    ]
+  },
+  "consumedText": "Hey Atmos",
+  "description": "Apple SpeechTranscriber events recorded during real-time playback of the synthetic Atmos fixture.",
+  "events": [
+    {
+      "end": 1.1138125,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 1.1138125,
+          "start": 0,
+          "text": "Hey"
+        }
+      ],
+      "start": 0,
+      "text": "Hey",
+      "wall": 1.0855609998106956
+    },
+    {
+      "end": 1.1138125,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 1.1138125,
+          "start": 0,
+          "text": "Hey Ad"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Ad",
+      "wall": 1.0856405831873417
+    },
+    {
+      "end": 1.1138125,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 1.1138125,
+          "start": 0,
+          "text": "Hey Adm"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Adm",
+      "wall": 1.0857172082178295
+    },
+    {
+      "end": 1.1138125,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 1.1138125,
+          "start": 0,
+          "text": "Hey Admos"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos",
+      "wall": 1.0857852916233242
+    },
+    {
+      "end": 2.042625,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 2.042625,
+          "start": 0,
+          "text": "Hey Admos, go"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go",
+      "wall": 2.009353833273053
+    },
+    {
+      "end": 2.971375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 2.971375,
+          "start": 0,
+          "text": "Hey Admos, go to"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to",
+      "wall": 2.938564791576937
+    },
+    {
+      "end": 2.971375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 2.971375,
+          "start": 0,
+          "text": "Hey Admos, go to Ch"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Ch",
+      "wall": 2.938630416523665
+    },
+    {
+      "end": 2.971375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 2.971375,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome",
+      "wall": 2.9390110832173377
+    },
+    {
+      "end": 2.971375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 2.971375,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome,"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome,",
+      "wall": 2.9390815414953977
+    },
+    {
+      "end": 3.9930625,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 3.9930625,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open",
+      "wall": 3.958223041612655
+    },
+    {
+      "end": 3.9930625,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 3.9930625,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up",
+      "wall": 3.9583891248330474
+    },
+    {
+      "end": 3.9930625,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 3.9930625,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up YouTube"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up YouTube",
+      "wall": 3.9585615831892937
+    },
+    {
+      "end": 4.921875,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 4.921875,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up YouTube,"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up YouTube,",
+      "wall": 4.887566874967888
+    },
+    {
+      "end": 4.921875,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 4.921875,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up YouTube, and"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up YouTube, and",
+      "wall": 4.887933249818161
+    },
+    {
+      "end": 4.921875,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 4.921875,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up YouTube, and then"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up YouTube, and then",
+      "wall": 4.888003499945626
+    },
+    {
+      "end": 5.8506875,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 5.8506875,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up YouTube, and then search"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up YouTube, and then search",
+      "wall": 5.819082583300769
+    },
+    {
+      "end": 5.8506875,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 5.8506875,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up YouTube, and then search L"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up YouTube, and then search L",
+      "wall": 5.819515833165497
+    },
+    {
+      "end": 5.8506875,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 5.8506875,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up YouTube, and then search Lin"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up YouTube, and then search Lin",
+      "wall": 5.819697541650385
+    },
+    {
+      "end": 5.8506875,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 5.8506875,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up YouTube, and then search Linus Te"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up YouTube, and then search Linus Te",
+      "wall": 5.819788624998182
+    },
+    {
+      "end": 6.872375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 6.872375,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up YouTube, and then search Linus Tech"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up YouTube, and then search Linus Tech",
+      "wall": 6.836860458366573
+    },
+    {
+      "end": 6.872375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 6.872375,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up YouTube, and then search Linus Tech ti"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up YouTube, and then search Linus Tech ti",
+      "wall": 6.837152124848217
+    },
+    {
+      "end": 6.872375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 6.872375,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up YouTube, and then search Linus Tech tiips"
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up YouTube, and then search Linus Tech tiips",
+      "wall": 6.837692125001922
+    },
+    {
+      "end": 6.872375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 6.872375,
+          "start": 0,
+          "text": "Hey Admos, go to Chrome, open up YouTube, and then search Linus Tech tiips."
+        }
+      ],
+      "start": 0,
+      "text": "Hey Admos, go to Chrome, open up YouTube, and then search Linus Tech tiips.",
+      "wall": 6.837736416608095
+    },
+    {
+      "end": 6.3,
+      "isFinal": true,
+      "runs": [
+        {
+          "end": 0.24,
+          "start": 0,
+          "text": "Hey"
+        },
+        {
+          "end": 1.2,
+          "start": 0.24,
+          "text": " Atmos,"
+        },
+        {
+          "end": 1.62,
+          "start": 1.2,
+          "text": " go"
+        },
+        {
+          "end": 1.98,
+          "start": 1.62,
+          "text": " to"
+        },
+        {
+          "end": 2.46,
+          "start": 1.98,
+          "text": " Chrome,"
+        },
+        {
+          "end": 3,
+          "start": 2.46,
+          "text": " open"
+        },
+        {
+          "end": 3.18,
+          "start": 3,
+          "text": " up"
+        },
+        {
+          "end": 3.96,
+          "start": 3.18,
+          "text": " YouTube,"
+        },
+        {
+          "end": 4.2,
+          "start": 3.96,
+          "text": " and"
+        },
+        {
+          "end": 4.38,
+          "start": 4.2,
+          "text": " then"
+        },
+        {
+          "end": 4.86,
+          "start": 4.38,
+          "text": " search"
+        },
+        {
+          "end": 5.34,
+          "start": 4.86,
+          "text": " Linus"
+        },
+        {
+          "end": 5.82,
+          "start": 5.34,
+          "text": " Tech"
+        },
+        {
+          "end": 6.24,
+          "start": 5.82,
+          "text": " Tips."
+        }
+      ],
+      "start": 0,
+      "text": "Hey Atmos, go to Chrome, open up YouTube, and then search Linus Tech Tips.",
+      "wall": 6.938629916636273
+    },
+    {
+      "end": 7.801125,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 7.801125,
+          "start": 6.3,
+          "text": " Go"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go",
+      "wall": 7.769797249929979
+    },
+    {
+      "end": 7.801125,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 7.801125,
+          "start": 6.3,
+          "text": " Go to"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to",
+      "wall": 7.769845291506499
+    },
+    {
+      "end": 7.801125,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 7.801125,
+          "start": 6.3,
+          "text": " Go to his"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his",
+      "wall": 7.769904125016183
+    },
+    {
+      "end": 7.801125,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 7.801125,
+          "start": 6.3,
+          "text": " Go to his channel"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel",
+      "wall": 7.769949625013396
+    },
+    {
+      "end": 8.7299375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 8.7299375,
+          "start": 6.3,
+          "text": " Go to his channel and"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and",
+      "wall": 8.696199166588485
+    },
+    {
+      "end": 8.7299375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 8.7299375,
+          "start": 6.3,
+          "text": " Go to his channel and cl"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and cl",
+      "wall": 8.696285541635007
+    },
+    {
+      "end": 8.7299375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 8.7299375,
+          "start": 6.3,
+          "text": " Go to his channel and click"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and click",
+      "wall": 8.69642029167153
+    },
+    {
+      "end": 8.7299375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 8.7299375,
+          "start": 6.3,
+          "text": " Go to his channel and click on"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and click on",
+      "wall": 8.696538208285347
+    },
+    {
+      "end": 8.7299375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 8.7299375,
+          "start": 6.3,
+          "text": " Go to his channel and click on his"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and click on his",
+      "wall": 8.69668420823291
+    },
+    {
+      "end": 9.751625,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 9.751625,
+          "start": 6.3,
+          "text": " Go to his channel and click on his store"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and click on his store",
+      "wall": 9.719947499921545
+    },
+    {
+      "end": 9.751625,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 9.751625,
+          "start": 6.3,
+          "text": " Go to his channel and click on his store link"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and click on his store link",
+      "wall": 9.720310874981806
+    },
+    {
+      "end": 9.751625,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 9.751625,
+          "start": 6.3,
+          "text": " Go to his channel and click on his store link in"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and click on his store link in",
+      "wall": 9.720479999901727
+    },
+    {
+      "end": 9.751625,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 9.751625,
+          "start": 6.3,
+          "text": " Go to his channel and click on his store link in his"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and click on his store link in his",
+      "wall": 9.720673999981955
+    },
+    {
+      "end": 9.751625,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 9.751625,
+          "start": 6.3,
+          "text": " Go to his channel and click on his store link in his prof"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and click on his store link in his prof",
+      "wall": 9.720774208195508
+    },
+    {
+      "end": 10.6804375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 10.6804375,
+          "start": 6.3,
+          "text": " Go to his channel and click on his store link in his profile"
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and click on his store link in his profile",
+      "wall": 10.671602708287537
+    },
+    {
+      "end": 10.6804375,
+      "isFinal": false,
+      "runs": [
+        {
+          "end": 10.6804375,
+          "start": 6.3,
+          "text": " Go to his channel and click on his store link in his profile."
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and click on his store link in his profile.",
+      "wall": 10.671648583142087
+    },
+    {
+      "end": 9.96,
+      "isFinal": true,
+      "runs": [
+        {
+          "end": 6.78,
+          "start": 6.3,
+          "text": " Go"
+        },
+        {
+          "end": 6.96,
+          "start": 6.78,
+          "text": " to"
+        },
+        {
+          "end": 7.08,
+          "start": 6.96,
+          "text": " his"
+        },
+        {
+          "end": 7.26,
+          "start": 7.08,
+          "text": " channel"
+        },
+        {
+          "end": 7.74,
+          "start": 7.26,
+          "text": " and"
+        },
+        {
+          "end": 7.98,
+          "start": 7.74,
+          "text": " click"
+        },
+        {
+          "end": 8.16,
+          "start": 7.98,
+          "text": " on"
+        },
+        {
+          "end": 8.28,
+          "start": 8.16,
+          "text": " his"
+        },
+        {
+          "end": 8.7,
+          "start": 8.28,
+          "text": " store"
+        },
+        {
+          "end": 8.94,
+          "start": 8.7,
+          "text": " link"
+        },
+        {
+          "end": 9.12,
+          "start": 8.94,
+          "text": " in"
+        },
+        {
+          "end": 9.24,
+          "start": 9.12,
+          "text": " his"
+        },
+        {
+          "end": 9.9,
+          "start": 9.24,
+          "text": " profile."
+        }
+      ],
+      "start": 6.3,
+      "text": " Go to his channel and click on his store link in his profile.",
+      "wall": 10.869541541673243
+    }
+  ],
+  "sourceAudio": "atmos-command.wav",
+  "wakeEnd": 1.32
+}

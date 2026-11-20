@@ -1,0 +1,16 @@
+Atmos logo concepts generated with the built-in ImageGen tool.
+
+Each concept used this opening:
+Use case: logo-brand. Create one standalone original logo concept for Atmos, a quiet Mac daily planning assistant.
+
+Horizon
+A black disc rising through three tapering horizontal bands, rendered in reverse white ink on black, with the upper semicircle and broad atmospheric bands unified into a single compact sunrise silhouette. Two crisp horizontal incisions vary in length. Balance the form optically. A bold, calm, geometric sunrise with presence.
+
+Fold
+A single continuous broad white ribbon folds into a distinctive angular uppercase A. One restrained oblique black cut at the crossing reveals the fold. Give it a small open triangular counter and an asymmetrical lifted tip. It must read as a bold purpose-built A monogram at menu-bar size.
+
+Orbit
+A compact eclipse symbol made from one broad white crescent and one independent small white satellite disk at its upper-right tip. Oblique sweeping geometry conveys a day in motion. Flat graphic circles and a distinctive asymmetric silhouette, optically fitted as a single mark.
+
+Each concept used this closing:
+Square artboard with a pure black background and a single flat warm-white solid symbol centered on both axes, occupying about 53% of the width. Professional identity design, crisp deliberate contours, strong negative space, understandable at 24 px. Symbol only. No text, lettering beyond the requested form, labels, border, app icon tile, drop shadow, mockup, 3D or gradients.

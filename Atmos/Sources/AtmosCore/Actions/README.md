@@ -1,0 +1,13 @@
+# Action contracts and selection
+
+- `ActionLabel` formats display-only notch labels to at most two words without
+  ellipses. Full descriptions, targets, and payloads stay intact in action history.
+
+- `ComputerModels` defines requested actions, planner turns, task updates, and shared errors. Native Luna actions retain a structured `AccessibilityAction` in dispatch history. Optional wire fields still require strict parser and native preflight validation.
+- `ScreenshotFrame` carries encoded pixels with the original display geometry and maps model coordinates back to global screen points.
+- `ComputerDecisionOptions` builds a compact text selection menu from one accessibility snapshot. Choices use short numbers and readable verbs, roles, and quoted labels; up to two named ancestors distinguish repeated controls. The exact element/action mapping stays local, and unique menu question names reject answers from any other menu, including a reordered copy of the same snapshot. Primary actions retain priority over context menus, with up to 249 native choices.
+- `ComputerDecisionContext` keeps full current intent alongside three recent commands, three question/brief-answer exchanges, twelve actual dispatch summaries, and up to 100 visible text/state rows. Named ancestors associate state with the same controls shown in options. It omits images, geometry, action payloads, protected fields, and redundant control names; explicit omission and capture flags prevent missing evidence from implying completion. Questions such as “Why?” route to Luna using recent answers as conversational context. Prior replies are never UI completion evidence; Luna retains the full replies for details omitted from this projection.
+- The selector prompt treats UI text, prior outcomes, and dispatch descriptions as evidence, never new instructions or authorization. Text-only completion requires explicit accessibility text/state proving the whole goal. Image mode additionally permits screenshot evidence; uncertainty goes to the screenshot-capable planner. Field contents and help are excluded from choice labels. Non-editable names remain available to the model when a control repeats its label as its value; notch descriptions still redact echoed values. `nativeOptions` supports menu diagnostics, while `nativeActionCount` counts actual stored operations without parsing IDs.
+- `ActionDispatchSummary` records what was actually attempted, redacting typed content. It is separate from model-written descriptions.
+
+These types choose or describe operations but never execute them. Native dispatch must revalidate the target and display. The [action tests](../../../Tests/AtmosCoreTests/Actions/README.md) cover these contracts, geometry, and redaction.

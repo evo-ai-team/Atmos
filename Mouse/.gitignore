@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+.DS_Store
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.env
+*.log
+
+# Xcode regenerates this workspace around the versioned project and shared scheme.
+project.xcworkspace/

@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Full text stays in the Answers tab even after its brief notch notice disappears.
+/// Session history also provides direct access to an individual full-screen reply.
 struct QuestionAnswersView: View {
     @ObservedObject var model: AppModel
     let submit: () -> Void
@@ -15,10 +15,14 @@ struct QuestionAnswersView: View {
                 Button("Ask", action: submit)
                     .buttonStyle(.glass)
                     .disabled(model.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if model.menuIsCheckingInput { ProgressView().controlSize(.small).accessibilityLabel("Thinking") }
             }
             .padding(.horizontal, 28)
             .atmosMenuElement(1)
 
+            if let error = model.menuResponseError {
+                Text(verbatim: error).font(.callout).textSelection(.enabled).padding(.horizontal, 28)
+            }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     HStack {
@@ -39,7 +43,7 @@ struct QuestionAnswersView: View {
                         .atmosMenuElement(3)
                     } else {
                         ForEach(model.answers.reversed().enumerated(), id: \.element.id) { index, answer in
-                            QuestionAnswerRow(answer: answer)
+                            QuestionAnswerRow(answer: answer, open: { model.openAnswer(answer.id) })
                                 .atmosMenuElement(min(4, index + 3))
                         }
                     }
@@ -54,6 +58,7 @@ struct QuestionAnswersView: View {
 
 private struct QuestionAnswerRow: View {
     let answer: QuestionAnswer
+    let open: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -61,6 +66,12 @@ private struct QuestionAnswerRow: View {
                 Text(answer.createdAt.formatted(date: .numeric, time: .standard))
                     .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 Spacer()
+                Button(action: open) {
+                    Label("Read in full screen", systemImage: "arrow.up.left.and.arrow.down.right")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help("Read in full screen")
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(answer.text, forType: .string)

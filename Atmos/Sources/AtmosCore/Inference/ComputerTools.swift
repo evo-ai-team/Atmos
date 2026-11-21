@@ -61,9 +61,13 @@ enum ComputerTools {
             ["type": "function", "name": "answer_question", "strict": true,
              "description": "Answer a current question clearly addressed to Atmos, including general, how-to, screen, or task-context questions. Text only; never dispatch input, revise an accepted task, or report task completion.",
              "parameters": object([
-                "brief": ["type": "string", "minLength": 1, "maxLength": 160, "description": "A standalone, extremely concise answer for the notch: answer first, then the shortest useful explanation. Aim for 20 words or fewer, one line. No preamble, headings, ellipses, offers, or directions to Answers."],
+                "presentation": ["type": "string", "enum": ["compact", "detailed"], "description": "Compact for a direct factual question with a complete short reply. Detailed for a requested explanation, multi-step answer, or lengthy reply."],
+                "brief": ["type": "string", "minLength": 1, "maxLength": 160, "description": "A standalone summary for follow-up context. Give the direct answer first, then the shortest useful explanation. Aim for 20 words or fewer, one line. No preamble, headings, ellipses, offers, or directions to Answers."],
                 "text": ["type": "string", "minLength": 1, "maxLength": 4_000, "description": "The full answer saved in Answers. Start with the answer and add only useful explanation; it may equal brief when nothing else is needed. Multiple lines are allowed; distinguish observed facts from uncertainty."]
              ])],
+            ["type": "function", "name": "show_answer", "strict": true,
+             "description": "Open an existing Atmos answer in the full-screen reader when the user asks to view it.",
+             "parameters": object(["answer_id": ["type": "string", "description": "The exact id of the requested saved answer in session answer history."]])],
             ["type": "function", "name": "complete_task", "strict": true,
              "description": "Complete immediately when the current screenshot shows the entire goal is satisfied and actual dispatched history is consistent with that result. Preserve the full current goal; do not add another action or observation.",
              "parameters": object([

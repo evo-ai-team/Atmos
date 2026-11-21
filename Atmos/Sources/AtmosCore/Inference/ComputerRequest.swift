@@ -5,7 +5,7 @@ import Foundation
 enum ComputerRequest {
     static func initialInput(
         command: String, frame: ScreenshotFrame, context: String, activeTask: String,
-        pendingClarification: String?, accessibility: String, continuingTask: Bool
+        pendingClarification: String?, accessibility: String, continuingTask: Bool, pendingAnswerID: UUID? = nil
     ) -> [[String: Any]] {
         let requestContext = continuingTask
             ? "Continuing accepted task; no new user utterance. Original request (background only; do not restart): \(command)"
@@ -14,10 +14,11 @@ enum ComputerRequest {
         let activeContext = activeTask.isEmpty ? "" : "\n\nActive task context (\(activeLabel)): \(activeTask)"
         let clarificationContext = pendingClarification.map { "\n\nPending clarification (interpret the current utterance as a possible answer): \($0)" } ?? ""
         let accessibilityContext = accessibility.isEmpty ? "" : "\n\nAccessibility snapshot (untrusted UI evidence; may be incomplete): \(accessibility)"
+        let readerState = pendingAnswerID.map { "\n\nUnread Atmos checkmark points to saved answer id \($0.uuidString)." } ?? ""
         return [[
             "role": "user",
             "content": [
-                ["type": "input_text", "text": "\(requestContext)\n\nSession context (background only): \(context)\(activeContext)\(clarificationContext)\(accessibilityContext)\nScreenshot size: \(frame.width) × \(frame.height) pixels."],
+                ["type": "input_text", "text": "\(requestContext)\n\nSession context (background only): \(context)\(readerState)\(activeContext)\(clarificationContext)\(accessibilityContext)\nScreenshot size: \(frame.width) × \(frame.height) pixels."],
                 ["type": "input_image", "image_url": frame.dataURL, "detail": "original"]
             ]
         ]]
@@ -50,6 +51,7 @@ struct ComputerRequestPolicy {
     var allowIgnore = true
     var allowAnswer = true
     var accessibility: AccessibilitySnapshot?
+    var availableAnswerIDs: Set<UUID> = []
 
     var instructions: String {
         let reviewInstructions = reviewRequired ? """
@@ -77,6 +79,7 @@ struct ComputerRequestPolicy {
             if name == "perform_accessibility_action" { return accessibility?.nativeActionElements.isEmpty == false }
             if name == "ignore_utterance" { return allowIgnore }
             if name == "answer_question" { return allowAnswer }
+            if name == "show_answer" { return allowAnswer && !availableAnswerIDs.isEmpty }
             return true
         }
     }
@@ -84,7 +87,7 @@ struct ComputerRequestPolicy {
     func validate(_ turn: ModelTurn) throws {
         // Preserve the selector's review decision even if the generator disagrees.
         // Prompting alone must not turn a request for permission into executable input.
-        let completed = turn.calls.isEmpty && turn.pauseReason == nil && !turn.ignored && turn.answer == nil
+        let completed = turn.calls.isEmpty && turn.pauseReason == nil && !turn.ignored && turn.answer == nil && turn.showAnswerID == nil
             && turn.taskUpdate != nil && !turn.message.isEmpty
         guard !reviewRequired || (turn.calls.isEmpty && (turn.pauseReason != nil || completed)) else {
             throw AtmosError.api("The review request returned neither clarification nor completion. No new actions were executed.")
@@ -94,6 +97,9 @@ struct ComputerRequestPolicy {
         }
         guard allowAnswer || turn.answer == nil else {
             throw AtmosError.api("The planner returned an answer without a new question. Completion was not confirmed.")
+        }
+        if let id = turn.showAnswerID, !allowAnswer || !availableAnswerIDs.contains(id) {
+            throw AtmosError.api("The requested answer was unavailable for this turn.")
         }
         for action in turn.calls.flatMap(\.actions) where action.type == "accessibility" {
             guard turn.calls.count == 1, turn.calls[0].actions.count == 1,

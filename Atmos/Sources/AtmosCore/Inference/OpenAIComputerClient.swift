@@ -35,7 +35,8 @@ public actor OpenAIComputerClient {
     public func begin(command: String, frame: ScreenshotFrame, context: String, activeTask: String = "",
                       pendingClarification: String? = nil,
                       accessibility: AccessibilitySnapshot? = nil, continuingTask: Bool = false,
-                      reviewRequired: Bool = false, timing: PipelineTiming? = nil) async throws -> ModelTurn {
+                      reviewRequired: Bool = false, availableAnswerIDs: [UUID] = [], pendingAnswerID: UUID? = nil,
+                      timing: PipelineTiming? = nil) async throws -> ModelTurn {
         var preparation = timing?.begin("Responses input preparation")
         var preparationOutcome: PipelineTiming.Outcome = .failed
         defer { timing?.end(preparation, outcome: Task.isCancelled ? .cancelled : preparationOutcome) }
@@ -49,11 +50,12 @@ public actor OpenAIComputerClient {
         let input = ComputerRequest.initialInput(
             command: command, frame: frame, context: context, activeTask: activeTask,
             pendingClarification: pendingClarification, accessibility: accessibility?.contextText ?? "",
-            continuingTask: continuingTask
+            continuingTask: continuingTask,
+            pendingAnswerID: pendingAnswerID.flatMap { availableAnswerIDs.contains($0) ? $0 : nil }
         )
         let policy = ComputerRequestPolicy(
             reviewRequired: reviewRequired, allowIgnore: !continuingTask, allowAnswer: !continuingTask,
-            accessibility: accessibility
+            accessibility: accessibility, availableAnswerIDs: Set(availableAnswerIDs)
         )
         preparationOutcome = .succeeded
         timing?.end(preparation, outcome: preparationOutcome)

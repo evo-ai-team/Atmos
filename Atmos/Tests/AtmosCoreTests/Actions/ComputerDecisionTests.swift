@@ -457,6 +457,19 @@ final class ComputerDecisionTests: XCTestCase {
         }
     }
 
+    func testLatestAnswerHasALocalRouteBoundToThisSelection() throws {
+        let first = UUID(), latest = UUID()
+        let menu = ComputerDecisionOptions(snapshot: AccessibilitySnapshot(processID: 7, elements: []),
+                                           allowNativeActions: false, allowCompletion: false,
+                                           classifyTaskRelationship: true, availableAnswerIDs: [first, latest], pendingAnswerID: first)
+        XCTAssertEqual(try menu.resolve(relationshipResult("show_latest_answer", relationship: "needs_planner", for: menu)),
+                       .showAnswer(latest))
+        XCTAssertEqual(try menu.resolve(relationshipResult("show_pending_answer", relationship: "needs_planner", for: menu)),
+                       .showAnswer(first))
+        let empty = options([])
+        XCTAssertThrowsError(try empty.resolve(result("show_latest_answer", for: empty)))
+    }
+
     private func control(id: String, label: String = "Search", actions: [String] = ["AXPress"]) -> AccessibilityElement {
         AccessibilityElement(id: id, role: "AXButton", label: label, enabled: true, actions: actions,
                              screenshotBounds: AccessibilityBounds(x: 20, y: 30, width: 80, height: 30))

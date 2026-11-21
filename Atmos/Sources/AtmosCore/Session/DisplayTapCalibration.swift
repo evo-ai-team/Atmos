@@ -1,28 +1,37 @@
 import Foundation
 import simd
 
-/// A fit stores three aggregate measurements. Raw sensor traces stay in the
-/// calibration session and never enter the persisted profile.
+/// Only fitted measurements persist. Profiles from the older fixed-threshold
+/// detector lack the version and impact signature required for activation.
 public struct DisplayTapProfile: Codable, Equatable, Sendable {
-    public static let thresholdRange = 0.001...0.120
+    public static let thresholdRange = 0.006...0.20
+    public let version: Int
     public let threshold: Double
+    public let maximumPeak: Double
+    public let axis: SIMD3<Double>
     public let ringingInterval: TimeInterval
     public let doubleTapInterval: TimeInterval
 
-    public init(threshold: Double, ringingInterval: TimeInterval, doubleTapInterval: TimeInterval) {
+    public init(threshold: Double, maximumPeak: Double, axis: SIMD3<Double>,
+                ringingInterval: TimeInterval, doubleTapInterval: TimeInterval) {
+        version = 2
         self.threshold = threshold
+        self.maximumPeak = maximumPeak
+        self.axis = axis
         self.ringingInterval = ringingInterval
         self.doubleTapInterval = doubleTapInterval
     }
 
     public var isValid: Bool {
-        Self.thresholdRange.contains(threshold) && (0.065...0.32).contains(ringingInterval)
-            && (0.16...0.85).contains(doubleTapInterval) && ringingInterval + 0.025 < doubleTapInterval
+        version == 2 && Self.thresholdRange.contains(threshold) && maximumPeak > threshold
+            && maximumPeak <= 16 && (0.99...1.01).contains(simd_length(axis))
+            && (0.065...0.32).contains(ringingInterval) && (0.16...0.85).contains(doubleTapInterval)
+            && ringingInterval + 0.025 < doubleTapInterval
     }
 }
 
 public struct DisplayTapCalibration {
-    public enum Step: Equatable, Sendable { case baseline, single(Int), double(Int), complete }
+    public enum Step: Equatable, Sendable { case single, double, complete }
     public struct Sample: Sendable {
         public let time: TimeInterval
         public let acceleration: SIMD3<Double>
@@ -33,18 +42,18 @@ public struct DisplayTapCalibration {
     }
 
     public enum Failure: LocalizedError, Equatable {
-        case interrupted, movingBaseline, noTap, unclearMotion, wrongCount(Int), unclearPair, inconsistent, incompatibleSingle
+        case interrupted, movingBaseline, beforeCue, noTap, unclearMotion, wrongCount(Int), unclearPair, inconsistent
         public var errorDescription: String? {
             switch self {
             case .interrupted: return "The motion sensor missed part of this sample. Try again."
             case .movingBaseline: return "Keep the Mac still while it measures the background vibration."
+            case .beforeCue: return "The display moved before recording began. Record again, then tap when prompted."
             case .noTap: return "No clear tap was detected. Try a slightly firmer tap."
             case .unclearMotion: return "Let the display settle, then tap without moving the lid."
             case .wrongCount(let count):
                 return count == 1 ? "Try one tap, then leave the display still." : "Try two distinct taps, then leave the display still."
             case .unclearPair: return "Use two distinct taps with a short pause between them."
-            case .inconsistent: return "That sample differed from the earlier taps. Try again at your usual strength."
-            case .incompatibleSingle: return "That tap could not be separated from your saved double taps. Let the lid settle and repeat this single tap."
+            case .inconsistent: return "Tap the same spot on the display with similar pressure each time."
             }
         }
     }
@@ -53,80 +62,55 @@ public struct DisplayTapCalibration {
         let start: TimeInterval
         var end: TimeInterval
         var peak: Double
+        var direction: SIMD3<Double>
     }
     private struct Trial {
+        let baseline: [Sample]
+        let noiseThreshold: Double
         let samples: [Sample]
         let impacts: [Impact]
     }
-    private var noiseThreshold: Double?
-    private var quietBaseline: [Sample] = []
-    private var singles: [Trial] = []
-    private var doubles: [Trial] = []
+    private var single: Trial?
     private var fitted: DisplayTapProfile?
     public init() {}
 
-    public var step: Step {
-        if noiseThreshold == nil { return .baseline }
-        if singles.count < 3 { return .single(singles.count + 1) }
-        if doubles.count < 3 { return .double(doubles.count + 1) }
-        return .complete
-    }
+    public var step: Step { fitted != nil ? .complete : single == nil ? .single : .double }
 
-    public mutating func redoSingles() { singles.removeAll(); fitted = nil }
-    public mutating func redoDoubles() { doubles.removeAll(); fitted = nil }
+    public mutating func redoSingle() { single = nil; fitted = nil }
+    public mutating func redoDouble() { fitted = nil }
 
-    /// Feed a whole cued window, including still samples before and after the
-    /// gesture. Invalid input leaves the current trial available to repeat.
-    public mutating func evaluate(_ samples: [Sample]) throws -> DisplayTapProfile? {
-        let current = step
-        if current == .complete { return fitted }
-        try Self.checkCoverage(samples, minimumSpan: current == .baseline ? 1.85 : 0.75)
-        if current == .baseline {
-            noiseThreshold = try Self.measureNoise(samples)
-            quietBaseline = samples
-            return nil
+    /// Each click captures the quiet lead-in and one gesture. Keep an accepted
+    /// single across failed double attempts, and validate against the actual
+    /// runtime classifier before accepting either recording.
+    public mutating func evaluate(_ samples: [Sample], baseline: [Sample], cueAt: TimeInterval) throws -> DisplayTapProfile? {
+        if let fitted { return fitted }
+        try Self.checkCoverage(baseline, minimumSpan: 0.20)
+        try Self.checkCoverage(samples, minimumSpan: 0.35)
+        let noise = try Self.measureNoise(baseline)
+        let detectionFloor = max(Self.minimumImpact * 0.65, noise, (single?.impacts.first?.peak ?? 0) * 0.42)
+        let bursts = try Self.findBursts(samples, threshold: detectionFloor)
+        // The quiet prefix arms replay. It can never supply a tap in response
+        // to a prompt that had not yet appeared on screen.
+        guard bursts.allSatisfy({ $0.start > cueAt }) else { throw Failure.beforeCue }
+        let ringLimit = single.map { min(0.28, Self.maxSpan([$0]) + 0.04) } ?? 0.27
+        let impacts = try Self.group(bursts, count: single == nil ? 1 : 2, ringLimit: ringLimit)
+        guard impacts.allSatisfy({ $0.peak >= max(Self.minimumImpact, noise * 2.0) }) else { throw Failure.noTap }
+        let trial = Trial(baseline: baseline, noiseThreshold: noise, samples: samples, impacts: impacts)
+        if let single {
+            let profile = try Self.fit([single, trial])
+            fitted = profile
+            return profile
         }
-        guard let noiseThreshold else { throw Failure.interrupted }
-        switch current {
-        case .single:
-            let bursts = try Self.findBursts(samples, threshold: noiseThreshold)
-            let trial = Trial(samples: samples, impacts: try Self.group(bursts, count: 1, ringLimit: 0.27))
-            let next = singles + [trial]
-            // Validate even early samples with the same online detector used
-            // after saving. A later incompatible trial cannot poison the fit.
-            _ = try fit(next, doubles: [], noiseThreshold: noiseThreshold)
-            var updated: DisplayTapProfile?
-            if !doubles.isEmpty {
-                // A redo replaces a single only when it remains compatible with
-                // the retained pairs. Both categories survive a rejected retry.
-                do { updated = try fit(next, doubles: doubles, noiseThreshold: noiseThreshold) }
-                catch { throw Failure.incompatibleSingle }
-            }
-            singles = next
-            if singles.count == 3, doubles.count == 3, let updated {
-                fitted = updated
-                return updated
-            }
-        case .double:
-            // The three cued singles give an observed lower bound on the
-            // user's impact strength. A much smaller room vibration late in
-            // the double-tap window should not be labeled a third finger tap.
-            let singlePeak = singles.compactMap { $0.impacts.first?.peak }.min()!
-            let bursts = try Self.findBursts(samples, threshold: max(noiseThreshold, singlePeak * 0.42))
-            let ringLimit = min(0.28, Self.maxSpan(singles) + 0.04)
-            let impacts = try Self.group(bursts, count: 2, ringLimit: ringLimit)
-            let next = doubles + [Trial(samples: samples, impacts: impacts)]
-            let candidate = try fit(singles, doubles: next, noiseThreshold: noiseThreshold)
-            doubles = next
-            if doubles.count == 3 { fitted = candidate; return candidate }
-        case .baseline, .complete: break
-        }
+        _ = try Self.fit([trial])
+        single = trial
         return nil
     }
 
+    private static let minimumImpact = 0.008
+
     private static func checkCoverage(_ samples: [Sample], minimumSpan: TimeInterval) throws {
         guard let first = samples.first, let last = samples.last,
-              (32...2048).contains(samples.count), last.time - first.time >= minimumSpan else { throw Failure.interrupted }
+              (12...2048).contains(samples.count), last.time - first.time >= minimumSpan else { throw Failure.interrupted }
         var previous: TimeInterval?
         for sample in samples {
             let a = sample.acceleration
@@ -183,7 +167,10 @@ public struct DisplayTapCalibration {
             let level = simd_distance(rest, sample.acceleration)
             let step = simd_distance(previous.acceleration, sample.acceleration)
             if var active = burst {
-                active.peak = max(active.peak, level)
+                if level > active.peak {
+                    active.peak = level
+                    active.direction = sample.acceleration - rest
+                }
                 if level > max(threshold * 0.72, active.peak * 0.14) { active.end = sample.time }
                 guard active.end - active.start < 0.265 else { throw Failure.unclearMotion }
                 if sample.time - active.end >= 0.035 {
@@ -191,7 +178,7 @@ public struct DisplayTapCalibration {
                     burst = nil
                 } else { burst = active }
             } else if level >= threshold, step >= threshold * 0.35 {
-                burst = Impact(start: sample.time, end: sample.time, peak: level)
+                burst = Impact(start: sample.time, end: sample.time, peak: level, direction: sample.acceleration - rest)
             } else {
                 rest += (sample.acceleration - rest) * (1 - exp(-(sample.time - previous.time) / 0.08))
             }
@@ -215,7 +202,10 @@ public struct DisplayTapCalibration {
                 let rebound = gap <= ringLimit && burst.peak <= impact.peak * 0.58
                 if gap < 0.065 || rebound {
                     impacts[impacts.count - 1].end = burst.end
-                    impacts[impacts.count - 1].peak = max(impact.peak, burst.peak)
+                    if burst.peak > impact.peak {
+                        impacts[impacts.count - 1].peak = burst.peak
+                        impacts[impacts.count - 1].direction = burst.direction
+                    }
                     continue
                 }
             }
@@ -235,38 +225,43 @@ public struct DisplayTapCalibration {
         trials.flatMap(\.impacts).map { $0.end - $0.start }.max() ?? 0
     }
 
-    private func fit(_ singles: [Trial], doubles: [Trial], noiseThreshold: Double) throws -> DisplayTapProfile {
-        let trials = singles + doubles
-        let ringing = max(0.075, Self.maxSpan(trials) + 0.035)
-        let pairGaps = doubles.map { $0.impacts[1].start - $0.impacts[0].start }
-        guard ringing <= 0.32, pairGaps.allSatisfy({ $0 > ringing + 0.01 }) else { throw Failure.unclearPair }
-        let longest = pairGaps.max() ?? 0.25
-        let window = max(0.16, ringing + 0.045, longest + max(0.035, longest * 0.16))
-        let weakest = trials.flatMap(\.impacts).map(\.peak).min()!
-        // Try the midpoint of the noise/tap separation first. Replay the actual
-        // trials before committing so weak or differently shaped taps survive.
-        let quiet = Trial(samples: quietBaseline, impacts: [])
-        for fraction in [0.55, 0.70, 0.85, 0.40, 0.25, 0.10] {
-            let threshold = min(DisplayTapProfile.thresholdRange.upperBound,
-                                max(DisplayTapProfile.thresholdRange.lowerBound, noiseThreshold + (weakest - noiseThreshold) * fraction))
-            let profile = DisplayTapProfile(threshold: threshold, ringingInterval: ringing, doubleTapInterval: min(0.85, window))
-            if profile.isValid, Self.replays(quiet, with: profile),
-               trials.allSatisfy({ Self.replays($0, with: profile) }) { return profile }
+    private static func fit(_ trials: [Trial]) throws -> DisplayTapProfile {
+        let impacts = trials.flatMap(\.impacts)
+        let peaks = impacts.map(\.peak).sorted()
+        let weakest = peaks[0]
+        let strongest = peaks[peaks.count - 1]
+        guard weakest >= strongest * 0.45 else { throw Failure.inconsistent }
+        let reference = simd_normalize(impacts[0].direction)
+        let aligned = impacts.map { impact -> SIMD3<Double> in
+            let unit = simd_normalize(impact.direction)
+            return simd_dot(reference, unit) < 0 ? -unit : unit
         }
-        throw Failure.inconsistent
+        let axis = simd_normalize(aligned.reduce(.zero, +))
+        guard aligned.allSatisfy({ simd_dot(axis, $0) >= 0.7 }) else { throw Failure.inconsistent }
+        let ringing = max(0.09, maxSpan(trials) + 0.035)
+        let gap = trials.last.flatMap { $0.impacts.count == 2 ? $0.impacts[1].start - $0.impacts[0].start : nil }
+        guard ringing <= 0.32, gap.map({ $0 > ringing + 0.01 }) ?? true else { throw Failure.unclearPair }
+        let window = max(ringing + 0.05, (gap ?? 0.25) * 1.18 + 0.025)
+        let noise = trials.map(\.noiseThreshold).max()!
+        let threshold = max(DisplayTapProfile.thresholdRange.lowerBound, weakest * 0.76,
+                            peaks[peaks.count / 2] * 0.63, noise * 1.7)
+        let profile = DisplayTapProfile(threshold: threshold, maximumPeak: min(16, strongest * 3),
+                                        axis: axis, ringingInterval: ringing, doubleTapInterval: min(0.85, max(0.16, window)))
+        guard profile.isValid, trials.allSatisfy({ trial in
+            events(trial.baseline, profile: profile).isEmpty &&
+            events(trial.samples, profile: profile) == [.firstTapPending, trial.impacts.count == 1 ? .singleTap : .doubleTap]
+        }) else { throw Failure.inconsistent }
+        return profile
     }
 
-    private static func replays(_ trial: Trial, with profile: DisplayTapProfile) -> Bool {
+    private static func events(_ samples: [Sample], profile: DisplayTapProfile) -> [DisplayTapRecognizer.Event] {
         var recognizer = DisplayTapRecognizer(profile: profile)
-        var events: [DisplayTapRecognizer.Event] = []
-        for sample in trial.samples {
-            let a = sample.acceleration
-            events += recognizer.sample(x: a.x, y: a.y, z: a.z, at: sample.time)
+        var events = samples.flatMap { sample in
+            recognizer.sample(x: sample.acceleration.x, y: sample.acceleration.y, z: sample.acceleration.z, at: sample.time)
         }
-        if trial.impacts.isEmpty { return events.isEmpty }
-        if trial.impacts.count == 2 { return events == [.firstTapPending, .doubleTap] }
-        // A tap late in the cue may still be waiting for its pair deadline.
-        return events == [.firstTapPending, .singleTap]
-            || (events == [.firstTapPending] && recognizer.pendingDeadline != nil)
+        // A trailing quiet interval was observed. For a single recorded just
+        // before the end of its window, validate the pending classification too.
+        if events == [.firstTapPending], recognizer.pendingDeadline != nil { events.append(.singleTap) }
+        return events
     }
 }

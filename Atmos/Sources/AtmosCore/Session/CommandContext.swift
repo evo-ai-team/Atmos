@@ -17,6 +17,7 @@ public struct CommandContext: Sendable {
     }
 
     public struct QuestionExchange: Sendable, Equatable, Encodable {
+        public let id: UUID
         public let question: String
         public let brief: String
         public let text: String
@@ -32,8 +33,8 @@ public struct CommandContext: Sendable {
 
     /// Store exactly what was returned, including details absent from the notch.
     /// Answering a question never creates, finishes, or replaces a command.
-    public mutating func recordAnswer(question: String, answer: ModelTurn.Answer) {
-        answers.append(QuestionExchange(question: question, brief: answer.brief, text: answer.text,
+    public mutating func recordAnswer(question: String, answer: ModelTurn.Answer, id: UUID = UUID()) {
+        answers.append(QuestionExchange(id: id, question: question, brief: answer.brief, text: answer.text,
                                         afterCommandCount: entries.count))
     }
 

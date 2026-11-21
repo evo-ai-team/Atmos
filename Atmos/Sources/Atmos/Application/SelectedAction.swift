@@ -33,6 +33,9 @@ struct SelectedAction {
             let element = try request.resolve(in: tree)
             operation = .native(element, action: request.action, description: lunaTurn.calls[0].description)
             outcome = "Accessibility action"
+        } else if let id = lunaTurn.showAnswerID {
+            operation = .showAnswer(id)
+            outcome = "Open answer"
         } else if lunaTurn.answer != nil {
             operation = .generate
             outcome = "Answer"
@@ -66,6 +69,7 @@ struct SelectedAction {
         case .review: route = "Responses clarification"
         case .complete: route = "Complete"
         case .ignore: route = "Ignore"
+        case .showAnswer: route = "Open answer"
         }
 
         // Native selection cannot rewrite a goal. Preserve the accepted words and
@@ -113,6 +117,8 @@ struct SelectedAction {
             return ModelTurn(id: UUID().uuidString, calls: [], message: "Done")
         case .ignore:
             return ModelTurn(id: UUID().uuidString, calls: [], ignored: true)
+        case .showAnswer(let id):
+            return ModelTurn(id: UUID().uuidString, calls: [], showAnswerID: id)
         case .generate, .review:
             return nil
         }

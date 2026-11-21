@@ -8,7 +8,7 @@ final class AtmosThinkingIndicator: NSView {
     static var preferredSide: CGFloat { Design.side }
 
     private enum State {
-        case hidden, running, exiting
+        case hidden, running, exiting, drawingCheck, check
     }
 
     private enum Design {
@@ -29,15 +29,20 @@ final class AtmosThinkingIndicator: NSView {
     }
 
     private let orbit = CALayer()
+    private let check = CAShapeLayer()
     private var dots: [Dot] = []
     private var state: State = .hidden
     private var reduceMotion = false
     private var generation = 0
     private var exitCompletion: (() -> Void)?
+    private var checkCompletion: (() -> Void)?
+    private var minimumOrbitTask: Task<Void, Never>?
+    private var startedAt: CFTimeInterval = 0
 
     /// Includes the brief sequential exit, so the surrounding notch can wait
     /// for the final bead to disappear before displaying its action label.
     var isVisible: Bool { state != .hidden }
+    var hasFinishedCheck: Bool { state == .check }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -46,6 +51,19 @@ final class AtmosThinkingIndicator: NSView {
         orbit.masksToBounds = false
         orbit.bounds = CGRect(x: 0, y: 0, width: Design.side, height: Design.side)
         layer?.addSublayer(orbit)
+        check.bounds = orbit.bounds
+        let path = CGMutablePath()
+        path.move(to: Self.checkStart)
+        path.addLine(to: CGPoint(x: 12, y: 9))
+        path.addLine(to: CGPoint(x: 24, y: 22))
+        check.path = path
+        check.fillColor = nil
+        check.strokeColor = NSColor.white.cgColor
+        check.lineWidth = 3.4
+        check.lineCap = .round
+        check.lineJoin = .round
+        check.isHidden = true
+        layer?.addSublayer(check)
         dots = (0..<Design.count).map { _ in Self.makeDot() }
         for (index, dot) in dots.enumerated() {
             dot.envelope.position = Self.position(for: index)
@@ -67,6 +85,7 @@ final class AtmosThinkingIndicator: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         orbit.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        check.position = orbit.position
         CATransaction.commit()
     }
 
@@ -83,7 +102,7 @@ final class AtmosThinkingIndicator: NSView {
     func start(reduceMotion: Bool) {
         if state == .running, self.reduceMotion == reduceMotion { return }
 
-        let wasHidden = state == .hidden
+        let wasHidden = state == .hidden || state == .check || state == .drawingCheck
         let previousRotation = rotation(of: orbit)
         let starts = dots.map { dot in
             (scale(of: dot.envelope) * scale(of: dot.bead),
@@ -91,13 +110,19 @@ final class AtmosThinkingIndicator: NSView {
              dot.envelope.presentation()?.position ?? dot.envelope.position)
         }
         generation += 1
+        minimumOrbitTask?.cancel()
+        checkCompletion = nil
         exitCompletion = nil
         state = .running
+        startedAt = CACurrentMediaTime()
         self.reduceMotion = reduceMotion
         isHidden = false
+        setAccessibilityElement(true)
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        check.removeAllAnimations()
+        check.isHidden = true
         orbit.removeAllAnimations()
         orbit.transform = reduceMotion ? CATransform3DIdentity
             : CATransform3DMakeRotation(previousRotation, 0, 0, 1)
@@ -169,6 +194,11 @@ final class AtmosThinkingIndicator: NSView {
             completion()
             return
         }
+        if state == .check || state == .drawingCheck {
+            stopImmediately()
+            completion()
+            return
+        }
 
         // Transcript updates can arrive several times during the exit. Keep
         // its animation clock and deliver only the latest requested transition.
@@ -229,14 +259,140 @@ final class AtmosThinkingIndicator: NSView {
 
     func stopImmediately() {
         generation += 1
+        minimumOrbitTask?.cancel()
+        minimumOrbitTask = nil
+        checkCompletion = nil
         exitCompletion = nil
         state = .hidden
         isHidden = true
+        check.removeAllAnimations()
+        check.isHidden = true
         orbit.removeAllAnimations()
         dots.forEach {
             $0.envelope.removeAllAnimations()
             $0.bead.removeAllAnimations()
         }
+    }
+
+    private static let checkStart = CGPoint(x: 6, y: 15)
+
+    func showAnswerCheck(reduceMotion: Bool, completion: @escaping () -> Void) {
+        if state == .check { completion(); return }
+        checkCompletion = completion
+        if state == .drawingCheck { return }
+
+        let wasRunning = state == .running
+        let hasRing = wasRunning || state == .exiting
+        generation += 1
+        let expected = generation
+        exitCompletion = nil
+        state = .drawingCheck
+        isHidden = false
+        // The separate checkmark button supplies the accessible action.
+        setAccessibilityElement(false)
+        guard hasRing && !reduceMotion else { finishCheck(generation: expected); return }
+
+        // Fast replies can arrive before the ring has spread out. Give that
+        // entrance time to become visible before gathering its actual beads.
+        let wait = wasRunning ? Design.appearanceDuration - (CACurrentMediaTime() - startedAt) : 0
+        if wait > 0 {
+            minimumOrbitTask = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(wait)) } catch { return }
+                guard let self, self.generation == expected else { return }
+                self.mergeIntoCheck(generation: expected)
+            }
+        } else {
+            mergeIntoCheck(generation: expected)
+        }
+    }
+
+    private func mergeIntoCheck(generation expected: Int) {
+        let angle = rotation(of: orbit)
+        let center = CGPoint(x: Design.side / 2, y: Design.side / 2)
+        let mergeDuration = 0.29
+        let drawDelay = mergeDuration + 0.08
+        let drawDuration = 0.30
+        let now = CACurrentMediaTime()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { [weak self] in
+            Task { @MainActor in self?.finishCheck(generation: expected) }
+        }
+        orbit.removeAllAnimations()
+        orbit.transform = CATransform3DIdentity
+        for (index, dot) in dots.enumerated() {
+            let displayed = dot.envelope.presentation() ?? dot.envelope
+            let dx = displayed.position.x - center.x, dy = displayed.position.y - center.y
+            let position = CGPoint(x: center.x + dx * cos(angle) - dy * sin(angle),
+                                   y: center.y + dx * sin(angle) + dy * cos(angle))
+            let startingScale = scale(of: dot.envelope) * scale(of: dot.bead)
+            let startingOpacity = displayed.opacity
+            dot.envelope.removeAllAnimations()
+            dot.bead.removeAllAnimations()
+            dot.bead.transform = CATransform3DIdentity
+            dot.envelope.transform = CATransform3DIdentity
+            dot.envelope.position = Self.checkStart
+            dot.envelope.opacity = 0
+            let gather = CABasicAnimation(keyPath: "position")
+            gather.fromValue = position
+            gather.toValue = Self.checkStart
+            gather.duration = mergeDuration
+            gather.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            let shrink = CABasicAnimation(keyPath: "transform.scale")
+            shrink.fromValue = startingScale
+            shrink.toValue = check.lineWidth / Design.diameter
+            shrink.duration = mergeDuration
+            shrink.fillMode = .forwards
+            let hold = CAKeyframeAnimation(keyPath: "opacity")
+            hold.values = [startingOpacity, 1, 1, 0]
+            hold.keyTimes = [0, 0.5, 0.98, 1]
+            hold.duration = index == 0 ? drawDelay + drawDuration : mergeDuration
+            var animations: [CAAnimation] = [gather, shrink, hold]
+            if index == 0 {
+                let tip = CAKeyframeAnimation(keyPath: "position")
+                tip.path = check.path
+                tip.calculationMode = .paced
+                tip.beginTime = drawDelay
+                tip.duration = drawDuration
+                animations.append(tip)
+            }
+            let group = CAAnimationGroup()
+            group.animations = animations
+            group.beginTime = dot.envelope.convertTime(now, from: nil)
+            group.duration = hold.duration
+            dot.envelope.add(group, forKey: "gatherAndTrace")
+        }
+        check.isHidden = false
+        check.strokeEnd = 1
+        let trace = CABasicAnimation(keyPath: "strokeEnd")
+        trace.fromValue = 0
+        trace.toValue = 1
+        trace.fillMode = .backwards
+        trace.beginTime = check.convertTime(now, from: nil) + drawDelay
+        trace.duration = drawDuration
+        trace.timingFunction = CAMediaTimingFunction(name: .linear)
+        check.add(trace, forKey: "trace")
+        CATransaction.commit()
+    }
+
+    private func finishCheck(generation expected: Int) {
+        guard expected == generation, state == .drawingCheck else { return }
+        state = .check
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        orbit.removeAllAnimations()
+        for dot in dots {
+            dot.envelope.removeAllAnimations()
+            dot.bead.removeAllAnimations()
+            dot.envelope.opacity = 0
+        }
+        check.removeAllAnimations()
+        check.strokeEnd = 1
+        check.isHidden = false
+        CATransaction.commit()
+        let completion = checkCompletion
+        checkCompletion = nil
+        completion?()
     }
 
     private func completeExit(generation expectedGeneration: Int) {

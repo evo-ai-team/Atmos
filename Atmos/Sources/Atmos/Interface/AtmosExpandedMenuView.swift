@@ -2,13 +2,16 @@ import AppKit
 import SwiftUI
 
 enum AtmosMenuPage: Equatable {
-    case home, settings
+    case home, settings, calibration
+    case answer(UUID)
 }
 
 @MainActor
 final class AtmosMenuNavigation: ObservableObject {
     @Published var page: AtmosMenuPage
     @Published var isFullScreen = false
+    @Published var isAtFullHeight = false
+    @Published var presentationPhase = MenuTransitionPhase.concealed
 
     init(page: AtmosMenuPage = .home) { self.page = page }
 }
@@ -31,8 +34,21 @@ struct AtmosExpandedMenuView: View {
                         case .home:
                             home(size: geometry.size, barHeight: barHeight)
                         case .settings:
-                            AtmosMenuSettingsView(model: model, perform: perform)
-                                .padding(.top, barHeight)
+                            AtmosMenuSettingsView(model: model, perform: perform, isFullScreen: navigation.isFullScreen) {
+                                navigation.page = .calibration
+                            }
+                            .padding(.top, barHeight)
+                        case .calibration:
+                            DisplayTapCalibrationView(monitor: model.displayTaps, isCurrent: navigation.page == .calibration) {
+                                navigation.page = .settings
+                            }
+                            .padding(.top, barHeight)
+                        case .answer(let id):
+                            if let answer = model.answers.first(where: { $0.id == id }) {
+                                AtmosAnswerReader(answer: answer, navigation: navigation, onRead: model.didReadFullScreenAnswer)
+                                    .id(id)
+                                    .padding(.top, barHeight)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -41,17 +57,36 @@ struct AtmosExpandedMenuView: View {
                     HStack(spacing: short ? 7 : 10) {
                         toolbarButton(navigation.isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                                       label: navigation.isFullScreen ? "Exit Full Screen" : "Enter Full Screen", short: short) {
+                            if !navigation.isFullScreen, let pending = model.pendingAnswerID {
+                                // Expanding an explicitly selected answer keeps that answer.
+                                switch navigation.page {
+                                case .home, .settings: navigation.page = .answer(pending)
+                                case .calibration, .answer: break
+                                }
+                            }
                             navigation.isFullScreen.toggle()
                         }
                         toolbarButton(model.microphoneMuted ? "mic.slash.fill" : "mic.fill",
                                       label: model.microphoneMuted ? "Unmute microphone" : "Mute microphone",
                                       short: short, action: model.toggleMenuMicrophoneMute)
                         Spacer(minLength: 0)
-                        toolbarButton(displayed == .home ? "gearshape" : "house",
-                                      label: navigation.page == .home ? "Settings" : "Home", short: short) {
-                            navigation.page = navigation.page == .home ? .settings : .home
+                        if let pending = model.pendingAnswerID, displayed != .answer(pending) {
+                            toolbarButton("checkmark", label: "Read answer in full screen", short: short) {
+                                model.openAnswer(pending)
+                            }
                         }
-                        toolbarButton("xmark", label: "Close menu (Esc)", short: short, action: dismiss)
+                        if displayed == .calibration {
+                            toolbarButton("chevron.backward", label: "Back to Settings", short: short) {
+                                navigation.page = .settings
+                            }
+                        } else {
+                            toolbarButton(displayed == .home ? "gearshape" : "house",
+                                          label: navigation.page == .home ? "Settings" : "Home", short: short) {
+                                navigation.page = navigation.page == .home ? .settings : .home
+                            }
+                        }
+                        toolbarButton("xmark", label: displayed == .calibration ? "Close menu" : "Close menu (Esc)",
+                                      short: short, action: dismiss)
                     }
                     .padding(.horizontal, max(14, min(40, geometry.size.width * 0.031)))
                     .padding(.top, short ? 3 : 9)
@@ -60,7 +95,12 @@ struct AtmosExpandedMenuView: View {
         }
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
-        .onChange(of: navigation.page, initial: true) { _, page in
+        .environment(\.menuTransition, navigation.presentationPhase)
+        .allowsHitTesting(navigation.presentationPhase == .visible)
+        .accessibilityHidden(navigation.presentationPhase != .visible)
+        .onChange(of: navigation.page, initial: true) { previous, page in
+            if page == .calibration { model.displayTaps.startCalibration() }
+            else if previous == .calibration { model.displayTaps.cancelCalibration() }
             model.setMenuVoicePageVisible(page == .home)
         }
         .onDisappear { model.setMenuVoicePageVisible(false) }
@@ -93,7 +133,7 @@ struct AtmosExpandedMenuView: View {
         let padding: CGFloat = short ? 6 : 9
         let baseHeight = controlSize + padding * 2
         let top = max(barHeight, (size.height - titleHeight - gap - baseHeight) / 2)
-        let error = model.menuVoiceError.flatMap { $0.isEmpty ? nil : $0 }
+        let error = (model.menuVoiceError ?? model.menuResponseError).flatMap { $0.isEmpty ? nil : $0 }
         let errorSpace: CGFloat = error == nil ? 0 : gap + (short ? 18 : 36)
         let maxEditorHeight = max(controlSize, size.height - top - titleHeight - gap - padding * 2 - 12 - errorSpace)
         let fontSize: CGFloat = short || narrow ? 17 : 20
@@ -145,11 +185,17 @@ struct AtmosExpandedMenuView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: controlSize)
                 Button(action: send) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: fontSize - 3, weight: .semibold))
-                        .frame(width: controlSize, height: controlSize)
-                        .background(.white.opacity(0.16), in: Circle())
-                        .contentShape(.circle)
+                    Group {
+                        if model.menuIsCheckingInput && model.menuCommandDraft.isEmpty {
+                            ProgressView().controlSize(.small).accessibilityLabel("Thinking")
+                        } else {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: fontSize - 3, weight: .semibold))
+                        }
+                    }
+                    .frame(width: controlSize, height: controlSize)
+                    .background(.white.opacity(0.16), in: Circle())
+                    .contentShape(.circle)
                 }
                 .buttonStyle(.plain)
                 .disabled(model.menuCommandDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -181,18 +227,22 @@ struct AtmosExpandedMenuView: View {
 
     private func send() {
         guard navigation.page == .home, let command = model.takeMenuCommandDraft() else { return }
-        perform { model.submit(command) }
+        model.submitMenuInput(command, fullScreen: navigation.isFullScreen, afterClosing: perform)
     }
 }
 
 // A nested Settings tab change and a change of the enclosing page share the
 // same stages. The outer transition still reaches elements inside a nested deck.
-private enum MenuTransitionPhase { case visible, leaving, concealed }
+enum MenuTransitionPhase {
+    case visible, leaving, concealed
+    // Includes the final row's stagger and fade.
+    static let cascadeDuration = Duration.milliseconds(280)
+}
 private struct MenuTransitionKey: EnvironmentKey {
     static let defaultValue = MenuTransitionPhase.visible
 }
 
-private extension EnvironmentValues {
+extension EnvironmentValues {
     var menuTransition: MenuTransitionPhase {
         get { self[MenuTransitionKey.self] }
         set { self[MenuTransitionKey.self] = newValue }
@@ -226,7 +276,7 @@ struct AtmosMenuPageTransition<Page: Equatable, Content: View>: View {
                 guard !reduceMotion else { displayed = page; phase = .visible; return }
                 phase = .leaving
                 do {
-                    try await Task.sleep(for: .milliseconds(280))
+                    try await Task.sleep(for: MenuTransitionPhase.cascadeDuration)
                     // Mount new elements concealed before their entrance begins.
                     phase = .concealed
                     displayed = page
@@ -247,7 +297,7 @@ private struct MenuElementTransition: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
-        let visible = phase == .visible || reduceMotion
+        let visible = phase == .visible
         let index = min(4, max(-1, order))
         let delay = Double(visible ? 4 - index : index + 1) * 0.022
         content

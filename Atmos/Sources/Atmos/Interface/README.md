@@ -10,10 +10,11 @@ input.
   full-screen panel, anchors its black top edge to the display, and restores
   foreground focus after submission.
 - `AtmosExpandedMenuView.swift` hosts the centered command editor, dictation
-  controls, and transitions between Home and Settings.
+  controls, and transitions between Home, Settings, calibration, and the answer reader.
 - `Settings/` contains setup, display-tap calibration, permission controls,
   usage, and local activity diagnostics.
-- `Notch/` contains the noninteractive everyday overlay and its animations.
+- `AtmosAnswerReader.swift` displays a selected question and its complete, selectable answer.
+- `Notch/` contains the compact overlay, loading animation, and answer-ready checkmark.
 
 The expanded menu accepts keyboard input. The everyday notch preserves focus
 in the application Atmos is controlling.

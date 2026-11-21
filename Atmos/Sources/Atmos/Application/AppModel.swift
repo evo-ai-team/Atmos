@@ -27,6 +27,8 @@ final class AppModel: ObservableObject {
     @Published var error: String?
     @Published var activity: [Activity] = []
     @Published private(set) var answers: [QuestionAnswer] = []
+    @Published private(set) var pendingAnswerID: UUID?
+    @Published private(set) var menuResponseError: String?
     @Published private(set) var actionHistory = ActionHistory()
     @Published private(set) var timingTraces: [PipelineTiming] = []
     @Published private(set) var latestCommandTiming: PipelineTiming?
@@ -35,7 +37,6 @@ final class AppModel: ObservableObject {
             preferences.save()
             applyVoicePreferences()
             if started, preferences.displayTapsEnabled != oldValue.displayTapsEnabled
-                || preferences.displayTapThreshold != oldValue.displayTapThreshold
                 || preferences.displayTapProfile != oldValue.displayTapProfile {
                 configureDisplayTaps()
             }
@@ -69,6 +70,7 @@ final class AppModel: ObservableObject {
     private var menuVoiceStartup: Task<Void, Never>?
     private var regularStartupID: UUID?
     private var regularStartup: Task<Void, Never>?
+    private var activateOnVoiceStart = false
 
     var menuCommandDraft: String { menuDraft.text }
     var microphoneMuted: Bool { preferences.microphoneMuted }
@@ -102,7 +104,28 @@ final class AppModel: ObservableObject {
     private var voiceTimings: [UUID: PipelineTiming] = [:]
     private var screeningTiming: PipelineTiming?
     private var runningTiming: PipelineTiming?
-    private var submittedBehaviors: [UUID: ChatbotBehavior] = [:]
+    private struct AnswerMenu {
+        let sessionID: UUID?
+        let fullScreen: Bool
+        var restoreAfterClosing: Bool
+    }
+    private struct Submission {
+        let behavior: ChatbotBehavior
+        let menu: AnswerMenu?
+        var retainedMenuID: UUID? {
+            guard let menu, !menu.restoreAfterClosing else { return nil }
+            return menu.sessionID
+        }
+    }
+    @Published private var submissions: [UUID: Submission] = [:]
+    // Remembers the most recent opening through dismissal. An automatic
+    // restore is valid only until the user opens another menu.
+    private var menuSessionID: UUID?
+    var menuIsCheckingInput: Bool {
+        guard menuIsPresented, let menuSessionID else { return false }
+        return submissions.values.contains { $0.retainedMenuID == menuSessionID }
+    }
+    private var deferredPillAnswer: QuestionAnswer?
     private var screeningCaptureID: UUID?
     private var preparedInput: PreparedInput?
     private var executionRevision = 0
@@ -119,14 +142,15 @@ final class AppModel: ObservableObject {
             self.screeningTiming = nil
             let prepared = self.preparedInput
             self.preparedInput = nil
-            if let timing { self.submittedBehaviors.removeValue(forKey: timing.id) }
+            let submission = timing.flatMap { self.submissions.removeValue(forKey: $0.id) }
             if let captureID { self.voiceTimings.removeValue(forKey: captureID) }
             // Answers are handled before accepting a new computer task. They
             // must not cancel ongoing input, change its goal, or claim it is done.
-            if let answer = prepared?.turn.answer {
-                timing?.mark("Question answered without desktop input")
+            if let turn = prepared?.turn, turn.answer != nil || turn.showAnswerID != nil {
+                timing?.mark("Answer presented without desktop input")
                 timing?.finish(.succeeded)
-                self.receiveAnswer(answer, to: command)
+                if let prepared { self.latestDecision = prepared.selection.decisionSummary }
+                self.presentAnswerTurn(turn, question: command, menu: submission?.menu)
                 return
             }
             // Only model-accepted speech may retire work. Keep accepted fragments
@@ -134,13 +158,23 @@ final class AppModel: ObservableObject {
             self.pendingInputs.append(command)
             self.latestCommandTiming = timing
             timing?.mark("Command accepted")
-            self.launchTask(captureID: captureID, timing: timing, prepared: prepared)
+            var menu = submission?.menu
+            if let id = submission?.retainedMenuID, self.menuSessionID == id, self.expandedMenu.isPresenting {
+                menu?.restoreAfterClosing = true
+                self.expandedMenu.dismiss()
+            }
+            self.launchTask(captureID: captureID, timing: timing, prepared: prepared,
+                            answerMenu: menu)
         },
         onIgnored: { [weak self] captureID in
             self?.finishSpeechScreening(captureID: captureID)
         },
         onFailure: { [weak self] error, captureID in
             guard let self else { return }
+            if let timing = self.screeningTiming, let id = self.submissions[timing.id]?.retainedMenuID,
+               self.expandedMenu.isPresenting, id == self.menuSessionID {
+                self.menuResponseError = error.localizedDescription
+            }
             self.finishSpeechScreening(captureID: captureID)
             self.error = error.localizedDescription
             self.log(error.localizedDescription, detail: "Command selection failed")
@@ -150,8 +184,12 @@ final class AppModel: ObservableObject {
             }
         },
         onCheckStarted: { [weak self] captureID, timing in
-            self?.screeningCaptureID = captureID
-            self?.screeningTiming = timing
+            guard let self else { return }
+            self.screeningCaptureID = captureID
+            self.screeningTiming = timing
+            if let timing, let id = self.submissions[timing.id]?.retainedMenuID, id == self.menuSessionID {
+                self.menuResponseError = nil
+            }
         }
     )
 
@@ -166,7 +204,9 @@ final class AppModel: ObservableObject {
     private let notch = AtmosNotchController()
     let displayTaps = DisplayTapMonitor()
     private let expandedMenu = AtmosExpandedMenuController()
-    private var menuRequestedDuringInput: AtmosMenuPage?
+    private var menuRequestedDuringInput: (page: AtmosMenuPage, fullScreen: Bool?)?
+    private enum DisplayTapTarget { case idle, notch, menu }
+    private var firstTapTarget: DisplayTapTarget?
     private var noticeTask: Task<Void, Never>?
     private var started = false
     private var usageHistory = UsageHistory()
@@ -335,6 +375,7 @@ final class AppModel: ObservableObject {
         voice.onActivationChanged = { [weak self] active in
             guard let self else { return }
             self.active = active
+            if active { self.notch.resumeAfterDisplayTap() }
             self.noticeTask?.cancel()
             if !self.working { self.showRestingState() }
         }
@@ -392,14 +433,18 @@ final class AppModel: ObservableObject {
     func startStandby() {
         guard !started else { return }
         started = true
+        notch.onOpenAnswer = { [weak self] id in self?.openAnswer(id) }
         expandedMenu.onVisibilityChanged = { [weak self] visible in self?.notch.setSuppressed(visible) }
         displayTaps.onGesture = { [weak self] event in self?.handleDisplayTap(event) }
-        displayTaps.onReset = { [weak self] in self?.notch.endTapFeedback() }
+        displayTaps.onReset = { [weak self] in
+            self?.firstTapTarget = nil
+            self?.notch.endTapFeedback()
+        }
         displayTaps.onSaveCalibration = { [weak self] profile in
             guard let self else { return }
             var updated = self.preferences
             updated.displayTapProfile = profile
-            updated.displayTapThreshold = profile.threshold
+            updated.displayTapsEnabled = true
             self.preferences = updated
         }
         configureDisplayTaps()
@@ -408,32 +453,67 @@ final class AppModel: ObservableObject {
     }
 
     private func configureDisplayTaps() {
-        displayTaps.configure(enabled: preferences.displayTapsEnabled, threshold: preferences.displayTapThreshold,
-                              profile: preferences.displayTapProfile)
+        displayTaps.configure(enabled: preferences.displayTapsEnabled, profile: preferences.displayTapProfile)
+    }
+
+    private var displayTapTarget: DisplayTapTarget {
+        if menuIsPresented || menuRequestedDuringInput != nil { return .menu }
+        if notch.isPresented || active || activateOnVoiceStart { return .notch }
+        return .idle
     }
 
     private func handleDisplayTap(_ event: DisplayTapRecognizer.Event) {
-        let canActivate = !microphoneMuted && !menuIsPresented && !active && !working && !startingVoice && !speechScreening.isScreening
+        let current = displayTapTarget
+        let initial = firstTapTarget ?? current
+        let canActivate = !microphoneMuted && !working && !speechScreening.isScreening
             && !benchmarkEnabled && !benchmarkTrialInProgress
         switch event {
         case .firstTapPending:
-            if canActivate { notch.showTapFeedback() }
+            // A short reply can time out between the first impact and the
+            // single/double decision. That tap still belongs to the reply.
+            firstTapTarget = current
+            if current == .idle && canActivate { notch.showTapFeedback() }
         case .singleTap:
-            guard canActivate else { notch.endTapFeedback(); return }
-            expandedMenu.dismissImmediately()
-            listenNow()
+            firstTapTarget = nil
+            guard initial != .menu, current != .menu else { notch.endTapFeedback(); return }
+            if initial == .notch || current == .notch {
+                dismissNotchForDisplayTap()
+            } else if canActivate {
+                listenNow()
+            } else {
+                notch.endTapFeedback()
+            }
         case .doubleTap:
-            openExpandedMenu()
+            firstTapTarget = nil
+            notch.endTapFeedback()
+            if initial == .menu || current == .menu {
+                menuRequestedDuringInput = nil
+                dismissNotchForDisplayTap()
+                expandedMenu.dismiss()
+            } else {
+                openExpandedMenu()
+            }
         }
     }
 
-    func openExpandedMenu(_ page: AtmosMenuPage = .home) {
+    private func dismissNotchForDisplayTap() {
+        notch.dismissForDisplayTap()
+        noticeTask?.cancel()
+        deferredPillAnswer = nil
+        guard active || activateOnVoiceStart else { return }
+        let restoreWake = voiceMonitoringRequested
+        parkRegularMicrophone()
+        transcript = ""
+        if restoreWake { startVoice() }
+    }
+
+    func openExpandedMenu(_ page: AtmosMenuPage = .home, isFullScreen: Bool? = nil) {
         if inputInFlight {
             // A drag or key sequence must finish in its original window.
-            menuRequestedDuringInput = page
+            menuRequestedDuringInput = (page, isFullScreen)
             return
         }
-        expandedMenu.show(model: self, page: page)
+        expandedMenu.show(model: self, page: page, isFullScreen: isFullScreen)
     }
 
     func stopDisplayTaps() {
@@ -494,6 +574,7 @@ final class AppModel: ObservableObject {
     }
 
     private func parkRegularMicrophone() {
+        activateOnVoiceStart = false
         regularStartupID = nil
         regularStartup?.cancel()
         regularStartup = nil
@@ -508,7 +589,12 @@ final class AppModel: ObservableObject {
         // TESTING BEGIN: no speech may contaminate a bounded typed trial.
         guard !benchmarkEnabled, !benchmarkTrialInProgress else { return }
         // TESTING END
-        guard !microphoneMuted, !menuIsPresented, !startingVoice else { return }
+        guard !microphoneMuted, !menuIsPresented else { return }
+        if activate {
+            notch.resumeAfterDisplayTap()
+            activateOnVoiceStart = true
+        }
+        guard !startingVoice else { return }
         let id = UUID()
         regularStartupID = id
         startingVoice = true
@@ -520,7 +606,8 @@ final class AppModel: ObservableObject {
                     regularStartupID = nil
                     regularStartup = nil
                     startingVoice = false
-                    if activate { notch.endTapFeedback() }
+                    if activateOnVoiceStart { notch.endTapFeedback() }
+                    activateOnVoiceStart = false
                     refreshPermissions()
                 }
             }
@@ -529,7 +616,7 @@ final class AppModel: ObservableObject {
                 guard regularStartupID == id, !Task.isCancelled else { return }
                 listening = voice.isEnabled
                 error = nil
-                if activate { voice.activate() }
+                if activateOnVoiceStart { voice.activate() }
                 else if !working { showRestingState() }
             } catch {
                 guard regularStartupID == id, !Task.isCancelled else { return }
@@ -545,7 +632,12 @@ final class AppModel: ObservableObject {
 
     func listenNow() { startVoice(activate: true) }
 
-    func setMenuPresented(_ visible: Bool) {
+    func setMenuPresented(_ visible: Bool, reopening: Bool = false) {
+        if visible && (!menuIsPresented || reopening) {
+            notch.resumeAfterDisplayTap()
+            menuSessionID = UUID()
+            menuResponseError = nil
+        }
         guard menuIsPresented != visible else { return }
         if visible {
             resumeWakeAfterMenu = voiceMonitoringRequested
@@ -554,6 +646,7 @@ final class AppModel: ObservableObject {
         } else {
             setMenuVoicePageVisible(false)
             menuIsPresented = false
+            if deferredPillAnswer != nil { showRestingState() }
             let restore = resumeWakeAfterMenu
             resumeWakeAfterMenu = false
             if restore { startVoice() }
@@ -569,6 +662,7 @@ final class AppModel: ObservableObject {
     }
 
     func editMenuCommandDraft(_ text: String) {
+        if menuResponseError != nil { menuResponseError = nil }
         if menuDraft.edit(text) { menuVoice?.resetDictatedUtterance() }
     }
 
@@ -749,7 +843,21 @@ final class AppModel: ObservableObject {
         speculativeCapture = nil
     }
 
-    func submit(_ value: String? = nil, captureID: UUID? = nil) {
+    func submitMenuInput(_ text: String, fullScreen: Bool, afterClosing: (@escaping () -> Void) -> Void) {
+        menuResponseError = nil
+        let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        // A nonactivating menu can ask about the underlying app while staying
+        // open. Screen capture already excludes all Atmos windows. If Atmos
+        // itself has focus, restore the original target before observing it.
+        if let id = menuSessionID, expandedMenu.isPresenting, !benchmarkEnabled,
+           let foreground, foreground != ProcessInfo.processInfo.processIdentifier {
+            submit(text, fromFullScreenMenu: fullScreen, retainedMenuID: id)
+        } else {
+            afterClosing { self.submit(text, fromFullScreenMenu: fullScreen) }
+        }
+    }
+
+    func submit(_ value: String? = nil, captureID: UUID? = nil, fromFullScreenMenu: Bool? = nil, retainedMenuID: UUID? = nil) {
         let text = (value ?? command).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         if VoiceControl.match(text) != nil {
@@ -772,7 +880,13 @@ final class AppModel: ObservableObject {
         retainTiming(timing)
         guard beginBenchmarkTrial(timing: timing, command: text) else { return }
         // TESTING END
-        submittedBehaviors[timing.id] = preferences.behavior
+        // Menu input can be delivered after its closing animation. Opening
+        // that menu already resumed presentation before any later dismiss tap.
+        if fromFullScreenMenu == nil { notch.resumeAfterDisplayTap() }
+        let menu = fromFullScreenMenu.map {
+            AnswerMenu(sessionID: retainedMenuID ?? menuSessionID, fullScreen: $0, restoreAfterClosing: retainedMenuID == nil)
+        }
+        submissions[timing.id] = Submission(behavior: preferences.behavior, menu: menu)
         timing.annotate("Chatbot behavior: \(preferences.behavior.title)")
         timing.mark("Command submitted for intent and action selection")
         speechScreening.enqueue(text, captureID: captureID, timing: timing)
@@ -789,7 +903,7 @@ final class AppModel: ObservableObject {
     /// input; only an accepted result is transferred to the execution lifetime.
     private func screenUtterance(_ text: String) async throws -> String? {
         guard let timing = screeningTiming else { throw CancellationError() }
-        let behavior = submittedBehaviors[timing.id] ?? preferences.behavior
+        let behavior = submissions[timing.id]?.behavior ?? preferences.behavior
         let captureID = screeningCaptureID
         preparedInput = nil
         try Task.checkCancellation()
@@ -800,17 +914,21 @@ final class AppModel: ObservableObject {
             await retirement?.value
         }
         try Task.checkCancellation()
-        let key = try measureStage(timing, "Command permissions and API key") { try executionKey() }
+        let key = try measureStage(timing, "Command permissions and API key") { try executionKey(requiresInput: false) }
         let revision = executionRevision
         let inputWasInFlight = inputInFlight
         let wasWorking = working
-        let history = SelectionHistory(context: conversationContext)
+        let history = SelectionHistory(context: conversationContext, pendingAnswerID: pendingAnswerID)
         let input = (pendingInputs + [text]).joined(separator: "\n")
         let observation: ScreenObservation
         // An independent AX owner prevents a background utterance's capture from
         // replacing the retained handles being used by an accepted task.
-        let controller = wasWorking ? AccessibilityController() : accessibility
-        if wasWorking {
+        // Observe through whichever panel is on screen. Waiting here for a
+        // different session to close would starve every later item in the FIFO.
+        let observingThroughMenu = expandedMenu.isVisible
+        let controller = wasWorking || observingThroughMenu ? AccessibilityController() : accessibility
+        if wasWorking || observingThroughMenu {
+            if !wasWorking { computer.resetDisplay() }
             let observer = ScreenObserver(computer: computer, accessibility: controller)
             observation = try await measureStage(timing, "Incoming command observation") {
                 try await observer.capture(timing: timing)
@@ -832,7 +950,7 @@ final class AppModel: ObservableObject {
             defer { prefetched?.task.cancel() }
             observation = try await measureStage(timing, "Initial observation") {
                 try await initialObservation(prefetched: prefetched, captureID: captureID,
-                                             previousGeneration: generation, token: generation, timing: timing)
+                                             previousGeneration: generation, token: generation, timing: timing, screening: true)
             }
         }
         // TESTING BEGIN: references only; encoding and disk writes follow completion.
@@ -854,7 +972,7 @@ final class AppModel: ObservableObject {
     }
 
     private func finishSpeechScreening(captureID: UUID?) {
-        if let timing = screeningTiming { submittedBehaviors.removeValue(forKey: timing.id) }
+        if let timing = screeningTiming { submissions.removeValue(forKey: timing.id) }
         screeningTiming = nil
         preparedInput = nil
         if let captureID { voiceTimings.removeValue(forKey: captureID) }
@@ -889,7 +1007,7 @@ final class AppModel: ObservableObject {
     }
 
     private func launchTask(captureID: UUID? = nil, timing suppliedTiming: PipelineTiming? = nil,
-                            prepared: PreparedInput? = nil) {
+                            prepared: PreparedInput? = nil, answerMenu: AnswerMenu? = nil) {
         guard !pendingInputs.isEmpty || taskState != nil else {
             working = false
             voice.setExecuting(false)
@@ -920,7 +1038,7 @@ final class AppModel: ObservableObject {
         let (text, history) = measureStage(timing, "Prepare command and session history") {
             let text = hasNewInput ? pendingInputs.joined(separator: "\n")
                 : "Continue the already accepted active task from its recorded progress and the current screen."
-            return (text, SelectionHistory(context: conversationContext))
+            return (text, SelectionHistory(context: conversationContext, pendingAnswerID: pendingAnswerID))
         }
         let retirement = retiredWork
         command = ""
@@ -956,7 +1074,7 @@ final class AppModel: ObservableObject {
                 }
                 try await runCommand(text, hasNewInput: hasNewInput, history: history,
                                      key: key, observation: observation, behavior: behavior,
-                                     prepared: reusable, token: token, timing: timing)
+                                     prepared: reusable, answerMenu: answerMenu, token: token, timing: timing)
             } catch is CancellationError {
                 timing.finish(.cancelled)
                 // A replacement owns its own history and UI; retired tasks cannot
@@ -977,11 +1095,11 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func executionKey() throws -> String {
+    private func executionKey(requiresInput: Bool = true) throws -> String {
         guard screenAllowed else {
             throw AtmosError.permission("Allow Screen Recording in Atmos Settings to see the app you want to control.")
         }
-        guard accessibilityAllowed else {
+        guard !requiresInput || accessibilityAllowed else {
             throw AtmosError.permission("Allow Accessibility in Atmos Settings to click and type.")
         }
         guard let key = try KeychainStore.openAI.load() else {
@@ -991,19 +1109,21 @@ final class AppModel: ObservableObject {
     }
 
     private func initialObservation(prefetched: PendingCapture?, captureID: UUID?,
-                                    previousGeneration: UUID, token: UUID, timing: PipelineTiming) async throws -> ScreenObservation {
-        try await waitForExpandedMenu(token)
+                                    previousGeneration: UUID, token: UUID, timing: PipelineTiming, screening: Bool = false) async throws -> ScreenObservation {
+        if !screening { try await waitForExpandedMenu(token) }
         var restoredFocus = false
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+        if !expandedMenu.isVisible, NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
             try await measureStage(timing, "Restore foreground app and wait 220 ms") {
                 previousApplication?.activate(options: [])
                 try await Task.sleep(for: .milliseconds(220))
             }
             restoredFocus = true
         }
-        measureStage(timing, "Hide Atmos windows") {
-            for window in NSApp.windows where window.isVisible && (window.canBecomeMain || window.canBecomeKey) {
-                window.orderOut(nil)
+        if !expandedMenu.isVisible {
+            measureStage(timing, "Hide Atmos windows") {
+                for window in NSApp.windows where window.isVisible && (window.canBecomeMain || window.canBecomeKey) {
+                    window.orderOut(nil)
+                }
             }
         }
 
@@ -1046,11 +1166,13 @@ final class AppModel: ObservableObject {
         let full: String
         let commands: [CommandContext.Entry]
         let answers: [CommandContext.QuestionExchange]
+        let pendingAnswerID: UUID?
 
-        init(context: CommandContext) {
+        init(context: CommandContext, pendingAnswerID: UUID?) {
             full = context.text
             commands = context.entries
             answers = context.answers
+            self.pendingAnswerID = pendingAnswerID
         }
     }
 
@@ -1069,7 +1191,7 @@ final class AppModel: ObservableObject {
 
     private func runCommand(_ text: String, hasNewInput: Bool, history: SelectionHistory,
                             key: String, observation initial: ScreenObservation, behavior: ChatbotBehavior,
-                            prepared: PreparedInput?, token: UUID, timing: PipelineTiming) async throws {
+                            prepared: PreparedInput?, answerMenu: AnswerMenu?, token: UUID, timing: PipelineTiming) async throws {
         let selector = DecisionsClient(apiKey: key)
         let generator = OpenAIComputerClient(apiKey: key)
         var observation = initial
@@ -1097,7 +1219,7 @@ final class AppModel: ObservableObject {
                 finishIgnoredTurn(newInput: newInput, token: token)
                 return
             }
-            if let answer = turn.answer {
+            if turn.answer != nil || turn.showAnswerID != nil {
                 // A stale prepared action can be reclassified as a question on
                 // refresh. Restore any prior task before publishing the answer.
                 timing.finish(.succeeded)
@@ -1107,7 +1229,7 @@ final class AppModel: ObservableObject {
                 } else {
                     finishTask(token, keepingTask: taskState != nil)
                 }
-                receiveAnswer(answer, to: text)
+                presentAnswerTurn(turn, question: text, menu: answerMenu)
                 return
             }
             if newInput {
@@ -1198,7 +1320,8 @@ final class AppModel: ObservableObject {
                 try await generator.begin(command: input, frame: observation.frame, context: history.full,
                                           activeTask: task?.contextText ?? "", pendingClarification: clarification,
                                           accessibility: observation.accessibility,
-                                          continuingTask: !newInput, timing: timing)
+                                          continuingTask: !newInput, availableAnswerIDs: history.answers.map(\.id),
+                                          pendingAnswerID: history.pendingAnswerID, timing: timing)
             }
             try checkSelectionLifetime(token)
             recordUsage(turn, timing: timing)
@@ -1226,7 +1349,9 @@ final class AppModel: ObservableObject {
                                               allowCompletion: behavior.decisionsUseScreenshot || context.hasUIEvidence,
                                               allowIgnore: newInput,
                                               classifyTaskRelationship: classifiesAmendment,
-                                              includesScreenshot: behavior.decisionsUseScreenshot)
+                                              includesScreenshot: behavior.decisionsUseScreenshot,
+                                              availableAnswerIDs: newInput ? history.answers.map(\.id) : [],
+                                              pendingAnswerID: newInput ? history.pendingAnswerID : nil)
             let contextText = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
             return (options, contextText)
         }
@@ -1260,6 +1385,7 @@ final class AppModel: ObservableObject {
                                              pendingClarification: clarification,
                                              accessibility: observation.accessibility,
                                              continuingTask: !newInput, reviewRequired: selection.operation == .review,
+                                             availableAnswerIDs: history.answers.map(\.id), pendingAnswerID: history.pendingAnswerID,
                                              timing: timing)
             }
             try checkSelectionLifetime(token)
@@ -1291,9 +1417,9 @@ final class AppModel: ObservableObject {
         defer {
             inputInFlight = false
             executionRevision += 1
-            if let page = menuRequestedDuringInput {
+            if let request = menuRequestedDuringInput {
                 menuRequestedDuringInput = nil
-                openExpandedMenu(page)
+                openExpandedMenu(request.page, isFullScreen: request.fullScreen)
             }
         }
         // Keep candidates from the actual dispatch attempt. A failed foreground
@@ -1361,17 +1487,59 @@ final class AppModel: ObservableObject {
 
     // MARK: - Accepted task and history
 
-    private func receiveAnswer(_ response: ModelTurn.Answer, to question: String) {
+    func openAnswer(_ id: UUID) {
+        guard answers.contains(where: { $0.id == id }) else { return }
+        openExpandedMenu(.answer(id), isFullScreen: true)
+    }
+
+    func didReadFullScreenAnswer(_ id: UUID) {
+        guard pendingAnswerID == id else { return }
+        pendingAnswerID = nil
+        notch.setPendingAnswer(nil)
+    }
+
+    private func presentAnswerTurn(_ turn: ModelTurn, question: String, menu: AnswerMenu?) {
+        let sameSession = menu.map { $0.sessionID == menuSessionID } ?? true
+        let restoreSize = menu.flatMap { $0.restoreAfterClosing ? $0.fullScreen : nil }
+        let readerSize = sameSession ? (expandedMenu.isPresenting ? expandedMenu.isFullScreen : restoreSize) : nil
+        if let id = turn.showAnswerID {
+            // A delayed request from a dismissed panel must respect the user's
+            // newer choice of page, including the start of a close animation.
+            guard !notch.dismissedByTap, menu == nil || readerSize != nil else {
+                if !working { showRestingState() }
+                return
+            }
+            if !working {
+                status = "Viewing answer"
+                showRestingState()
+            }
+            openAnswer(id)
+            return
+        }
+        guard let response = turn.answer else { return }
         let answer = QuestionAnswer(question: question, text: response.text, brief: response.brief)
-        conversationContext.recordAnswer(question: question, answer: response)
+        conversationContext.recordAnswer(question: question, answer: response, id: answer.id)
         answers.append(answer)
-        command = ""
         log(answer.text, detail: "Answer to: \(question)")
-        guard !working else { return }
-        error = nil
-        status = "Answered"
-        latestDecision = "Luna → Answer"
-        showNotice(answer.brief, duration: 20)
+        if !working {
+            error = nil
+            status = "Answered"
+            noticeTask?.cancel()
+        }
+        if response.requiresReader {
+            pendingAnswerID = answer.id
+            notch.setPendingAnswer(answer.id, preservingActivity: working)
+        }
+        guard !notch.dismissedByTap else { return }
+        // An answer can arrive after the user has started recording taps.
+        // Leave the recording on screen until the user navigates away.
+        if let fullScreen = readerSize, !expandedMenu.isCalibrating {
+            openExpandedMenu(.answer(answer.id), isFullScreen: fullScreen)
+            if !working { showRestingState() }
+        } else if !response.requiresReader {
+            if working || expandedMenu.isVisible { deferredPillAnswer = answer }
+            else { showTimedPill(.answer(answer.text), duration: 20) }
+        }
     }
 
     private func finishIgnoredTurn(newInput: Bool, token: UUID) {
@@ -1431,7 +1599,7 @@ final class AppModel: ObservableObject {
         benchmarkRecorder?.noteStop(.manualStop)
         let wasWorking = working
         executionRevision += 1
-        submittedBehaviors.removeAll()
+        submissions.removeAll()
         preparedInput = nil
         finishHistory(status: .stopped, outcome: "Stopped before completion. Earlier actions may already have taken effect.")
         invalidateSpeculativeCapture()
@@ -1488,11 +1656,19 @@ final class AppModel: ObservableObject {
 
     private func showRestingState() {
         guard !working else { return }
+        if !menuIsPresented, let answer = deferredPillAnswer {
+            deferredPillAnswer = nil
+            showTimedPill(.answer(answer.text), duration: 20)
+            return
+        }
         notch.show(active && voice.isRunning ? .active : .standby)
     }
     private func showNotice(_ message: String, duration: Double = 5) {
+        showTimedPill(.notice(message), duration: duration)
+    }
+    private func showTimedPill(_ state: AtmosOverlayState, duration: Double) {
         noticeTask?.cancel()
-        notch.show(.notice(message))
+        notch.show(state)
         noticeTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(duration)) } catch { return }
             guard let self, !self.working else { return }

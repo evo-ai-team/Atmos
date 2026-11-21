@@ -27,6 +27,9 @@ struct ScreenObserver {
                 if attempt > 0 { timing?.mark("Foreground changed; retrying observation") }
                 try Task.checkCancellation()
                 let processID = foregroundProcessID
+                guard processID > 0, processID != ProcessInfo.processInfo.processIdentifier else {
+                    throw AtmosError.configuration("Bring the app you want Atmos to use to the foreground and try again.")
+                }
                 let capturedAt = ProcessInfo.processInfo.systemUptime
                 let frame = try await computer.capture(timing: timing)
                 try Task.checkCancellation()
@@ -54,7 +57,8 @@ struct ScreenObserver {
     /// Call immediately before dispatch, even for a freshly captured observation.
     func validate(_ observation: ScreenObservation) throws {
         try computer.validateFrame(observation.frame)
-        guard foregroundProcessID == observation.processID else {
+        guard observation.processID > 0, observation.processID != ProcessInfo.processInfo.processIdentifier,
+              foregroundProcessID == observation.processID else {
             throw AtmosError.configuration("The foreground app changed before Atmos could act. Repeat the command in the intended app.")
         }
     }

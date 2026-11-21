@@ -10,23 +10,21 @@ public struct DisplayTapRecognizer {
         case doubleTap
     }
 
-    public static let defaultThreshold = 0.015
-    public static let doubleTapInterval: TimeInterval = 0.300
-    public let threshold: Double
-    private let profile: DisplayTapProfile?
-    /// Distance from the local rest vector in g, for sensitivity calibration.
-    public private(set) var signalLevel = 0.0
+    public static let physicalInputTail: TimeInterval = 0.12
+
+    private let profile: DisplayTapProfile
+    private let validProfile: Bool
 
     private struct Pulse {
         let start: TimeInterval
         let threshold: Double
         var peak: Double
+        var peakVector: SIMD3<Double>
+        var hasShape: Bool
         var quietSince: TimeInterval?
     }
 
-    private var refractory: TimeInterval { profile?.ringingInterval ?? 0.115 }
-    private var maxPulseDuration: TimeInterval { profile.map { max(0.115, $0.ringingInterval + 0.025) } ?? 0.115 }
-    private var pairWindow: TimeInterval { profile?.doubleTapInterval ?? Self.doubleTapInterval }
+    private var maxPulseDuration: TimeInterval { max(0.115, profile.ringingInterval + 0.025) }
     private var rest: SIMD3<Double>?
     private var previous = SIMD3<Double>.zero
     private var lastSampleAt: TimeInterval?
@@ -36,34 +34,28 @@ public struct DisplayTapRecognizer {
     private var noise = 0.0
     private var pulse: Pulse?
     private var firstTapAt: TimeInterval?
+    private var settledOnsets: [TimeInterval] = []
 
-    public init(threshold: Double = Self.defaultThreshold) {
-        profile = nil
-        self.threshold = threshold.isFinite && threshold > 0 ? threshold : Self.defaultThreshold
-    }
-
-    public init(profile: DisplayTapProfile, thresholdOverride: Double? = nil) {
-        self.profile = profile.isValid ? profile : nil
-        let fittedThreshold = self.profile?.threshold ?? Self.defaultThreshold
-        if let thresholdOverride, thresholdOverride.isFinite, thresholdOverride > 0 {
-            threshold = thresholdOverride
-        } else {
-            threshold = fittedThreshold
-        }
+    public init(profile: DisplayTapProfile) {
+        self.profile = profile
+        validProfile = profile.isValid
     }
 
     public var pendingDeadline: TimeInterval? {
         guard let firstTapAt else { return nil }
-        let deadline = firstTapAt + pairWindow
+        let deadline = firstTapAt + profile.doubleTapInterval
+        var resolveAt = deadline
         if let pulse, pulse.start <= deadline {
-            return max(deadline, pulse.start + maxPulseDuration)
+            resolveAt = max(resolveAt, pulse.start + maxPulseDuration)
         }
-        return deadline
+        if let waiting = settledOnsets.last(where: { $0 <= deadline }) {
+            resolveAt = max(resolveAt, waiting + Self.physicalInputTail)
+        }
+        return resolveAt
     }
 
     public mutating func reset() {
-        if let profile { self = Self(profile: profile, thresholdOverride: threshold) }
-        else { self = Self(threshold: threshold) }
+        self = Self(profile: profile)
     }
 
     /// A timer may check a pending gesture, but only sensor time proves the
@@ -77,6 +69,7 @@ public struct DisplayTapRecognizer {
 
     public mutating func sample(x: Double, y: Double, z: Double, at time: TimeInterval,
                                 shouldAcceptImpulse: (TimeInterval) -> Bool = { _ in true }) -> [Event] {
+        guard validProfile else { return [] }
         guard x.isFinite, y.isFinite, z.isFinite, time.isFinite else { reset(); return [] }
         let current = SIMD3(x, y, z)
         if let lastSampleAt, time <= lastSampleAt { return [] }
@@ -91,23 +84,28 @@ public struct DisplayTapRecognizer {
 
         let dt = time - previousTime
         let step = simd_distance(previous, current)
-        signalLevel = simd_distance(baseline, current)
+        let precedingLevel = simd_distance(baseline, previous)
+        let signalLevel = simd_distance(baseline, current)
         previous = current
         lastSampleAt = time
 
         if var active = pulse {
-            active.peak = max(active.peak, signalLevel)
+            if signalLevel > active.peak {
+                active.peak = signalLevel
+                active.peakVector = current - baseline
+            }
+            if time - active.start <= 0.055, signalLevel >= active.threshold * 0.35 { active.hasShape = true }
             // A new permanent orientation or sustained shaking does not settle
             // back near the pre-impact rest vector in this short interval.
             if time - active.start >= maxPulseDuration {
                 pulse = nil
                 quietSince = nil
-                blockedUntil = time + refractory
+                blockedUntil = time + profile.ringingInterval
                 rest = current
             } else {
                 // With a fitted light-tap threshold, quiet chassis jitter can
                 // exceed the uncalibrated release level for several samples.
-                let release = max(active.threshold * (profile == nil ? 0.45 : 0.72), active.peak * 0.15)
+                let release = max(active.threshold * 0.62, active.peak * 0.15)
                 if signalLevel > release {
                     active.quietSince = nil
                 } else if active.quietSince == nil {
@@ -116,32 +114,32 @@ public struct DisplayTapRecognizer {
                 if let settled = active.quietSince, time - settled >= 0.025 {
                     pulse = nil
                     quietSince = settled
-                    blockedUntil = active.start + refractory
-                    // Correlate hardware input with the impulse itself, even
-                    // when the report arrives late. A rejected second impulse
-                    // leaves the first one's single-tap deadline intact.
-                    guard shouldAcceptImpulse(active.start) else { return advance(to: time) }
-                    return acceptImpulse(at: active.start)
+                    blockedUntil = active.start + profile.ringingInterval
+                    if active.hasShape, active.peak <= profile.maximumPeak,
+                       abs(simd_dot(active.peakVector, profile.axis)) >= active.peak * 0.62 {
+                        settledOnsets.append(active.start)
+                    }
+                } else {
+                    pulse = active
                 }
-                pulse = active
             }
         } else {
-            let trigger = max(threshold, (profile == nil ? 5 : 2.5) * noise)
+            let trigger = max(profile.threshold, 4 * noise)
             // Reject gradual motion and require a quiet approach; this also
             // prevents ringing and background vibration from rearming the detector.
-            let riseWindow: TimeInterval = profile == nil ? 0.035 : 0.075
-            if time >= blockedUntil, let lastArmedAt, time - lastArmedAt <= riseWindow,
+            if time >= blockedUntil, let lastArmedAt, time - lastArmedAt <= 0.055,
                signalLevel >= trigger, step >= trigger * 0.4 {
-                pulse = Pulse(start: time, threshold: trigger, peak: signalLevel)
+                pulse = Pulse(start: time, threshold: trigger, peak: signalLevel,
+                              peakVector: current - baseline, hasShape: precedingLevel >= trigger * 0.35)
                 quietSince = nil
                 self.lastArmedAt = nil
             } else {
-                let quietLevel = trigger * (profile == nil ? 0.55 : 0.72)
+                let quietLevel = trigger * 0.62
                 if signalLevel >= quietLevel {
                     quietSince = nil
                 } else {
                     if quietSince == nil { quietSince = time }
-                    if let quietSince, time - quietSince >= (profile == nil ? 0.045 : 0.035) { lastArmedAt = time }
+                    if let quietSince, time - quietSince >= 0.045 { lastArmedAt = time }
                 }
                 let baselineWeight = 1 - exp(-dt / 0.08)
                 rest = baseline + (current - baseline) * baselineWeight
@@ -151,15 +149,32 @@ public struct DisplayTapRecognizer {
                 noise += (min(step, trigger) - noise) * noiseWeight
             }
         }
-        return advance(to: time)
+        guard !settledOnsets.isEmpty else { return advance(to: time) }
+        // A chassis impulse can settle before the corresponding click or key
+        // event arrives. Discard vetoed onsets as soon as input is known, and
+        // only classify once sensor time covers the entire correlation window.
+        settledOnsets.removeAll { !shouldAcceptImpulse($0) }
+        var events = [Event]()
+        while let onset = settledOnsets.first, time >= onset + Self.physicalInputTail {
+            settledOnsets.removeFirst()
+            let accepted = acceptImpulse(at: onset)
+            events += accepted
+            if accepted.last == .doubleTap {
+                // A third bounce may already have started during validation.
+                settledOnsets.removeAll { $0 < blockedUntil }
+                if let pulse, pulse.start < blockedUntil { self.pulse = nil }
+            }
+        }
+        events += advance(to: time)
+        return events
     }
 
     private mutating func acceptImpulse(at time: TimeInterval) -> [Event] {
         if let firstTapAt {
-            if time <= firstTapAt + pairWindow {
+            if time <= firstTapAt + profile.doubleTapInterval {
                 self.firstTapAt = nil
                 // A quick third bounce must not start a new single action.
-                blockedUntil = time + pairWindow
+                blockedUntil = time + profile.doubleTapInterval
                 return [.doubleTap]
             }
             self.firstTapAt = time

@@ -36,22 +36,19 @@ public struct AtmosPreferences: Equatable, Sendable {
     public var microphoneMuted: Bool
     public var secondPassEnabled: Bool
     public var displayTapsEnabled: Bool
-    public var displayTapThreshold: Double
     public var displayTapProfile: DisplayTapProfile?
 
     public init(behavior: ChatbotBehavior = .decisionsTextOnly,
                 audioSensitivity: Double = 0.5, secondPassEnabled: Bool = true, vivaProEnabled: Bool = false,
-                displayTapsEnabled: Bool = true, displayTapThreshold: Double? = nil,
+                displayTapsEnabled: Bool = false,
                 displayTapProfile: DisplayTapProfile? = nil, microphoneMuted: Bool = false) {
         self.behavior = behavior
         self.audioSensitivity = Self.validSensitivity(audioSensitivity)
         self.vivaProEnabled = vivaProEnabled
         self.microphoneMuted = microphoneMuted
         self.secondPassEnabled = secondPassEnabled
-        self.displayTapsEnabled = displayTapsEnabled
         self.displayTapProfile = displayTapProfile.flatMap { $0.isValid ? $0 : nil }
-        self.displayTapThreshold = Self.validTapThreshold(displayTapThreshold ?? self.displayTapProfile?.threshold
-                                                          ?? DisplayTapRecognizer.defaultThreshold)
+        self.displayTapsEnabled = displayTapsEnabled && self.displayTapProfile != nil
     }
 
     public static func load(from defaults: UserDefaults = .standard) -> Self {
@@ -63,8 +60,7 @@ public struct AtmosPreferences: Equatable, Sendable {
             audioSensitivity: (defaults.object(forKey: "atmos.audioSensitivity") as? NSNumber)?.doubleValue ?? 0.5,
             secondPassEnabled: (defaults.object(forKey: "atmos.secondPassEnabled") as? NSNumber)?.boolValue ?? true,
             vivaProEnabled: defaults.bool(forKey: "atmos.vivaProEnabled"),
-            displayTapsEnabled: (defaults.object(forKey: "atmos.displayTapsEnabled") as? NSNumber)?.boolValue ?? true,
-            displayTapThreshold: (defaults.object(forKey: "atmos.displayTapThreshold") as? NSNumber)?.doubleValue,
+            displayTapsEnabled: (defaults.object(forKey: "atmos.displayTapsEnabled") as? NSNumber)?.boolValue ?? false,
             displayTapProfile: profile,
             microphoneMuted: defaults.bool(forKey: "atmos.microphoneMuted")
         )
@@ -77,7 +73,6 @@ public struct AtmosPreferences: Equatable, Sendable {
         defaults.set(microphoneMuted, forKey: "atmos.microphoneMuted")
         defaults.set(secondPassEnabled, forKey: "atmos.secondPassEnabled")
         defaults.set(displayTapsEnabled, forKey: "atmos.displayTapsEnabled")
-        defaults.set(Self.validTapThreshold(displayTapThreshold), forKey: "atmos.displayTapThreshold")
         if let displayTapProfile, displayTapProfile.isValid, let data = try? JSONEncoder().encode(displayTapProfile) {
             defaults.set(data, forKey: "atmos.displayTapProfile")
         } else {
@@ -87,12 +82,5 @@ public struct AtmosPreferences: Equatable, Sendable {
 
     private static func validSensitivity(_ value: Double) -> Double {
         value.isFinite ? min(1, max(0, value)) : 0.5
-    }
-
-    public static let displayTapThresholdRange = DisplayTapProfile.thresholdRange
-
-    private static func validTapThreshold(_ value: Double) -> Double {
-        guard value.isFinite else { return DisplayTapRecognizer.defaultThreshold }
-        return max(displayTapThresholdRange.lowerBound, min(displayTapThresholdRange.upperBound, value))
     }
 }

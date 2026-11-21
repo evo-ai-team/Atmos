@@ -59,12 +59,21 @@ public struct ModelTurn: Sendable {
     /// The notch gets a complete short answer; the window retains any detail.
     /// Keeping both together prevents a preview from being paired with another reply.
     public struct Answer: Equatable, Sendable {
+        public enum Presentation: String, Sendable { case compact, detailed }
         public let brief: String
         public let text: String
+        public let presentation: Presentation
 
-        public init(brief: String, text: String) {
+        public init(brief: String, text: String, presentation: Presentation = .compact) {
             self.brief = brief
             self.text = text
+            self.presentation = presentation
+        }
+
+        /// A short summary cannot stand in for a detailed reply in the pill.
+        public var requiresReader: Bool {
+            let reply = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return presentation == .detailed || reply.count > 120 || reply.rangeOfCharacter(from: .newlines) != nil
         }
     }
 
@@ -73,6 +82,8 @@ public struct ModelTurn: Sendable {
     public var message: String
     /// A text answer to a new question; never a task completion or executable operation.
     public var answer: Answer?
+    /// An explicit request to read an existing session answer inside Atmos.
+    public var showAnswerID: UUID?
     /// A request for user input or review; never accompanied by executable actions.
     public var pauseReason: String?
     /// The utterance was neither a clear computer request nor a question addressed to Atmos.
@@ -81,11 +92,12 @@ public struct ModelTurn: Sendable {
     public var taskUpdate: TaskUpdate?
     public var inputTokens: Int
     public var outputTokens: Int
-    public init(id: String, calls: [ComputerCall], message: String = "", answer: Answer? = nil, pauseReason: String? = nil, ignored: Bool = false, taskUpdate: TaskUpdate? = nil, inputTokens: Int = 0, outputTokens: Int = 0) {
+    public init(id: String, calls: [ComputerCall], message: String = "", answer: Answer? = nil, showAnswerID: UUID? = nil, pauseReason: String? = nil, ignored: Bool = false, taskUpdate: TaskUpdate? = nil, inputTokens: Int = 0, outputTokens: Int = 0) {
         self.id = id
         self.calls = calls
         self.message = message
         self.answer = answer
+        self.showAnswerID = showAnswerID
         self.pauseReason = pauseReason
         self.ignored = ignored
         self.taskUpdate = taskUpdate

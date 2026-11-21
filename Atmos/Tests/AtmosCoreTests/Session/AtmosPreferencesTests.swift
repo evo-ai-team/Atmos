@@ -10,7 +10,7 @@ final class AtmosPreferencesTests: XCTestCase {
             XCTAssertTrue(AtmosPreferences.load(from: defaults).secondPassEnabled)
             XCTAssertFalse(AtmosPreferences.load(from: defaults).vivaProEnabled)
             XCTAssertFalse(AtmosPreferences.load(from: defaults).microphoneMuted)
-            XCTAssertTrue(AtmosPreferences.load(from: defaults).displayTapsEnabled)
+            XCTAssertFalse(AtmosPreferences.load(from: defaults).displayTapsEnabled)
         }
     }
 
@@ -18,7 +18,7 @@ final class AtmosPreferencesTests: XCTestCase {
         withDefaults { defaults in
             for behavior in ChatbotBehavior.allCases {
                 let preferences = AtmosPreferences(behavior: behavior, audioSensitivity: 0.8, secondPassEnabled: false,
-                                                   vivaProEnabled: true, displayTapsEnabled: false, displayTapThreshold: 0.01,
+                                                   vivaProEnabled: true, displayTapsEnabled: false,
                                                    microphoneMuted: true)
                 preferences.save(to: defaults)
                 XCTAssertEqual(AtmosPreferences.load(from: defaults), preferences)
@@ -37,28 +37,30 @@ final class AtmosPreferencesTests: XCTestCase {
         }
     }
 
-    func testCalibratedTimingAndManualSensitivityPersistIndependently() {
+    func testSavedCalibrationAndDisabledChoiceSurviveRelaunch() {
         withDefaults { defaults in
-            let profile = DisplayTapProfile(threshold: 0.008, ringingInterval: 0.085, doubleTapInterval: 0.39)
-            var preferences = AtmosPreferences(displayTapProfile: profile)
-            XCTAssertEqual(preferences.displayTapThreshold, profile.threshold)
+            let profile = DisplayTapProfile(threshold: 0.015, maximumPeak: 0.095, axis: SIMD3(0, 0, 1),
+                                            ringingInterval: 0.115, doubleTapInterval: 0.4)
+            var preferences = AtmosPreferences(displayTapsEnabled: true, displayTapProfile: profile)
             preferences.save(to: defaults)
             XCTAssertEqual(AtmosPreferences.load(from: defaults), preferences)
-            preferences.displayTapThreshold = 0.006
+            preferences.displayTapsEnabled = false
             preferences.save(to: defaults)
-            XCTAssertEqual(AtmosPreferences.load(from: defaults).displayTapThreshold, 0.006)
-            XCTAssertEqual(AtmosPreferences.load(from: defaults).displayTapProfile, profile)
+            XCTAssertEqual(AtmosPreferences.load(from: defaults), preferences)
         }
     }
 
-    func testDamagedCalibrationRetainsExistingManualThreshold() {
+    func testLegacyEnabledAndCalibratedInstallationsRemainOffUntilNewCalibration() {
         withDefaults { defaults in
-            defaults.set(0.011, forKey: "atmos.displayTapThreshold")
-            for invalid in ["garbled", #"{"threshold":0.02,"ringingInterval":2,"doubleTapInterval":0.2}"#] {
+            defaults.set(true, forKey: "atmos.displayTapsEnabled")
+            defaults.set(0.001, forKey: "atmos.displayTapThreshold")
+            XCTAssertFalse(AtmosPreferences.load(from: defaults).displayTapsEnabled)
+            for invalid in ["garbled", #"{"threshold":0.002,"ringingInterval":0.11,"doubleTapInterval":0.3}"#,
+                            #"{"version":1,"threshold":0.02,"maximumPeak":0.09,"axis":[1,0,0],"ringingInterval":0.11,"doubleTapInterval":0.3}"#] {
                 defaults.set(Data(invalid.utf8), forKey: "atmos.displayTapProfile")
                 let loaded = AtmosPreferences.load(from: defaults)
                 XCTAssertNil(loaded.displayTapProfile)
-                XCTAssertEqual(loaded.displayTapThreshold, 0.011)
+                XCTAssertFalse(loaded.displayTapsEnabled)
             }
         }
     }

@@ -165,14 +165,14 @@ final class AtmosNotchSurface: NSView {
         needsLayout = true
     }
 
-    func setText(_ text: String, font: NSFont, cameraWidth: CGFloat, cameraHeight: CGFloat, horizontalInset: CGFloat, wraps: Bool, animate: Bool) {
+    func setText(_ text: String, font: NSFont, cameraWidth: CGFloat, cameraHeight: CGFloat, horizontalInset: CGFloat, wraps: Bool, centered: Bool = false, animate: Bool) {
         let hasCamera = cameraWidth > 0 && cameraHeight > 0
         if hasCameraCutout != hasCamera {
             hasCameraCutout = hasCamera
             applyAccessibilityPreferences()
         }
         content.setText(text, font: font, cameraWidth: cameraWidth, cameraHeight: cameraHeight,
-                        horizontalInset: horizontalInset, wraps: wraps, animate: animate)
+                        horizontalInset: horizontalInset, wraps: wraps, centered: centered, animate: animate)
     }
 
     func applyAccessibilityPreferences() {
@@ -206,7 +206,14 @@ final class AtmosNotchSurface: NSView {
     }
 
     var isThinkingVisible: Bool { content.thinkingIndicator.isVisible }
+    var answerCheckRect: NSRect? {
+        let indicator = content.thinkingIndicator
+        return indicator.hasFinishedCheck ? indicator.convert(indicator.bounds, to: nil) : nil
+    }
     func startThinking(reduceMotion: Bool) { content.thinkingIndicator.start(reduceMotion: reduceMotion) }
+    func showAnswerCheck(reduceMotion: Bool, completion: @escaping () -> Void) {
+        content.thinkingIndicator.showAnswerCheck(reduceMotion: reduceMotion, completion: completion)
+    }
     func finishThinking(animated: Bool, completion: @escaping () -> Void) {
         content.thinkingIndicator.finish(animated: animated, completion: completion)
     }
@@ -307,7 +314,7 @@ private final class AtmosNotchContent: NSView {
         needsDisplay = true
     }
 
-    func setText(_ text: String, font: NSFont, cameraWidth: CGFloat, cameraHeight: CGFloat, horizontalInset: CGFloat, wraps: Bool, animate: Bool) {
+    func setText(_ text: String, font: NSFont, cameraWidth: CGFloat, cameraHeight: CGFloat, horizontalInset: CGFloat, wraps: Bool, centered: Bool, animate: Bool) {
         textRevision += 1
         let revision = textRevision
         self.cameraWidth = cameraWidth
@@ -318,7 +325,7 @@ private final class AtmosNotchContent: NSView {
         // Working labels are measured to fit their final width. While the panel
         // resizes, never replace their ending with a transient ellipsis.
         paragraph.lineBreakMode = wraps ? .byWordWrapping : .byClipping
-        paragraph.alignment = wraps ? .left : .center
+        paragraph.alignment = wraps && !centered ? .left : .center
         let attributed = NSAttributedString(string: text, attributes: [
             .font: font, .foregroundColor: NSColor.white, .paragraphStyle: paragraph
         ])

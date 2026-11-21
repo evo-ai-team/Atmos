@@ -16,8 +16,7 @@ speech through observation, selection, input dispatch, and completion.
   generated, completion, or ignored operation and its diagnostic descriptions.
 - `UsageHistory.swift` loads and saves local usage, backs up unreadable counters,
   and falls back to counting in memory after a storage failure.
-- `QuestionAnswer.swift` retains full session answers and a separate concise notch answer,
-  separate from accepted computer goals and action history.
+- `QuestionAnswer.swift` retains each question and full reply under a stable session ID.
 
 `AppModel` stays on the main actor. Its generation token owns both input and UI
 changes: a retired asynchronous request may finish, but cannot dispatch input or
@@ -63,10 +62,9 @@ session log survives task completion and Stop and is not written to disk.
 Questions use the selected model route and return `answer_question` without input
 or task updates. Admission publishes these replies before launching or retiring
 computer work, so an answer cannot replace or complete an existing task. If a
-refreshed accepted turn becomes an answer, the previous task resumes. The Answers
-tab retains full text; the notch shows the model's standalone brief answer only while no task is running. The brief leads with the answer and a short explanation, fits within 160 characters, and never adds a “Full answer in Answers” redirect or cuts a paragraph mid-sentence. Both versions arrive in the same model call.
+refreshed accepted turn becomes an answer, the previous task resumes. The pill displays complete, compact answers. A detailed answer leaves a clickable checkmark until its full-screen reader opens or the user dismisses the notch with a display tap. Menu submissions remember the originating size, and the active menu can display an answer in place.
 
-`receiveAnswer` also records each question and reply in session context before checking whether the notch is available. `SelectionHistory` freezes that context for both initial and refreshed selections: Luna receives full answers, while Decisions gets the latest three question/brief-answer pairs. This lets “Why?”, “Explain that”, and references to earlier options reach the question-answer path without changing the current task. Suggestions in a stored reply establish references, not permission to execute them. Memory lasts until app exit.
+`presentAnswerTurn` records each question and reply in session context before checking whether the notch is available. `SelectionHistory` freezes that context for both initial and refreshed selections: Luna receives full answers, while Decisions gets the latest three question/brief-answer pairs. This lets “Why?”, “Explain that”, and references to earlier options reach the question-answer path without changing the current task. Suggestions in a stored reply establish references, not permission to execute them. Memory lasts until app exit.
 
 Each command carries a `PipelineTiming` reference from speech replay or typed
 submission through screening and execution. Queued and retired tasks retain

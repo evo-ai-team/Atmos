@@ -19,8 +19,7 @@ final class DisplayTapMonitor: ObservableObject {
     var onSaveCalibration: ((DisplayTapProfile) -> Void)?
 
     private let reader = ChassisMotionReader()
-    private var recognizer = DisplayTapRecognizer()
-    private var threshold = DisplayTapRecognizer.defaultThreshold
+    private var recognizer: DisplayTapRecognizer?
     private var profile: DisplayTapProfile?
     private var workflow: DisplayTapCalibrationWorkflow?
     private let uptime: () -> TimeInterval
@@ -47,22 +46,24 @@ final class DisplayTapMonitor: ObservableObject {
         observe(.default, NSApplication.didChangeScreenParametersNotification) { [weak self] in self?.refresh() }
     }
 
-    func configure(enabled: Bool, threshold: Double, profile: DisplayTapProfile? = nil) {
-        if threshold != self.threshold || profile != self.profile {
-            self.threshold = threshold
+    func configure(enabled: Bool, profile: DisplayTapProfile?) {
+        let profile = profile.flatMap { $0.isValid ? $0 : nil }
+        if profile != self.profile || enabled != self.enabled {
             self.profile = profile
-            recognizer = profile.map { DisplayTapRecognizer(profile: $0, thresholdOverride: threshold) }
-                ?? DisplayTapRecognizer(threshold: threshold)
+            recognizer = profile.map(DisplayTapRecognizer.init(profile:))
             resetRecognition()
         }
         self.enabled = enabled
         refresh()
     }
 
-    func retry() { refresh() }
+    func retry() {
+        if enabled && profile != nil { refresh() }
+        else { startCalibration() }
+    }
 
     func testTaps() {
-        guard state == .ready, workflow == nil else { return }
+        guard enabled, profile != nil, state == .ready, workflow == nil else { return }
         resetRecognition()
         testTask?.cancel()
         testMessage = "Tap the display once, then twice."
@@ -82,50 +83,54 @@ final class DisplayTapMonitor: ObservableObject {
     }
 
     func startCalibration() {
-        guard state == .ready, workflow == nil else { return }
+        guard workflow == nil else { return }
         endTest()
         resetRecognition()
-        let workflow = DisplayTapCalibrationWorkflow(at: uptime())
+        let workflow = DisplayTapCalibrationWorkflow()
         self.workflow = workflow
         calibration = workflow.session
+        refresh()
     }
 
-    func retryCalibrationStep() {
-        guard let workflow, workflow.session.phase == .retry else { return }
-        workflow.retryStep(at: uptime())
+    func recordCalibrationStep() {
+        guard state == .ready, let workflow else { return }
+        workflow.record(at: uptime())
         calibration = workflow.session
     }
 
-    func redoCalibrationSingles() {
-        guard let workflow, workflow.session.phase == .tryIt else { return }
-        workflow.redoSingles(at: uptime())
+    func redoCalibrationSingle() {
+        guard state == .ready, let workflow else { return }
+        workflow.redoSingle(at: uptime())
         calibration = workflow.session
     }
 
-    func redoCalibrationDoubles() {
-        guard let workflow, workflow.session.phase == .tryIt else { return }
-        workflow.redoDoubles(at: uptime())
+    func redoCalibrationDouble() {
+        guard state == .ready, let workflow else { return }
+        workflow.redoDouble(at: uptime())
         calibration = workflow.session
     }
 
     func saveCalibration() {
-        guard let session = workflow?.session, session.phase == .tryIt, let profile = session.profile else { return }
-        cancelCalibration()
+        guard let session = workflow?.session, session.phase == .complete, let profile = session.profile else { return }
         onSaveCalibration?(profile)
+        cancelCalibration()
     }
 
     func cancelCalibration() {
         guard workflow != nil else { return }
+        clearCalibration()
+        refresh()
+    }
+
+    private func clearCalibration() {
         workflow = nil
         calibration = nil
-        // Before the fit exists, a second training tap may still be on its way
-        // at the slowest pace the calibration can learn.
         resetRecognition(guardInterval: 0.85)
     }
 
     func stop() {
         enabled = false
-        refresh()
+        disconnect(.off)
     }
 
     private func observe(_ center: NotificationCenter, _ name: Notification.Name, action: @escaping () -> Void) {
@@ -144,8 +149,9 @@ final class DisplayTapMonitor: ObservableObject {
     }
 
     private func refresh() {
-        guard enabled, suspensions.isEmpty, Self.laptopDisplayIsActive, Self.sessionIsUnlocked else {
-            disconnect(enabled ? .suspended : .off)
+        let needsSensor = workflow != nil || (enabled && profile != nil)
+        guard needsSensor, suspensions.isEmpty, Self.laptopDisplayIsActive, Self.sessionIsUnlocked else {
+            disconnect(needsSensor ? .suspended : .off)
             return
         }
         guard state != .ready, state != .connecting else { return }
@@ -176,14 +182,14 @@ final class DisplayTapMonitor: ObservableObject {
 
     private func disconnect(_ next: State) {
         reader.stop()
-        cancelCalibration()
+        if workflow != nil { clearCalibration() }
         endTest()
         resetRecognition()
         state = next
     }
 
     private func resetRecognition(guardInterval: TimeInterval = 0.5) {
-        recognizer.reset()
+        recognizer?.reset()
         // Ignore buffered reports and the tail of the last practice gesture when
         // changing modes. The next live gesture must start in a fresh quiet interval.
         let settlingTime = max(guardInterval, profile?.doubleTapInterval ?? 0)
@@ -205,7 +211,7 @@ final class DisplayTapMonitor: ObservableObject {
     }
 
     private static func isDisplayTapCandidate(at onset: TimeInterval) -> Bool {
-        !hadPhysicalInput(in: (onset - 0.12)...(onset + 0.12))
+        !hadPhysicalInput(in: (onset - 0.18)...(onset + DisplayTapRecognizer.physicalInputTail))
     }
 
     private func receive(time: TimeInterval, acceleration: SIMD3<Double>) {
@@ -215,17 +221,17 @@ final class DisplayTapMonitor: ObservableObject {
             let now = uptime()
             if workflow.receive(time: time, acceleration: acceleration, deliveredAt: now, hadInputSince: { start in
                 Self.hadPhysicalInput(in: start...now)
-            }, acceptImpulse: Self.isDisplayTapCandidate(at:)) {
+            }) {
                 calibration = workflow.session
             }
             return
         }
-        guard time >= recognitionStartsAt else { return }
-        let wasPending = recognizer.pendingDeadline != nil
-        let events = recognizer.sample(x: acceleration.x, y: acceleration.y, z: acceleration.z, at: time,
-                                       shouldAcceptImpulse: Self.isDisplayTapCandidate(at:))
+        guard enabled, profile != nil, time >= recognitionStartsAt else { return }
+        let wasPending = recognizer?.pendingDeadline != nil
+        let events = recognizer?.sample(x: acceleration.x, y: acceleration.y, z: acceleration.z, at: time,
+                                       shouldAcceptImpulse: Self.isDisplayTapCandidate(at:)) ?? []
         guard !events.isEmpty else {
-            if wasPending, recognizer.pendingDeadline == nil { onReset?() }
+            if wasPending, recognizer?.pendingDeadline == nil { onReset?() }
             return
         }
         guard Self.sessionIsUnlocked else { resetRecognition(); return }

@@ -41,8 +41,9 @@ final class OpenAIClientTests: XCTestCase {
         XCTAssertEqual(ignoreParameters["additionalProperties"] as? Bool, false)
         let answerParameters = try XCTUnwrap(tools.first { $0["name"] as? String == "answer_question" }?["parameters"] as? [String: Any])
         let answerProperties = try XCTUnwrap(answerParameters["properties"] as? [String: Any])
-        XCTAssertEqual(Set(answerProperties.keys), ["brief", "text"])
-        XCTAssertEqual(Set(answerParameters["required"] as? [String] ?? []), ["brief", "text"])
+        XCTAssertEqual(Set(answerProperties.keys), ["brief", "text", "presentation"])
+        XCTAssertEqual(Set(answerParameters["required"] as? [String] ?? []), ["brief", "text", "presentation"])
+        XCTAssertEqual((answerProperties["presentation"] as? [String: Any])?["enum"] as? [String], ["compact", "detailed"])
         XCTAssertEqual((answerProperties["brief"] as? [String: Any])?["minLength"] as? Int, 1)
         XCTAssertEqual((answerProperties["brief"] as? [String: Any])?["maxLength"] as? Int, 160)
         XCTAssertEqual((answerProperties["text"] as? [String: Any])?["maxLength"] as? Int, 4_000)
@@ -683,6 +684,54 @@ final class OpenAIClientTests: XCTestCase {
             XCTAssertTrue(tools.contains { $0["name"] as? String == "answer_question" })
         }
         XCTAssertNil(ModelTurn(id: "default", calls: []).answer)
+    }
+
+    func testCompactAnswerPresentationRequiresTheCompleteReplyToFit() throws {
+        func answer(_ text: String, presentation: String) throws -> ModelTurn.Answer {
+            let data = try responseData([function(["brief": "Paris.", "text": text, "presentation": presentation], name: "answer_question")])
+            let turn = try OpenAIComputerClient.parseResponse(data)
+            return try XCTUnwrap(turn.answer)
+        }
+        XCTAssertFalse(try answer("Paris.", presentation: "compact").requiresReader)
+        XCTAssertTrue(try answer("An explanation.", presentation: "detailed").requiresReader)
+        XCTAssertTrue(try answer("First step.\nSecond step.", presentation: "compact").requiresReader)
+        XCTAssertTrue(try answer(String(repeating: "x", count: 121), presentation: "compact").requiresReader)
+        XCTAssertThrowsError(try answer("Paris.", presentation: "maybe"))
+    }
+
+    func testShowSavedAnswerUsesOnlyAnOfferedSessionIDForANewRequest() async throws {
+        let id = UUID()
+        let open = try function(["answer_id": id.uuidString], name: "show_answer")
+        let data = try responseData([open])
+        let recorder = RequestRecorder()
+        let client = OpenAIComputerClient(apiKey: "test-only-value", transport: { request in
+            await recorder.add(request)
+            return (data, Self.response())
+        })
+        let newer = UUID()
+        let turn = try await client.begin(command: "Open the answer that's ready", frame: frame,
+                                          context: "Saved answers \(id), \(newer)",
+                                          availableAnswerIDs: [id, newer], pendingAnswerID: id)
+        XCTAssertEqual(turn.showAnswerID, id)
+        XCTAssertTrue(turn.calls.isEmpty)
+        XCTAssertNil(turn.taskUpdate)
+        XCTAssertNil(turn.answer)
+        let requests = await recorder.requests
+        let body = try json(XCTUnwrap(requests.first))
+        let tools = try XCTUnwrap(body["tools"] as? [[String: Any]])
+        XCTAssertTrue(tools.contains { $0["name"] as? String == "show_answer" })
+        let input = try XCTUnwrap(body["input"] as? [[String: Any]])
+        let content = try XCTUnwrap(input.first?["content"] as? [[String: Any]])
+        XCTAssertTrue((content.first?["text"] as? String)?.contains("checkmark points to saved answer id \(id.uuidString)") == true)
+        for policy in [ComputerRequestPolicy(), ComputerRequestPolicy(availableAnswerIDs: [UUID()]),
+                       ComputerRequestPolicy(reviewRequired: true, availableAnswerIDs: [id]),
+                       ComputerRequestPolicy(allowAnswer: false, availableAnswerIDs: [id])] {
+            XCTAssertThrowsError(try policy.validate(turn))
+        }
+        for args in [[:], ["answer_id": "latest"], ["answer_id": id.uuidString, "actions": []]] as [[String: Any]] {
+            try assertBlocked([function(args, name: "show_answer")])
+        }
+        try assertBlocked([open, function(["brief": "A", "text": "A"], name: "answer_question")])
     }
 
     func testTextAnswerBoundsAndClosedPayload() throws {

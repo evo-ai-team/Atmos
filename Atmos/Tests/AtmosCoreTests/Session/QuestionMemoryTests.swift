@@ -5,15 +5,18 @@ import XCTest
 final class QuestionMemoryTests: XCTestCase {
     func testQuestionsHaveSessionMemoryWithoutCreatingComputerCommands() throws {
         var context = CommandContext()
+        let id = UUID()
         context.recordAnswer(question: "What is Spotlight?", answer: .init(
             brief: "Spotlight searches your Mac.",
             text: "Spotlight searches apps, documents, and other items on your Mac."
-        ))
+        ), id: id)
 
         XCTAssertTrue(context.entries.isEmpty)
         XCTAssertEqual(context.answers.count, 1)
         XCTAssertEqual(context.answers[0].afterCommandCount, 0)
         let records = try answerRecords(in: context.text)
+        XCTAssertEqual(records[0].id, id)
+        XCTAssertEqual(context.answers[0].id, id)
         XCTAssertEqual(records[0].question, "What is Spotlight?")
         XCTAssertEqual(records[0].brief, "Spotlight searches your Mac.")
         XCTAssertEqual(records[0].text, context.answers[0].text)
@@ -155,6 +158,7 @@ final class QuestionMemoryTests: XCTestCase {
     }
 
     private struct Exchange: Decodable {
+        let id: UUID
         let question: String
         let brief: String
         let text: String

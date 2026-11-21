@@ -2,6 +2,9 @@ import XCTest
 @testable import AtmosCore
 
 final class DisplayTapRecognizerTests: XCTestCase {
+    private let profile = DisplayTapProfile(threshold: 0.015, maximumPeak: 0.12, axis: SIMD3(1, 0, 0),
+                                            ringingInterval: 0.115, doubleTapInterval: 0.30)
+
     // One sample per 10 ms. A short rise, reversal, and decay are superimposed
     // on gravity in an arbitrary orientation.
     private func feed(_ ticks: ClosedRange<Int>, into detector: inout DisplayTapRecognizer,
@@ -19,7 +22,7 @@ final class DisplayTapRecognizerTests: XCTestCase {
     }
 
     func testSingleTapWaitsForPairingWindowAndIgnoresRinging() {
-        var detector = DisplayTapRecognizer()
+        var detector = DisplayTapRecognizer(profile: profile)
         XCTAssertEqual(feed(0...45, into: &detector, taps: [20, 28]), [.firstTapPending])
         XCTAssertNotNil(detector.pendingDeadline)
         XCTAssertEqual(feed(46...90, into: &detector), [.singleTap])
@@ -28,7 +31,7 @@ final class DisplayTapRecognizerTests: XCTestCase {
     }
 
     func testSecondTapNearDeadlineConfirmsOnlyDoubleEvenWhenReportsAreBatched() {
-        var detector = DisplayTapRecognizer()
+        var detector = DisplayTapRecognizer(profile: profile)
         XCTAssertEqual(feed(0...44, into: &detector, taps: [20]), [.firstTapPending])
         // The main loop has reached 530 ms, but reports through the 510 ms
         // deadline have not arrived. The actual second pulse began at 500 ms.
@@ -40,24 +43,24 @@ final class DisplayTapRecognizerTests: XCTestCase {
     }
 
     func testTwoWidelySpacedTapsProduceTwoSingles() {
-        var detector = DisplayTapRecognizer()
+        var detector = DisplayTapRecognizer(profile: profile)
         XCTAssertEqual(feed(0...110, into: &detector, taps: [20, 57]),
                        [.firstTapPending, .singleTap, .firstTapPending, .singleTap])
     }
 
     func testKeyboardVibrationBeforeRealTapDoesNotBecomeADouble() {
-        var detector = DisplayTapRecognizer()
-        var onsets = [TimeInterval]()
+        var detector = DisplayTapRecognizer(profile: profile)
+        var onsets = Set<TimeInterval>()
         let events = feed(0...100, into: &detector, taps: [20, 42], shouldAcceptImpulse: { onset in
-            onsets.append(onset)
+            onsets.insert(onset)
             return onset > 0.3
         })
-        XCTAssertEqual(onsets, [0.21, 0.43])
+        XCTAssertEqual(onsets.sorted(), [0.21, 0.43])
         XCTAssertEqual(events, [.firstTapPending, .singleTap])
     }
 
     func testKeyboardVibrationNearDeadlineKeepsFirstSingleTap() {
-        var detector = DisplayTapRecognizer()
+        var detector = DisplayTapRecognizer(profile: profile)
         XCTAssertEqual(feed(0...48, into: &detector, taps: [20]), [.firstTapPending])
         let events = feed(49...90, into: &detector, taps: [49], shouldAcceptImpulse: { onset in
             XCTAssertEqual(onset, 0.50, accuracy: 0.000_001)
@@ -67,8 +70,39 @@ final class DisplayTapRecognizerTests: XCTestCase {
         XCTAssertNil(detector.pendingDeadline)
     }
 
+    func testClickArrivingAfterSettlingVetoesAnOtherwiseValidSingle() {
+        var detector = DisplayTapRecognizer(profile: profile)
+        XCTAssertEqual(feed(0...78, into: &detector, taps: [70]), [])
+        // The click arrives 80 ms after the impulse's onset at 710 ms. By now
+        // the mechanical pulse has settled, but it cannot be classified yet.
+        let events = feed(79...150, into: &detector, shouldAcceptImpulse: { onset in
+            XCTAssertEqual(onset, 0.71, accuracy: 0.000_001)
+            return false
+        })
+        XCTAssertEqual(events, [])
+    }
+
+    func testLateClickDuringSecondImpulsesVetoWindowPreservesTheFirstSingle() {
+        var detector = DisplayTapRecognizer(profile: profile)
+        XCTAssertEqual(feed(0...57, into: &detector, taps: [20, 49]), [.firstTapPending])
+        // Near-deadline second tap at 500 ms, followed by a click at 580 ms.
+        // The real first tap must still resolve once, with no menu opening.
+        let events = feed(58...110, into: &detector, shouldAcceptImpulse: { onset in
+            XCTAssertEqual(onset, 0.50, accuracy: 0.000_001)
+            return false
+        })
+        XCTAssertEqual(events, [.singleTap])
+    }
+
+    func testCleanSecondImpulseAtPairDeadlineWaitsForFullInputWindow() {
+        var detector = DisplayTapRecognizer(profile: profile)
+        XCTAssertEqual(feed(0...61, into: &detector, taps: [20, 49]), [.firstTapPending])
+        XCTAssertEqual(detector.advance(to: 3), [])
+        XCTAssertEqual(feed(62...100, into: &detector), [.doubleTap])
+    }
+
     func testSustainedVibrationSlowLidMovementAndFaintKeypressesStayQuiet() {
-        var detector = DisplayTapRecognizer()
+        var detector = DisplayTapRecognizer(profile: profile)
         XCTAssertEqual(feed(0...170, into: &detector, disturbance: { i in
             (20...95).contains(i) ? (i.isMultiple(of: 2) ? 0.035 : -0.035) : 0
         }), [])
@@ -81,7 +115,7 @@ final class DisplayTapRecognizerTests: XCTestCase {
     }
 
     func testResetOrSampleOutageDiscardsAnUnresolvedAction() {
-        var detector = DisplayTapRecognizer()
+        var detector = DisplayTapRecognizer(profile: profile)
         XCTAssertEqual(feed(0...35, into: &detector, taps: [20]), [.firstTapPending])
         detector.reset()
         XCTAssertNil(detector.pendingDeadline)
@@ -92,14 +126,15 @@ final class DisplayTapRecognizerTests: XCTestCase {
     }
 
     func testThresholdAppliesToAllThreeAxesAndOutOfOrderSamplesCannotFire() {
-        var detector = DisplayTapRecognizer(threshold: 0.008)
+        let vertical = DisplayTapProfile(threshold: 0.008, maximumPeak: 0.10, axis: SIMD3(0, 0, 1),
+                                         ringingInterval: 0.115, doubleTapInterval: 0.30)
+        var detector = DisplayTapRecognizer(profile: vertical)
         var events = [DisplayTapRecognizer.Event]()
         for i in 0...90 {
-            let z = i == 20 ? -0.988 : -1.0
+            let z = i == 20 ? -0.988 : i == 21 ? -1.007 : -1.0
             events += detector.sample(x: 0.002, y: 0.004, z: z, at: Double(i) / 100)
             events += detector.sample(x: 0, y: 0, z: 7, at: Double(i) / 100 - 0.005)
         }
         XCTAssertEqual(events, [.firstTapPending, .singleTap])
-        XCTAssertEqual(DisplayTapRecognizer(threshold: .nan).threshold, DisplayTapRecognizer.defaultThreshold)
     }
 }

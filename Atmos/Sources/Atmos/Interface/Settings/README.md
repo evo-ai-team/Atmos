@@ -7,8 +7,8 @@ The expanded menu’s Settings page and local diagnostics live here.
 - `QuestionAnswersView.swift` offers a question input and retains full text answers
   newest first for the current session. Each answer includes the original question
   and timestamp, wraps without truncation, and supports selection and copying.
-  Submitting closes the menu before handing the question to the command pipeline.
-- `DisplayTapSettingsView.swift` presents the calibration wizard as a sheet of the menu panel.
+  Each row can open its complete response in the full-screen reader.
+- `DisplayTapSettingsView.swift` opens the calibration page inside the expanded menu. `DisplayTapCalibrationView.swift` provides a Record button for each gesture. Save and enable applies the recordings and returns to Settings. Leaving calibration before saving discards the recordings.
 - `ActionHistoryView.swift` shows the session's dispatch history newest first,
   including the source route, goal, model description, timestamp, dispatch status,
   and exact action JSON. Payloads are expanded initially, selectable, and copyable.

@@ -2,6 +2,11 @@
 
 The everyday voice interface is a nonactivating AppKit panel anchored at the top
 of the primary screen. It passes mouse events through to the app underneath.
+When a long answer is ready, a 38-point nonactivating child panel over the
+checkmark provides the **Open full answer** button. The marker returns after
+transient activity and ordinary menu dismissal until the reader opens.
+A display tap can explicitly close the notch. It stays closed through updates
+from the current interaction while the answer remains available in the reader.
 
 - `AtmosNotchController.swift` accepts `AtmosOverlayState`, owns the panel, and
   sequences state transitions. Transition IDs prevent old animation completions
@@ -35,7 +40,10 @@ of the primary screen. It passes mouse events through to the app underneath.
   offscreen, so no mask is applied to the material itself.
   Screens without a cutout use the faint backing throughout, including the
   shoulders. Reduce Transparency substitutes opaque charcoal behind the content.
-- `AtmosThinkingIndicator.swift` draws and animates the compact thinking dots.
+- `AtmosThinkingIndicator.swift` draws the six loading dots. For a long answer,
+  they converge into one dot, which traces a checkmark. Reduce Motion shows the
+  final mark immediately. Short replies use a text-sized pill with the full
+  short answer, centered below the camera.
 
 Presentation never gates command execution. Reduced-motion and reduced-transparency
 preferences are applied by these views. Preserve the panel's non-key,

@@ -6,56 +6,56 @@ import AtmosCore
 struct DisplayTapSettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var monitor: DisplayTapMonitor
+    let openCalibration: () -> Void
+
+    private var isCalibrated: Bool { model.preferences.displayTapProfile?.isValid == true }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Toggle("Display taps", isOn: $model.preferences.displayTapsEnabled)
-                .font(.headline).toggleStyle(.switch)
-            Text("Tap the MacBook display once to speak, or twice to open the Atmos menu.")
-                .font(.caption).foregroundStyle(.secondary)
-            switch monitor.state {
-            case .off: EmptyView()
-            case .suspended: Text("Waiting for the built-in display to be awake and unlocked.").font(.caption)
-            case .connecting: Text("Connecting to the motion sensor…").font(.caption)
-            case .unavailable(let reason):
-                Text(reason).font(.caption)
-                Button("Retry sensor") { monitor.retry() }.controlSize(.small)
-            case .ready:
+            if isCalibrated {
+                Toggle("Display taps", isOn: $model.preferences.displayTapsEnabled)
+                    .font(.headline)
+                    .toggleStyle(.switch)
+                Text("Tap once to activate voice or close the open notch. Tap twice to open the menu, then twice again to close both the menu and notch.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 HStack {
-                    Text("Tap sensitivity").font(.callout)
-                    Spacer()
-                    if model.preferences.displayTapProfile != nil {
-                        Label("Calibrated", systemImage: "checkmark").font(.caption).foregroundStyle(.secondary)
+                    Button("Recalibrate display taps…", action: openCalibration)
+                    if model.preferences.displayTapsEnabled && monitor.state == .ready {
+                        Button(monitor.testMessage == nil ? "Test taps" : "End test") {
+                            if monitor.testMessage == nil { monitor.testTaps() } else { monitor.endTest() }
+                        }
                     }
                 }
-                // Lower acceleration thresholds register lighter taps.
-                Slider(value: Binding(get: { -model.preferences.displayTapThreshold },
-                                      set: { model.preferences.displayTapThreshold = -$0 }),
-                       in: -AtmosPreferences.displayTapThresholdRange.upperBound ... -AtmosPreferences.displayTapThresholdRange.lowerBound,
-                       step: 0.001) {
-                    Text("Tap sensitivity")
-                } minimumValueLabel: { Text("Firmer").font(.caption2) }
-                  maximumValueLabel: { Text("Lighter").font(.caption2) }
-                HStack {
-                    Button("Calibrate display taps…") { monitor.startCalibration() }
-                        .buttonStyle(.glass).controlSize(.small)
-                    Button(monitor.testMessage == nil ? "Test taps" : "End test") {
-                        if monitor.testMessage == nil { monitor.testTaps() } else { monitor.endTest() }
-                    }.controlSize(.small)
+                .controlSize(.small)
+                if let message = monitor.testMessage { Text(message).font(.callout) }
+            } else {
+                Text("Display taps").font(.headline)
+                Text("Display taps are off until you record a single tap and a double tap on your MacBook display.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Button("Calibrate display taps…", action: openCalibration)
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.regular)
+            }
+
+            switch monitor.state {
+            case .suspended:
+                Text("Open and unlock the built-in display to use its motion sensor.").font(.caption)
+            case .unavailable(let reason):
+                Text(reason).font(.caption)
+                if isCalibrated && model.preferences.displayTapsEnabled {
+                    Button("Retry sensor", action: monitor.retry).controlSize(.small)
                 }
-                if let message = monitor.testMessage { Text(message).font(.caption) }
+            case .connecting:
+                Text("Connecting to the motion sensor…").font(.caption)
+            case .ready, .off:
+                EmptyView()
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 18))
-        .sheet(isPresented: Binding(get: { monitor.calibration != nil }, set: { presented in
-            if !presented { monitor.cancelCalibration() }
-        })) {
-            DisplayTapCalibrationView(monitor: monitor)
-        }
-        .onDisappear {
-            monitor.endTest()
-            monitor.cancelCalibration()
-        }
+        .onDisappear { monitor.endTest() }
     }
 }

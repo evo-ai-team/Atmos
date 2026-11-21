@@ -34,6 +34,9 @@ struct AtmosExpandedMenuGeometry {
 final class AtmosExpandedMenuController {
     var onVisibilityChanged: ((Bool) -> Void)?
     private(set) var isVisible = false
+    var isFullScreen: Bool { navigation?.isFullScreen == true }
+    var isPresenting: Bool { isVisible && !isClosing }
+    var isCalibrating: Bool { isPresenting && navigation?.page == .calibration }
     private var isClosing = false
     private var panel: ExpandedMenuPanel?
     private var surface: ExpandedMenuSurface?
@@ -47,29 +50,34 @@ final class AtmosExpandedMenuController {
     private var localEvents: Any?
     private var previousApp: NSRunningApplication?
     private var transition = 0
-    private var resizeTask: Task<Void, Never>?
+    private var slideGeneration = 0
+    private var fadeTask: Task<Void, Never>?
+    private var afterDismiss: (() -> Void)?
 
-    func show(model: AppModel, page: AtmosMenuPage = .home) {
+    func show(model: AppModel, page: AtmosMenuPage = .home, isFullScreen requestedFullScreen: Bool? = nil) {
         guard let screen = AtmosExpandedMenuGeometry.targetScreen() else { return }
-        let geometry = AtmosExpandedMenuGeometry(screen: screen, isFullScreen: navigation?.isFullScreen == true)
+        let geometry = AtmosExpandedMenuGeometry(screen: screen, isFullScreen: requestedFullScreen ?? isFullScreen)
         if isVisible, let panel, let surface {
+            guard afterDismiss == nil else { return }
             if let sheet = panel.attachedSheet {
                 sheet.makeKeyAndOrderFront(nil)
                 return
             }
             if isClosing {
-                model.setMenuPresented(true)
+                model.setMenuPresented(true, reopening: true)
                 model.setMenuVoicePageVisible(page == .home)
             }
             navigation?.page = page
+            if let requestedFullScreen { navigation?.isFullScreen = requestedFullScreen }
             panel.makeKeyAndOrderFront(nil)
             if isClosing {
                 transition += 1
                 isClosing = false
-                panel.ignoresMouseEvents = false
+                fadeTask?.cancel()
+                navigation?.presentationPhase = .concealed
                 surface.geometry = geometry
                 installMonitors(panel)
-                animate(panel, to: geometry.frame, duration: 0.32, resizeContent: true)
+                reveal(panel, resizeContent: true)
             }
             return
         }
@@ -78,6 +86,7 @@ final class AtmosExpandedMenuController {
         let frontmost = NSWorkspace.shared.frontmostApplication
         previousApp = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : frontmost
         let navigation = AtmosMenuNavigation(page: page)
+        navigation.isFullScreen = requestedFullScreen ?? false
         self.navigation = navigation
         self.model = model
         model.setMenuPresented(true)
@@ -85,22 +94,23 @@ final class AtmosExpandedMenuController {
         let view = AtmosExpandedMenuView(model: model, navigation: navigation, perform: { [weak self] action in
             guard let self else { return }
             let target = self.previousApp
-            self.close(animated: false)
-            // A native panel normally preserves the foreground app. Restore it
-            // only if Atmos acquired activation while editing the command.
-            if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
-               let target, !target.isTerminated { _ = target.activate(options: []) }
-            action()
+            guard !self.isClosing else { return }
+            self.afterDismiss = {
+                // Restore the command's target if editing activated Atmos.
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+                   let target, !target.isTerminated { _ = target.activate(options: []) }
+                action()
+            }
+            self.dismiss()
         }, dismiss: { [weak self] in self?.dismiss() })
         let surface = ExpandedMenuSurface(content: view, geometry: geometry)
         self.panel = panel
         self.surface = surface
+        panel.setFrame(geometry.frame, display: false)
         panel.contentView = surface
-        panel.setFrame(geometry.collapsedFrame, display: false)
         surface.layoutSubtreeIfNeeded()
-        panel.onCancel = { [weak self, weak panel] in
-            if panel?.attachedSheet == nil { self?.dismiss() }
-        }
+        surface.setVisibleHeight(geometry.collapsedFrame.height)
+        panel.onCancel = { [weak self] in self?.handleEscape() }
         isVisible = true
         // @Published emits before storing the value. Resize on the next main
         // turn so even a Reduce Motion layout sees the new toolbar state.
@@ -108,32 +118,73 @@ final class AtmosExpandedMenuController {
             guard let self, !self.isClosing, let panel = self.panel, let surface = self.surface,
                   let screen = panel.screen ?? AtmosExpandedMenuGeometry.targetScreen() else { return }
             let geometry = AtmosExpandedMenuGeometry(screen: screen, isFullScreen: fullScreen)
+            guard geometry.frame != surface.geometry.frame else { return }
             surface.geometry = geometry
-            self.animate(panel, to: geometry.frame, duration: 0.34, resizeContent: true)
+            if !fullScreen { navigation.isAtFullHeight = false }
+            self.fadeOut { [weak self] in self?.reveal(panel, resizeContent: true) }
         }
         onVisibilityChanged?(true)
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
         installMonitors(panel)
-        animate(panel, to: geometry.frame, duration: 0.32)
+        reveal(panel, resizeContent: false)
     }
 
     func dismiss() { close(animated: true) }
 
-    func dismissImmediately() { close(animated: false) }
+    private func handleEscape() {
+        guard isPresenting, panel?.attachedSheet == nil else { return }
+        if navigation?.page == .calibration {
+            navigation?.page = .settings
+        } else {
+            dismiss()
+        }
+    }
+
+    func dismissImmediately() {
+        afterDismiss = nil
+        close(animated: false)
+    }
+
+    private func reveal(_ panel: NSPanel, resizeContent: Bool) {
+        guard let surface, let navigation else { return }
+        animate(panel, to: surface.geometry.frame, duration: 0.46, resizeContent: resizeContent) {
+            navigation.isAtFullHeight = navigation.isFullScreen && panel.frame == surface.geometry.screenFrame
+            navigation.presentationPhase = .visible
+        }
+    }
+
+    private func fadeOut(then move: @escaping () -> Void) {
+        fadeTask?.cancel()
+        stopSlide()
+        guard let navigation else { return }
+        guard navigation.presentationPhase != .concealed,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            navigation.presentationPhase = .concealed
+            move()
+            return
+        }
+        navigation.presentationPhase = .leaving
+        fadeTask = Task { @MainActor in
+            do { try await Task.sleep(for: MenuTransitionPhase.cascadeDuration) } catch { return }
+            navigation.presentationPhase = .concealed
+            move()
+        }
+    }
 
     private func close(animated: Bool) {
         guard let panel, isVisible, !isClosing || !animated else { return }
         transition += 1
-        resizeTask?.cancel()
+        fadeTask?.cancel()
+        stopSlide()
         let current = transition
         isClosing = true
+        navigation?.isAtFullHeight = false
         removeMonitors()
         model?.setMenuVoicePageVisible(false)
         model?.displayTaps.cancelCalibration()
         model?.displayTaps.endTest()
         if let sheet = panel.attachedSheet { panel.endSheet(sheet, returnCode: .cancel) }
-        panel.ignoresMouseEvents = true
         let finish = { [weak self, weak panel] in
             guard let self, self.transition == current else { return }
             panel?.orderOut(nil)
@@ -148,73 +199,70 @@ final class AtmosExpandedMenuController {
             self.model?.setMenuPresented(false)
             self.model = nil
             self.onVisibilityChanged?(false)
+            let action = self.afterDismiss
+            self.afterDismiss = nil
+            action?()
         }
         if animated, let geometry = surface?.geometry {
-            animate(panel, to: geometry.collapsedFrame, duration: 0.20, completion: finish)
+            fadeOut { [weak self] in
+                self?.animate(panel, to: geometry.collapsedFrame, duration: 0.37, completion: finish)
+            }
         } else { finish() }
+    }
+
+    private func stopSlide() {
+        slideGeneration += 1
+        surface?.freezeSlide()
     }
 
     private func animate(_ panel: NSPanel, to frame: NSRect, duration: TimeInterval,
                          resizeContent: Bool = false, completion: (() -> Void)? = nil) {
-        resizeTask?.cancel()
         guard let surface else { return }
-        let initialLayoutHeight = surface.layoutHeight
-        func apply(_ step: NSRect, layoutHeight: CGFloat) {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            if resizeContent { surface.layoutHeight = layoutHeight }
-            surface.setFrameSize(step.size)
+        stopSlide()
+        let generation = slideGeneration
+        let initial = surface.visibleHeight
+        let canvasHeight = max(initial, frame.height)
+        // All content is concealed during travel. Size the hosting view and the
+        // native window once; Core Animation moves the live glass independently.
+        if resizeContent { surface.layoutHeight = frame.height }
+        func fitWindow(_ height: CGFloat, visible: CGFloat) {
+            let size = NSSize(width: frame.width, height: height)
+            surface.setFrameSize(size)
             surface.layoutSubtreeIfNeeded()
-            panel.setFrame(step, display: true)
-            CATransaction.commit()
+            surface.setVisibleHeight(visible)
+            let rect = NSRect(x: frame.minX, y: frame.maxY - height, width: size.width, height: height)
+            if panel.frame != rect { panel.setFrame(rect, display: false) }
         }
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            apply(frame, layoutHeight: frame.height)
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || abs(initial - frame.height) < 0.5 {
+            fitWindow(frame.height, visible: frame.height)
             completion?()
             return
         }
-        // AppKit's animated window resize can publish the new window bounds
-        // before its layer-backed content has been redrawn. Advance both on
-        // the same tick so contraction never reveals the desktop above the bar.
-        let initial = panel.frame.height
-        let refresh = max(30, min(120, panel.screen?.maximumFramesPerSecond ?? 60))
-        let scale = panel.backingScaleFactor
-        let started = CACurrentMediaTime()
-        resizeTask = Task { @MainActor in
-            while !Task.isCancelled {
-                let progress = min(1, (CACurrentMediaTime() - started) / duration)
-                let remaining = 1 - progress
-                let interpolated = frame.height + (initial - frame.height) * remaining * remaining * remaining
-                let height = progress == 1 ? frame.height : (interpolated * scale).rounded() / scale
-                let step = NSRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height)
-                let layoutHeight = frame.height + (initialLayoutHeight - frame.height) * remaining * remaining * remaining
-                if panel.frame != step || (resizeContent && surface.layoutHeight != layoutHeight) {
-                    apply(step, layoutHeight: layoutHeight)
-                }
-                if progress == 1 { completion?(); return }
-                do { try await Task.sleep(for: .seconds(1 / Double(refresh))) } catch { return }
-            }
+        fitWindow(canvasHeight, visible: initial)
+        surface.slide(from: initial, to: frame.height, duration: duration) { [weak self] in
+            guard let self, self.slideGeneration == generation else { return }
+            fitWindow(frame.height, visible: frame.height)
+            completion?()
         }
     }
 
     private func installMonitors(_ panel: NSPanel) {
         let click: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-        globalClick = NSEvent.addGlobalMonitorForEvents(matching: click) { [weak self, weak panel] event in
-            guard let self, let panel, panel.attachedSheet == nil, NSApp.modalWindow == nil,
-                  !panel.frame.contains(NSEvent.mouseLocation) else { return }
-            // A first-use microphone prompt belongs to macOS and takes clicks
-            // outside the panel while the composer waits for the answer.
-            if self.model?.menuMicrophonePermissionPending == true { return }
-            if self.navigation?.page == .settings, Self.isSystemSettingsInteraction(event) { return }
-            self.close(animated: false)
+        globalClick = NSEvent.addGlobalMonitorForEvents(matching: click) { [weak self] event in
+            // A global mouse event went to another app, even when its window
+            // overlaps this panel on screen. Leave that app's click untouched.
+            self?.handleOutsideClick(event)
         }
         localEvents = NSEvent.addLocalMonitorForEvents(matching: click.union(.keyDown)) { [weak self, weak panel] event in
-            guard let self, let panel, panel.attachedSheet == nil, NSApp.modalWindow == nil else { return event }
+            guard let self, let panel, NSApp.modalWindow == nil else { return event }
             if event.type == .keyDown {
-                if event.window === panel, event.keyCode == 53 { self.dismiss(); return nil }
-            } else if self.navigation?.page != .settings, let window = event.window,
-                      window !== panel, window.parent !== panel, window.sheetParent !== panel {
-                self.close(animated: false)
+                if event.window === panel, panel.attachedSheet == nil, event.keyCode == 53 {
+                    self.handleEscape()
+                    return nil
+                }
+            } else if let window = event.window, window !== panel, window.parent !== panel, window.sheetParent !== panel,
+                      !panel.frame.contains(window.convertPoint(toScreen: event.locationInWindow)) {
+                self.handleOutsideClick(event)
             }
             return event
         }
@@ -224,7 +272,7 @@ final class AtmosExpandedMenuController {
                 guard let self, let panel, self.panel === panel, self.isVisible, !panel.isKeyWindow,
                       self.navigation?.page != .settings, self.model?.menuMicrophonePermissionPending != true,
                       panel.attachedSheet == nil, NSApp.modalWindow == nil else { return }
-                self.close(animated: false)
+                self.dismiss()
             }
         }
         screensObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
@@ -233,10 +281,15 @@ final class AtmosExpandedMenuController {
                 guard let self, self.isVisible else { return }
                 guard let screen = AtmosExpandedMenuGeometry.targetScreen() else { self.close(animated: false); return }
                 let geometry = AtmosExpandedMenuGeometry(screen: screen, isFullScreen: self.navigation?.isFullScreen == true)
-                self.resizeTask?.cancel()
+                self.fadeTask?.cancel()
+                self.stopSlide()
                 self.surface?.geometry = geometry
                 self.surface?.layoutHeight = geometry.frame.height
-                self.panel?.setFrame(geometry.frame, display: true)
+                self.panel?.setFrame(geometry.frame, display: false)
+                self.surface?.layoutSubtreeIfNeeded()
+                self.surface?.setVisibleHeight(geometry.frame.height)
+                self.navigation?.isAtFullHeight = self.isFullScreen
+                self.navigation?.presentationPhase = .visible
             }
         }
         accessibilityObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -246,16 +299,22 @@ final class AtmosExpandedMenuController {
         }
     }
 
-    /// Permission and Keychain dialogs live outside Atmos. Let a click in one
-    /// of those windows finish while the Settings page retains its place.
-    private static func isSystemSettingsInteraction(_ event: NSEvent) -> Bool {
+    private func handleOutsideClick(_ event: NSEvent) {
+        guard model?.menuMicrophonePermissionPending != true else { return }
+        if let modal = NSApp.modalWindow, modal !== panel?.attachedSheet { return }
+        if navigation?.page == .settings, Self.isAuthorizationDialog(event) { return }
+        dismiss()
+    }
+
+    /// macOS hosts Keychain and authorization dialogs in separate processes.
+    private static func isAuthorizationDialog(_ event: NSEvent) -> Bool {
         guard let cgEvent = event.cgEvent else { return false }
         let id = CGWindowID(clamping: cgEvent.getIntegerValueField(.mouseEventWindowUnderMousePointer))
         guard id != kCGNullWindowID,
               let rows = CGWindowListCopyWindowInfo(.optionIncludingWindow, id) as? [[String: Any]],
               let pid = rows.first?[kCGWindowOwnerPID as String] as? Int32,
               let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { return false }
-        return ["com.apple.systempreferences", "com.apple.SecurityAgent", "com.apple.UserNotificationCenter",
+        return ["com.apple.SecurityAgent", "com.apple.UserNotificationCenter",
                 "com.apple.LocalAuthentication.UIAgent", "com.apple.CoreServicesUIAgent"].contains(bundle)
     }
 
@@ -317,16 +376,22 @@ private final class ExpandedMenuPanel: NSPanel {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
-/// The window clips the glass at its moving lower edge. A separate layout
-/// height positions the controls and tint during a reveal or full-screen resize.
+/// The slide is a translation of a pre-sized live glass surface. Its tint
+/// stretches with the exposed body, and a stationary bezel absorbs the edge.
 private final class ExpandedMenuSurface: NSView {
     var geometry: AtmosExpandedMenuGeometry { didSet { needsLayout = true } }
     var layoutHeight: CGFloat { didSet { needsLayout = true } }
-    private let materialClip = NSView()
+    private let material = NSView()
     private let glass = NSGlassEffectView()
     private let tint = ExpandedMenuTint()
+    private let reflection = CAGradientLayer()
+    private let reflectionMask = CAShapeLayer()
     private let controls = NSView()
     private let bezel = NSView()
+    private let bezelShade = CAGradientLayer()
+    private let bezelMask = CALayer()
+    private var restingHeight: CGFloat = 1
+    private let slideKey = "Atmos.glassSlide"
     private let host: NSHostingView<AtmosExpandedMenuView>
     private let radius: CGFloat = 32
 
@@ -334,29 +399,42 @@ private final class ExpandedMenuSurface: NSView {
         self.geometry = geometry
         layoutHeight = geometry.frame.height
         host = NSHostingView(rootView: content)
-        super.init(frame: geometry.collapsedFrame)
+        super.init(frame: NSRect(origin: .zero, size: geometry.frame.size))
         host.sizingOptions = []
         host.safeAreaRegions = []
         wantsLayer = true
         layer?.masksToBounds = true
 
-        materialClip.wantsLayer = true
-        materialClip.layer?.masksToBounds = true
-        materialClip.layer?.cornerCurve = .continuous
-        materialClip.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        addSubview(materialClip)
+        material.wantsLayer = true
+        addSubview(material)
         glass.style = .clear
-        glass.cornerRadius = 0
-        materialClip.addSubview(glass)
-        // Keep the black tint above the glass's own lighting at the bezel.
-        materialClip.addSubview(tint)
+        material.addSubview(glass)
+        let contentView = NSView()
+        contentView.wantsLayer = true
+        glass.contentView = contentView
+        contentView.addSubview(tint)
+        // AppKit softens its lighting on an inactive panel. Keep a one-pixel
+        // highlight on the lower curve, as on the compact notch.
+        reflection.startPoint = CGPoint(x: 0.5, y: 0)
+        reflection.endPoint = CGPoint(x: 0.5, y: 1)
+        reflectionMask.fillColor = nil
+        reflectionMask.strokeColor = NSColor.white.cgColor
+        reflection.mask = reflectionMask
+        reflection.zPosition = 1
+        contentView.layer?.addSublayer(reflection)
 
         controls.wantsLayer = true
         controls.layer?.masksToBounds = true
         controls.addSubview(host)
         addSubview(controls)
         bezel.wantsLayer = true
-        bezel.layer?.backgroundColor = CGColor(gray: 0, alpha: 1)
+        bezelShade.colors = [CGColor(gray: 0, alpha: 0), CGColor(gray: 0, alpha: 1), CGColor(gray: 0, alpha: 1)]
+        bezelShade.startPoint = CGPoint(x: 0.5, y: 0)
+        bezelShade.endPoint = CGPoint(x: 0.5, y: 1)
+        bezelMask.anchorPoint = .zero
+        bezelMask.backgroundColor = CGColor(gray: 1, alpha: 1)
+        bezelShade.mask = bezelMask
+        bezel.layer?.addSublayer(bezelShade)
         addSubview(bezel)
         applyAccessibilityPreferences()
     }
@@ -366,38 +444,188 @@ private final class ExpandedMenuSurface: NSView {
     override func layout() {
         super.layout()
         let bar = min(bounds.height, geometry.topInset)
-        let bodyHeight = max(1, layoutHeight - geometry.topInset)
-        materialClip.frame = bounds
-        // Round the floating lower edge. As the panel meets the bottom of the
-        // display, its corners straighten to cover the last physical pixels.
-        materialClip.layer?.cornerRadius = min(radius, max(0, geometry.screenFrame.height - bounds.height))
-        // Liquid Glass adds a native specular rim. Keep its four boundaries
-        // outside the clip, including when the lower edge moves during resize.
-        glass.frame = materialClip.bounds.insetBy(dx: -radius, dy: -radius)
-        bezel.frame = NSRect(x: 0, y: bounds.maxY - bar, width: bounds.width, height: bar)
-        tint.frame = NSRect(x: 0, y: bounds.maxY - bar - bodyHeight, width: bounds.width, height: bodyHeight)
+        let layoutBody = max(1, layoutHeight - geometry.topInset)
+        let bodyHeight = max(1, bounds.height - bar)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        material.frame = NSRect(x: 0, y: bounds.height - restingHeight, width: bounds.width, height: bounds.height)
+        // Clip two physical pixels from each side of the native reflection.
+        // Keep the glass bottom exactly on the moving panel edge.
+        let scale = window?.backingScaleFactor ?? 1
+        let pixel = 1 / scale
+        let sideBleed = 2 * pixel
+        glass.frame = NSRect(x: -sideBleed, y: 0, width: bounds.width + 2 * sideBleed,
+                             height: bounds.height + radius + 2)
+        reflection.frame = CGRect(x: 0, y: 0, width: glass.frame.width, height: radius)
+        reflectionMask.frame = reflection.bounds
+        reflectionMask.contentsScale = scale
+        reflectionMask.lineWidth = pixel
+        if material.layer?.animation(forKey: slideKey) == nil {
+            setCorners(from: restingHeight, to: restingHeight, duration: 0)
+        }
+        let softEdge = min(18, max(0, bounds.height - bar))
+        let shadeHeight = max(1, bar + softEdge)
+        bezel.frame = NSRect(x: 0, y: bounds.height - shadeHeight, width: bounds.width, height: shadeHeight)
+        bezelShade.frame = bezel.bounds
+        bezelShade.locations = [0, NSNumber(value: Double(softEdge / shadeHeight)), 1]
+        bezelMask.bounds = CGRect(origin: .zero, size: bounds.size)
+        bezelMask.position = CGPoint(x: 0, y: shadeHeight - bounds.height)
+        tint.frame = NSRect(x: 0, y: 0, width: glass.frame.width, height: bodyHeight)
         controls.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - bar)
-        host.frame = NSRect(x: 0, y: controls.bounds.height - bodyHeight, width: bounds.width, height: bodyHeight)
+        host.frame = NSRect(x: 0, y: controls.bounds.height - layoutBody, width: bounds.width, height: layoutBody)
+    }
+
+    var visibleHeight: CGFloat {
+        guard let layer = material.layer, layer.animation(forKey: slideKey) != nil,
+              let presented = layer.presentation() else { return restingHeight }
+        return min(bounds.height, max(1, restingHeight - presented.transform.m42))
+    }
+
+    func freezeSlide() {
+        guard material.layer?.animation(forKey: slideKey) != nil else { return }
+        setVisibleHeight(visibleHeight)
+    }
+
+    func setVisibleHeight(_ height: CGFloat) {
+        applySlide(from: height, to: height, duration: 0, completion: nil)
+    }
+
+    func slide(from start: CGFloat, to end: CGFloat, duration: TimeInterval, completion: @escaping () -> Void) {
+        applySlide(from: start, to: end, duration: duration, completion: completion)
+    }
+
+    /// Only the final 32 points of travel against the screen bottom straighten
+    /// the glass. Match the native material and its bottom highlight in flight.
+    private func setCorners(from start: CGFloat, to end: CGFloat, duration: TimeInterval) {
+        let screenHeight = geometry.screenFrame.height
+        func corner(at height: CGFloat) -> CGFloat { min(radius, max(0, screenHeight - height)) }
+        func outline(_ corner: CGFloat) -> CGPath {
+            let inset = reflectionMask.lineWidth / 2
+            let r = max(0, corner - inset)
+            let x = glass.bounds.width - inset
+            let k = r * 0.55228475
+            let path = CGMutablePath()
+            // Keep the same curve elements at radius zero for CA path interpolation.
+            path.move(to: CGPoint(x: inset, y: inset + r))
+            path.addCurve(to: CGPoint(x: inset + r, y: inset), control1: CGPoint(x: inset, y: inset + r - k),
+                          control2: CGPoint(x: inset + r - k, y: inset))
+            path.addLine(to: CGPoint(x: x - r, y: inset))
+            path.addCurve(to: CGPoint(x: x, y: inset + r), control1: CGPoint(x: x - r + k, y: inset),
+                          control2: CGPoint(x: x, y: inset + r - k))
+            return path
+        }
+        let first = corner(at: start), last = corner(at: end)
+        reflectionMask.removeAnimation(forKey: slideKey)
+        reflectionMask.path = outline(last)
+        glass.cornerRadius = first
+        guard duration > 0, first != last else {
+            glass.cornerRadius = last
+            return
+        }
+        let crossing = (screenHeight - radius - start) / (end - start)
+        var radii = [first, last]
+        var times: [NSNumber] = [0, 1]
+        if crossing > 0 && crossing < 1 {
+            radii.insert(radius, at: 1)
+            times.insert(NSNumber(value: Double(crossing)), at: 1)
+        }
+        let timing = CAMediaTimingFunction(name: .easeInEaseOut)
+        let native = CAKeyframeAnimation()
+        native.values = radii
+        native.keyTimes = times
+        native.timingFunction = timing
+        glass.animations = ["cornerRadius": native]
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            context.timingFunction = timing
+            glass.animator().cornerRadius = last
+        }
+        let highlight = CAKeyframeAnimation(keyPath: "path")
+        highlight.values = radii.map(outline)
+        highlight.keyTimes = times
+        highlight.timingFunction = timing
+        highlight.duration = duration
+        reflectionMask.add(highlight, forKey: slideKey)
+    }
+
+    private func applySlide(from start: CGFloat, to end: CGFloat, duration: TimeInterval, completion: (() -> Void)?) {
+        guard let materialLayer = material.layer else { return }
+        restingHeight = end
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if let completion {
+            CATransaction.setCompletionBlock { MainActor.assumeIsolated { completion() } }
+        }
+        func transform(_ layer: CALayer, _ from: CATransform3D, _ to: CATransform3D) {
+            layer.removeAnimation(forKey: slideKey)
+            layer.transform = to
+            guard duration > 0 else { return }
+            let animation = CABasicAnimation(keyPath: "transform")
+            animation.fromValue = NSValue(caTransform3D: from)
+            animation.toValue = NSValue(caTransform3D: to)
+            animation.duration = duration
+            animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            let refresh = Float(window?.screen?.maximumFramesPerSecond ?? 60)
+            animation.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: max(30, refresh), preferred: max(30, refresh))
+            layer.add(animation, forKey: slideKey)
+        }
+        func offset(_ height: CGFloat) -> CATransform3D {
+            CATransform3DMakeTranslation(0, bounds.height - height, 0)
+        }
+        func shade(_ height: CGFloat) -> CATransform3D {
+            // The ramp is pinned to the material's bottom edge.
+            let exposed = max(0.01, height - geometry.topInset)
+            return CATransform3DMakeScale(1, exposed / max(1, tint.bounds.height), 1)
+        }
+        material.setFrameOrigin(NSPoint(x: 0, y: bounds.height - end))
+        transform(materialLayer, CATransform3DMakeTranslation(0, end - start, 0), CATransform3DIdentity)
+        transform(bezelMask, offset(start), offset(end))
+        transform(tint.rampLayer, shade(start), shade(end))
+        setCorners(from: start, to: end, duration: duration)
+        CATransaction.commit()
     }
 
     func applyAccessibilityPreferences() {
-        tint.reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        tint.reduceTransparency = reduced
+        reflection.colors = [CGColor(gray: 1, alpha: reduced ? 0.2 : 0.46), CGColor(gray: 1, alpha: 0)]
     }
 }
 
 private final class ExpandedMenuTint: NSView {
-    var reduceTransparency = false { didSet { needsDisplay = true } }
+    var reduceTransparency = false { didSet { tile.contents = reduceTransparency ? Self.opaqueRamp : Self.glassRamp } }
+    let rampLayer = CAReplicatorLayer()
+    private let tile = CALayer()
     private static let glassRamp = makeRamp(opaque: false)
     private static let opaqueRamp = makeRamp(opaque: true)
 
-    override func draw(_ dirtyRect: NSRect) {
-        guard let context = NSGraphicsContext.current?.cgContext, bounds.height > 0 else { return }
-        let ramp = reduceTransparency ? Self.opaqueRamp : Self.glassRamp
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        rampLayer.anchorPoint = .zero
+        rampLayer.masksToBounds = true
+        tile.contents = Self.glassRamp
+        tile.magnificationFilter = .nearest
+        tile.minificationFilter = .nearest
+        rampLayer.addSublayer(tile)
+        layer?.addSublayer(rampLayer)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func layout() {
+        super.layout()
         let scale = window?.backingScaleFactor ?? 1
-        // Repeat only across the width. One complete ramp spans the menu body.
-        context.interpolationQuality = .none
-        let tile = CGRect(x: 0, y: 0, width: CGFloat(ramp.width) / scale, height: bounds.height)
-        context.draw(ramp, in: tile, byTiling: true)
+        let width = CGFloat(Self.glassRamp.width) / scale
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        rampLayer.bounds = CGRect(origin: .zero, size: bounds.size)
+        rampLayer.position = .zero
+        tile.frame = NSRect(x: 0, y: 0, width: width, height: bounds.height)
+        rampLayer.instanceCount = max(1, Int(ceil(bounds.width / width)))
+        rampLayer.instanceTransform = CATransform3DMakeTranslation(width, 0, 0)
+        CATransaction.commit()
     }
 
     /// A single continuous falloff keeps the middle dark and most of the
@@ -405,7 +633,7 @@ private final class ExpandedMenuTint: NSView {
     /// near-black regions do not acquire a horizontal contour on SDR screens.
     private static func makeRamp(opaque: Bool) -> CGImage {
         let thresholds = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]
-        let width = 16, height = 2048
+        let width = 256, height = 1024
         var pixels = [UInt8](repeating: 0, count: width * height * 2)
         for y in 0..<height {
             let progress = Double(y) / Double(height - 1)

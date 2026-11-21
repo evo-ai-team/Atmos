@@ -10,6 +10,8 @@ struct AtmosMenuSettingsView: View {
 
     @ObservedObject var model: AppModel
     let perform: (@escaping () -> Void) -> Void
+    var isFullScreen = false
+    let openCalibration: () -> Void
     @State private var selectedTab = Tab.settings
     @State private var visibleSections: [Int] = []
     @State private var keyInput = ""
@@ -25,6 +27,8 @@ struct AtmosMenuSettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
+            // The nonactivating panel can inherit a light macOS appearance.
+            .environment(\.colorScheme, .dark)
             .labelsHidden()
             .frame(maxWidth: 340)
             .atmosMenuElement(0)
@@ -36,7 +40,10 @@ struct AtmosMenuSettingsView: View {
                 case .actions:
                     ActionHistoryView(model: model)
                 case .answers:
-                    QuestionAnswersView(model: model, submit: submit)
+                    QuestionAnswersView(model: model) {
+                        let question = model.command.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !question.isEmpty { model.submitMenuInput(question, fullScreen: isFullScreen, afterClosing: perform) }
+                    }
                 }
             }
         }
@@ -46,14 +53,17 @@ struct AtmosMenuSettingsView: View {
     private func submit() {
         let command = model.command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { return }
-        perform { model.submit(command) }
+        let fullScreen = isFullScreen
+        perform { model.submit(command, fromFullScreenMenu: fullScreen) }
     }
 
     private var settingsContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                settingsRow(0) { voiceSection }
-                settingsRow(1) { DisplayTapSettingsView(model: model, monitor: model.displayTaps) }
+                settingsRow(0) {
+                    DisplayTapSettingsView(model: model, monitor: model.displayTaps, openCalibration: openCalibration)
+                }
+                settingsRow(1) { voiceSection }
                 settingsRow(2) { vivaProSection }
                 settingsRow(3) { BehaviorSettingsView(model: model) }
                 settingsRow(4) { permissionsSection }

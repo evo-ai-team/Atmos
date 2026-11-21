@@ -4,6 +4,7 @@ import Foundation
 /// It cannot synthesize typing, coordinates, a revised goal, or a review question.
 public enum ComputerDecision: Equatable, Sendable {
     case native(AccessibilityElement, action: String, description: String)
+    case showAnswer(UUID)
     case generate
     case review
     case complete
@@ -35,6 +36,8 @@ public struct ComputerDecisionOptions: Sendable {
     /// Diagnostics use the count without storing any application labels or values.
     public var nativeOptionCount: Int { nativeChoices.count }
     private let nativeChoices: [String: NativeChoice]
+    private let latestAnswerID: UUID?
+    private let pendingAnswerID: UUID?
 
     public func nativeActionCount(_ action: String) -> Int {
         nativeChoices.values.filter { $0.action == action }.count
@@ -53,6 +56,16 @@ public struct ComputerDecisionOptions: Sendable {
     Use generate for uncertain targets, unsupported input, conflicting intent, or visual inspection;
     the planner has a screenshot and can act without asking the user. An incomplete UI does not
     invalidate a clearly matching offered target.
+
+    Use show_latest_answer when the user asks to view the most recent Atmos reply, read it on screen,
+    or see it in full. When show_pending_answer is offered, it identifies an unread checkmark
+    for a different reply. Choose it for "open the checkmark", "show me the answer that's ready",
+    or an unqualified request to see the waiting answer. "Show your most recent reply" still
+    means show_latest_answer. If the checkmark belongs to the latest reply, show_latest_answer covers both.
+    For an explicitly named earlier reply, choose generate so the planner can select the matching
+    saved answer. For "explain that" or "tell me more", generate a new answer. For a request to
+    open a link, file, or app mentioned in an answer, select the requested computer operation.
+    Offer the reader only for a current directed request, never for background or quoted speech.
 
     For a question addressed to Atmos, use generate so the planner can answer in text. This includes
     general, how-to, and on-screen questions. "How do I open Chrome?" requests an answer;
@@ -95,7 +108,7 @@ public struct ComputerDecisionOptions: Sendable {
 
     public init(snapshot: AccessibilitySnapshot, allowNativeActions: Bool, allowCompletion: Bool,
                 allowIgnore: Bool = true, classifyTaskRelationship: Bool = false,
-                includesScreenshot: Bool = false) {
+                includesScreenshot: Bool = false, availableAnswerIDs: [UUID] = [], pendingAnswerID: UUID? = nil) {
         // Bind answers to this exact menu. A caller can rebuild a differently
         // ordered menu from the same snapshot; its short IDs must not cross over.
         let menuID = UUID().uuidString
@@ -126,6 +139,14 @@ public struct ComputerDecisionOptions: Sendable {
         // Retain the exact local handles/actions behind these compact wire IDs.
         // No later step parses an ID or guesses a target from its displayed name.
         nativeOptions = choices
+        latestAnswerID = availableAnswerIDs.last
+        self.pendingAnswerID = pendingAnswerID.flatMap { availableAnswerIDs.contains($0) ? $0 : nil }
+        if latestAnswerID != nil {
+            choices.append(DecisionChoice(value: "show_latest_answer", description: "Open the latest saved Atmos answer in the full-screen reader."))
+        }
+        if self.pendingAnswerID != nil, self.pendingAnswerID != latestAnswerID {
+            choices.append(DecisionChoice(value: "show_pending_answer", description: "Open the previously saved answer marked ready by the checkmark."))
+        }
         choices.append(DecisionChoice(value: "generate", description: includesScreenshot
             ? "Use the planner: answer a question, uncertain target, or unsupported input."
             : "Use the planner: answer a question, uncertain target, unsupported input, or visual inspection."))
@@ -176,6 +197,10 @@ public struct ComputerDecisionOptions: Sendable {
         var operation: ComputerDecision
         if let candidate = nativeChoices[answer.choice] {
             operation = .native(candidate.element, action: candidate.action, description: candidate.description)
+        } else if answer.choice == "show_latest_answer", let latestAnswerID {
+            operation = .showAnswer(latestAnswerID)
+        } else if answer.choice == "show_pending_answer", let pendingAnswerID {
+            operation = .showAnswer(pendingAnswerID)
         } else {
             switch answer.choice {
             case "complete": operation = .complete
@@ -191,7 +216,7 @@ public struct ComputerDecisionOptions: Sendable {
         if relationship == .needsPlanner {
             switch operation {
             case .native, .complete: operation = .generate
-            case .generate, .review, .ignore: break
+            case .generate, .review, .ignore, .showAnswer: break
             }
         }
         return ComputerDecisionSelection(operation: operation, taskRelationship: relationship)

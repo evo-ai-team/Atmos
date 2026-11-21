@@ -50,10 +50,12 @@ struct AtmosNotchPresentation {
     let font: NSFont
     let horizontalInset: CGFloat
     let wraps: Bool
+    let centersText: Bool
     let size: NSSize
 
     init(state: AtmosOverlayState, geometry: AtmosNotchGeometry) {
         let availableWidth = max(200, geometry.screenFrame.width - 48)
+        if case .answer = state { centersText = true } else { centersText = false }
         switch state {
         case .tapPending:
             text = ""
@@ -69,13 +71,22 @@ struct AtmosNotchPresentation {
             wraps = false
             size = NSSize(width: min(geometry.cameraWidth + 40, availableWidth),
                           height: max(30, geometry.cameraHeight + 18))
-        case .thinking:
+        case .thinking, .answerReady:
             text = ""
             font = .systemFont(ofSize: 16, weight: .medium)
             horizontalInset = 24
             wraps = false
             size = NSSize(width: min(geometry.cameraWidth + 16, availableWidth),
                           height: geometry.cameraHeight + 56)
+        case .answer(let answer):
+            text = answer
+            font = .systemFont(ofSize: 17, weight: .medium)
+            horizontalInset = 20
+            wraps = true
+            let measuredWidth = ceil((answer as NSString).size(withAttributes: [.font: font]).width)
+            let width = min(440, availableWidth, max(geometry.cameraWidth + 30, measuredWidth + 2 * horizontalInset + 6))
+            let height = Self.textHeight(answer, font: font, width: width - 2 * horizontalInset - 4)
+            size = NSSize(width: width, height: geometry.cameraHeight + height + 26)
         case .transcribing(let transcript), .notice(let transcript):
             text = transcript
             font = .systemFont(ofSize: 17, weight: .regular)

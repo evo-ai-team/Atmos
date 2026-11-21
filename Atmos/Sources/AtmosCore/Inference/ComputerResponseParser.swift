@@ -100,7 +100,11 @@ enum ComputerResponseParser {
             }
             return ModelTurn(id: responseID, calls: [], ignored: true)
         case "answer_question":
-            guard Set(payload.keys) == Set(["brief", "text"]),
+            let keys = Set(payload.keys)
+            // Legacy replies contain only brief/text. A supplied presentation
+            // must be valid, just like every other strict function argument.
+            let presentation = (payload["presentation"] as? String).flatMap(ModelTurn.Answer.Presentation.init(rawValue:))
+            guard keys == ["brief", "text"] || (keys == ["brief", "text", "presentation"] && presentation != nil),
                   let brief = payload["brief"] as? String, isSingleLine(brief, maximum: 160),
                   let text = payload["text"] as? String,
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -110,7 +114,13 @@ enum ComputerResponseParser {
                   }) else {
                 throw invalidResponse("The model returned an invalid text answer.")
             }
-            return ModelTurn(id: responseID, calls: [], answer: .init(brief: brief, text: text))
+            return ModelTurn(id: responseID, calls: [], answer: .init(brief: brief, text: text, presentation: presentation ?? .compact))
+        case "show_answer":
+            guard Set(payload.keys) == ["answer_id"], let rawID = payload["answer_id"] as? String,
+                  let id = UUID(uuidString: rawID) else {
+                throw invalidResponse("The model returned an invalid saved answer reference.")
+            }
+            return ModelTurn(id: responseID, calls: [], showAnswerID: id)
         case "complete_task":
             guard Set(payload.keys) == Set(["message", "task_update"]),
                   let message = payload["message"] as? String,

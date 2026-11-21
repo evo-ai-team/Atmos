@@ -18,7 +18,7 @@ function project([lat,lon]) {
 
 function selected(data,slot,id = data.state.choices[slot]) {
   const options = data.catalog[slot];
-  return options.find(o=>o.id===id && o.available!==false) || options.find(o=>o.available!==false);
+  return options?.find(o=>o.id===id && o.available!==false);
 }
 
 function stop(key, label, coords) { return {key,label,coords,point:project(coords)}; }
@@ -44,14 +44,16 @@ function appendLeg(segments, from, to, mode) {
   }
 }
 
-// A preview selects the displayed mode only. Confirmed choices and tracker
-// defaults supply the route whenever the option menu is open.
-export function routeFor(data, requestedSlot='transit', previewId) {
-  const slot = requestedSlot==='toDinner' && !data.catalog.toDinner?.length ? 'toNightlife' : requestedSlot;
-  const saved = data.state.choices[slot] || data.tracker.legs?.find(leg=>leg.slot===slot)?.id;
-  const option = selected(data,slot,slot===requestedSlot ? previewId ?? saved : saved);
-  const mode = option.id;
+export function routeFor(data, slot='transit', previewId) {
+  const option = selected(data,slot,previewId ?? data.state.choices[slot]);
   const loft = stop('loft','525 Market St',data.catalog.event.coords);
+  const home = stop('home','Richmond',data.catalog.originCoords);
+  const dinner = !data.state.skippedSlots?.includes('dinner') && selected(data,'dinner');
+  if (!option) {
+    const origin = slot==='transit' ? home : slot==='toNightlife' && dinner ? venue(dinner) : loft;
+    return {slot,title:legNames[slot],modeLabel:'Choose transportation to see your route',stops:[origin],segments:[]};
+  }
+  const mode = option.id;
   const stops = [];
   const segments = [];
   const lines = new Set();
@@ -60,7 +62,6 @@ export function routeFor(data, requestedSlot='transit', previewId) {
     if (line) lines.add(line);
   };
   if (slot==='transit') {
-    const home = stop('home','Richmond',data.catalog.originCoords);
     const meal = !data.state.skippedSlots?.includes('breakfast') && selected(data,'breakfast');
     stops.push(home);
     if (meal && meal.id!=='breakfast-proper') {
@@ -74,7 +75,6 @@ export function routeFor(data, requestedSlot='transit', previewId) {
     }
     stops.push(loft);
   } else {
-    const dinner = !data.state.skippedSlots?.includes('dinner') && selected(data,'dinner');
     const from = slot==='toDinner' || !dinner ? loft : venue(dinner);
     const to = venue(slot==='toDinner' ? dinner : selected(data,'nightlife'));
     stops.push(from,to);
@@ -89,7 +89,8 @@ export function routeFor(data, requestedSlot='transit', previewId) {
 export function routeMap(route, width, height, hero=false) {
   const {segments,stops,modeLabel} = route;
   const points = segments.flatMap(s=>s.points);
-  const xs = points.map(p=>p[0]), ys = points.map(p=>p[1]);
+  const bounds = points.length ? points : [project([37.777,-122.485]),project([37.793,-122.394])];
+  const xs = bounds.map(p=>p[0]), ys = bounds.map(p=>p[1]);
   const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
   // Leave space for the location card above the route on mobile and beside it on desktop.
   const left=hero && width>700 ? Math.min(315,width*0.29) : 25;
@@ -123,8 +124,8 @@ export function routeMap(route, width, height, hero=false) {
       <image href="/assets/sf-mission-streets.svg" x="690" y="550" width="560" height="155"/>
       <image href="/assets/sf-route-map.svg" x="0" y="-285" width="1400" height="850"/>
     </g><g fill="none" stroke-linecap="round" stroke-linejoin="round">${paths}</g>${pins}
-    <path data-replay-path d="${path(points)}" fill="none" stroke="none"/>
-    <circle data-gps-marker visibility="hidden" r="6" fill="#b33924" stroke="#fff" stroke-width="2"/>
+    ${points.length ? `<path data-replay-path d="${path(points)}" fill="none" stroke="none"/>
+    <circle data-gps-marker visibility="hidden" r="6" fill="#b33924" stroke="#fff" stroke-width="2"/>` : ''}
     </svg><span class="sf-route-tag">${esc(modeLabel)}</span>
     ${hero ? '<span class="sf-map-credit">© OpenStreetMap · OpenFreeMap · OpenMapTiles · DataSF</span>' : ''}`;
 }

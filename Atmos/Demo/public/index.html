@@ -24,7 +24,7 @@
         </div>
         <h1 id="home-title">What’s the plan?</h1>
         <form id="home-form" class="arrival-composer">
-          <textarea id="home-prompt" name="transcript" aria-label="Your trip request" placeholder="Paste your trip prompt here…" rows="3" maxlength="6000" required></textarea>
+          <textarea id="home-prompt" name="transcript" autocomplete="off" aria-label="Your trip request" placeholder="Paste your trip prompt here…" rows="3" maxlength="6000" required></textarea>
           <div class="arrival-actions">
             <button type="button" id="home-mic" class="arrival-mic" aria-pressed="false">
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5.5 10.5v1a6.5 6.5 0 0 0 13 0v-1M12 18v3.5m-3 0h6"/></svg>
@@ -37,7 +37,7 @@
           </div>
           <p id="home-status" role="status"></p>
         </form>
-        <a id="resume-trip" class="arrival-resume" href="/?view=trip" hidden>Resume saved day</a>
+        <a class="arrival-resume" href="/?view=trip">Explore trip options</a>
       </div>
       <small class="arrival-credit"><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · OpenFreeMap · OpenMapTiles</small>
     </section>
@@ -69,7 +69,7 @@
       <div class="dialog-heading"><span class="eyebrow">Trip briefing</span><button type="button" class="icon-button" data-close="brief-dialog" aria-label="Close briefing">×</button></div>
       <h2 id="brief-title">Tell Atmos your plans.</h2>
       <label for="transcript">Your trip request</label>
-      <textarea id="transcript" name="transcript" rows="7" maxlength="6000" required></textarea>
+      <textarea id="transcript" name="transcript" autocomplete="off" rows="7" maxlength="6000" required></textarea>
       <div id="memory-profile"></div>
       <p class="dialog-status" id="voice-status" role="status"></p>
       <div class="dialog-actions"><button type="button" class="btn secondary" id="voice-button">Use microphone</button><button type="submit" class="btn primary" id="start-button">Build my day</button></div>

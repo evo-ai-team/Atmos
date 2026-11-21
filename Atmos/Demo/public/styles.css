@@ -337,31 +337,13 @@ textarea { resize:vertical; }
 }
 .group-invite .icon { width:16px; height:16px; }
 .group-invite:disabled { cursor:default; }
-.imessage { overflow:hidden; padding:12px; border-radius:25px; background:linear-gradient(155deg,#fffffff7,#f3f8fcf5); }
-.message-top { display:flex; align-items:center; justify-content:space-between; color:#5c707b; font-size:.75rem; }
-.message-top .round { width:28px; height:28px; }
-.message-top .icon { width:15px; }
-.conversation-head { display:grid; justify-items:center; gap:5px; padding:1px 0 10px; border-bottom:1px solid #ccdae1; }
-.conversation-head h2 { font-size:1rem; letter-spacing:-.02em; }
 .group-avatars { display:flex; align-items:center; padding-right:5px; }
 .group-avatars b { width:34px; height:34px; border:2px solid white; border-radius:50%; display:grid; place-items:center; color:#fff; font-weight:550; background:linear-gradient(130deg,#7ba4a3,#486d73); }
 .group-avatars b+b { background:linear-gradient(130deg,#a18daf,#706a8d); margin-left:-6px; margin-top:6px; }
 .approval-to { display:flex; gap:8px; align-items:center; margin-bottom:14px; }
-.approval-to small,.approval-to strong,.shared-place small,.shared-place strong { display:block; }
-.approval-to small,.shared-place small { color:var(--muted); font-size:.79rem; }
-.preview-bubble,.sent-bubble { color:#fff; background:#0574eb; padding:10px 13px; border-radius:18px 18px 5px 18px; line-height:1.4; overflow-wrap:anywhere; }
-.messages { list-style:none; margin:0; padding:0 2px; max-height:310px; overflow:auto; }
-.messages li { text-align:right; margin:10px 0 3px; }
-.messages time { font-size:.72rem; display:block; color:var(--muted); text-align:center; margin:9px 0; }
-.sent-bubble { text-align:left; margin-left:13px; font-size:.88rem; }
-@media (prefers-reduced-motion:no-preference) {
-  .message-new .sent-bubble { animation:message-arrival .35s ease-out; transform-origin:bottom right; }
-  @keyframes message-arrival { from { opacity:.18; transform:translateY(9px) scale(.96); } to { opacity:1; transform:none; } }
-}
-.shared-place { display:flex; text-decoration:none; color:inherit; align-items:center; gap:9px; max-width:95%; margin:5px 0 0 auto; text-align:left; border-radius:15px; background:#e3edf4; padding:9px; }
-.shared-place>.icon { color:#2472be; }
-.shared-place strong { font-size:.86rem; }
-.delivery { color:#687883; font-size:.72rem; font-weight:600; }
+.approval-to small,.approval-to strong { display:block; }
+.approval-to small { color:var(--muted); font-size:.79rem; }
+.preview-bubble { color:#fff; background:#0574eb; padding:10px 13px; border-radius:18px 18px 5px 18px; line-height:1.4; overflow-wrap:anywhere; }
 @media (min-width:1000px) {
   .sidebar { position:sticky; top:8px; }
 }
@@ -398,11 +380,7 @@ textarea { resize:vertical; }
   .dish img { height:88px; }
   .dish span { left:6px; bottom:5px; font-size:.75rem; }
   .metrics span .icon { display:inline-block; }
-  .imessage {
-    position:fixed; z-index:5; right:8px; bottom:12px; width:min(350px,calc(100% - 20px));
-    max-height:calc(100dvh - 24px); overflow-y:auto; box-shadow:0 12px 48px #18354b55;
-  }
-  .imessage .messages { max-height:min(44dvh,310px); }
+
 }
 @media (prefers-reduced-motion:reduce) {
   *,*::before,*::after { scroll-behavior:auto !important; transition:none !important; }

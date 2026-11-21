@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDemo } from './server.mjs';
@@ -11,9 +13,11 @@ import { catalog, intro, newState, updateState, trackerFor, guideForVisit, itine
 const start = () => updateState(newState(),{action:'start',transcript:intro});
 const choose = (s,slot,id) => updateState(s,{action:'choose',slot,id});
 test('all stop icons preview the named option before offering confirmation', () => {
-  const state = start();
-  const data = {catalog:guideForVisit(catalog,state),state,tracker:trackerFor(state)};
   for (const slot of routeSlots) {
+    let state = start();
+    if (slot === 'toDinner') state = choose(state,'dinner',catalog.dinner[0].id);
+    if (slot === 'toNightlife') state = choose(state,'nightlife',catalog.nightlife[0].id);
+    const data = {catalog:guideForVisit(catalog,state),state,tracker:trackerFor(state)};
     const options = slot === 'event' ? [catalog.event] : data.catalog[slot];
     const menu = routeSection(data,slot);
     assert.doesNotMatch(menu,/data-action="choose"/);
@@ -32,7 +36,6 @@ test('all stop icons preview the named option before offering confirmation', () 
     assert.match(routeSection(saved,slot),/aria-label="Return to /);
     assert.match(routeSection(saved,slot,null),/on your route/);
   }
-  assert.deepEqual(state.confirmedSlots,[]);
 });
 
 test('each itinerary branch yields chronological, linked route legs and finite daily totals', () => {
@@ -42,7 +45,8 @@ test('each itinerary branch yields chronological, linked route legs and finite d
         for (const d of catalog.dinner)
           for (const n of catalog.nightlife) {
             const s = start();
-            s.choices = {transit:t.id,breakfast:am.id,lunch:l.id,dinner:d.id,nightlife:n.id};
+            s.choices = {transit:t.id,breakfast:am.id,lunch:l.id,dinner:d.id,nightlife:n.id,toDinner:'muni',toNightlife:'muni'};
+            s.confirmedSlots = Object.keys(s.choices);
             const track = trackerFor(s);
             const times = track.lines.map(line=>line.time);
             assert.deepEqual(times,[...times].sort());
@@ -71,19 +75,19 @@ test('notification updates the route and clears dinner-specific drafts without s
   assert.deepEqual(s.invitations,[]); assert.equal(s.reservation,null);
   assert.equal(trackerFor(s).spent,11.5);
   const fresh = updateState(s,{action:'reset'});
-  assert.equal(fresh.started,false); assert.equal(fresh.transcript,''); assert.deepEqual(fresh.expenses,[]);
+  assert.equal(fresh.started,false); assert.ok(!Object.hasOwn(fresh,'transcript')); assert.deepEqual(fresh.expenses,[]);
 });
 
 test('evening travel choices connect the selected venues and update only the confirmed mode, totals and invitation time', () => {
-  const legacy = choose(start(),'dinner','dinner-lataqueria');
-  const base = trackerFor(legacy);
-  assert.equal(legacy.choices.toDinner,undefined);
-  assert.deepEqual(base.legs.map(leg=>leg.id),['muni','muni']);
-  assert.equal(base.legs[1].price,0); // A second Muni boarding within the transfer window.
+  const venues = choose(choose(start(),'dinner','dinner-lataqueria'),'nightlife',catalog.nightlife[0].id);
+  const base = trackerFor(venues);
+  assert.deepEqual(base.legs,[]);
+  const transfers = trackerFor(choose(choose(venues,'toDinner','muni'),'toNightlife','muni'));
+  assert.equal(transfers.legs[1].price,0); // A second Muni boarding within the transfer window.
   const expectedIds = ['walk','muni','waymo','tesla','taxi'].sort();
   const toMins = time => time.split(':').reduce((value,part)=>value*60+Number(part),0);
   for (const id of expectedIds) {
-    const s = choose(legacy,'toDinner',id);
+    const s = choose(venues,'toDinner',id);
     assert.ok(s.confirmedSlots.includes('toDinner'));
     const guide = guideForVisit(catalog,s);
     for (const slot of ['toDinner','toNightlife']) {
@@ -111,18 +115,18 @@ test('evening travel choices connect the selected venues and update only the con
       assert.equal(tracker.lines.find(line=>line.slot==='dinner').time,tracker.legs[0].arrivesAt);
     }
   }
-  const skipped = updateState(choose(legacy,'toNightlife','taxi'),{action:'skip',slot:'dinner'});
+  const skipped = updateState(choose(venues,'toNightlife','taxi'),{action:'skip',slot:'dinner'});
   assert.deepEqual(guideForVisit(catalog,skipped).toDinner,[]);
   assert.throws(()=>choose(skipped,'toDinner','walk'));
   const [only] = trackerFor(skipped).legs;
   assert.deepEqual(trackerFor(skipped).legs.map(leg=>leg.slot),['toNightlife']);
   assert.equal(only.origin,catalog.event.address);
   assert.equal(only.id,'taxi');
-  assert.throws(()=>choose(legacy,'toNightlife','unlisted-car'));
+  assert.throws(()=>choose(venues,'toNightlife','unlisted-car'));
 });
 
 test('long walking routes show real ordering, late hackathon arrival and closing-time conflicts', () => {
-  let s = choose(start(),'transit','walk');
+  let s = choose(choose(start(),'breakfast',catalog.breakfast[0].id),'transit','walk');
   s = choose(s,'dinner','dinner-lataqueria');
   s = choose(s,'nightlife','game-night');
   s = choose(s,'toDinner','walk');
@@ -144,7 +148,7 @@ test('long walking routes show real ordering, late hackathon arrival and closing
   assert.equal(new URL(first.url).searchParams.get('destination'),catalog.event.address);
 });
 
-test('spoken details live in private memory and absence of a work conflict suppresses that alert', () => {
+test('spoken details apply within the current visit and absence of a work conflict suppresses that alert', () => {
   const s = updateState(newState(),{action:'start',transcript:'Plan a Richmond SF itinerary. My budget is under $125 and I want to walk 3k steps.'});
   assert.equal(s.profile.budget,125); assert.equal(s.profile.walkingGoal,3000);
   assert.equal(s.profile.workplaceNote,undefined);
@@ -156,7 +160,9 @@ test('spoken details live in private memory and absence of a work conflict suppr
 
 test('all meal skip combinations update stops, directions, spending, briefing and personal recall', () => {
   const meals = ['breakfast','lunch','dinner'];
-  const original = choose(start(),'transit','taxi');
+  let original = choose(start(),'transit','taxi');
+  for (const slot of [...meals,'nightlife']) original = choose(original,slot,catalog[slot][0].id);
+  original = choose(choose(original,'toDinner','muni'),'toNightlife','muni');
   const complete = trackerFor(original);
   for (let mask=0; mask<8; mask++) {
     let state = original;
@@ -186,8 +192,8 @@ test('all meal skip combinations update stops, directions, spending, briefing an
       }
     }
     const removedPrices = skipped.reduce((sum,slot) => sum+guide[slot][0].price,0);
-    // The default breakfast requires a second taxi. Dropping it removes that fare too.
-    // The default evening uses one Muni fare even when the dinner stop is skipped.
+    // This breakfast requires a second taxi. Dropping it removes that fare too.
+    // This evening uses one Muni fare even when the dinner stop is skipped.
     const taxiFare = skipped.includes('breakfast') ? guide.transit.find(t=>t.id==='taxi').price : 0;
     assert.equal(tracker.cost,Math.round((complete.cost-removedPrices-taxiFare)*100)/100);
     for (const slot of skipped) state = choose(state,slot,state.choices[slot]);
@@ -226,26 +232,31 @@ async function listen(filename) {
   return {url:'http://127.0.0.1:'+server.address().port,close:()=>new Promise(resolve=>server.close(resolve))};
 }
 const post = (url,data,extra={}) => fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...extra},body:JSON.stringify(data)});
-test('restaurant and travel changes recompute a dated dinner text before an approval can send it',async () => {
+test('dinner and travel choices update the invitation preview and the API rejects delivery',async () => {
   const app = await listen(':memory:');
   try {
     const api = app.url+'/api/demo';
     const initial = await fetch(api);
-    const Cookie = initial.headers.get('set-cookie').split(';')[0];
+    const headers = {'X-Atmos-Visit':initial.headers.get('x-atmos-visit')};
     const preview = await initial.json();
-    assert.equal(preview.previewTracker.legs.length,2);
-    assert.equal(preview.catalog.toDinner[0].origin,catalog.event.address);
-    const submit = action => post(api,action,{Cookie});
+    assert.deepEqual(preview.tracker.legs,[]);
+    assert.deepEqual(preview.catalog.toDinner,[]);
+    assert.equal(preview.dinnerTextDraft,null);
+    const submit = action => post(api,action,headers);
     await submit({action:'start',transcript:intro});
     const pm = await (await submit({action:'choose',slot:'dinner',id:'dinner-lataqueria'})).json();
     const walking = await (await submit({action:'choose',slot:'toDinner',id:'walk',revision:pm.state.revision})).json();
     assert.equal(walking.dinnerTextDraft.time,walking.tracker.legs[0].arrivesAt);
     assert.notEqual(pm.dinnerTextDraft.time,walking.dinnerTextDraft.time);
-    assert.notEqual(pm.dinnerTextDraft.key,walking.dinnerTextDraft.key);
-    assert.equal((await submit({action:'sendDinnerText',key:pm.dinnerTextDraft.key})).status,400);
+    assert.ok(walking.dinnerTextDraft.body.includes(walking.dinnerTextDraft.address));
+    assert.deepEqual(walking.dinnerTextDraft.recipients,['Gio L.','Andrew S.']);
+    assert.equal((await submit({action:'sendDinnerText',key:'legacy-draft'})).status,400);
+    await submit({action:'choose',slot:'nightlife',id:'game-night'});
     const taxi = await (await submit({action:'choose',slot:'toNightlife',id:'taxi'})).json();
-    assert.equal(taxi.dinnerTextDraft.key,walking.dinnerTextDraft.key);
-    const recalled = await (await post(app.url+'/api/recall',{scope:'private',query:'travel'},{Cookie})).json();
+    assert.deepEqual(taxi.dinnerTextDraft,walking.dinnerTextDraft);
+    assert.equal((await submit({action:'sendDinnerText'})).status,400);
+    assert.deepEqual(taxi.state.invitations,[]);
+    const recalled = await (await post(app.url+'/api/recall',{scope:'private',query:'travel'},headers)).json();
     assert.ok(recalled.results.includes('Travel to dinner: Walk'));
     assert.ok(recalled.results.includes('Travel to nightlife: City taxi'));
   } finally { await app.close(); }
@@ -256,9 +267,9 @@ test('only explicit catalog selections confirm itinerary sections, including the
   try {
     const api = app.url+'/api/demo';
     const initial = await fetch(api);
-    const Cookie = initial.headers.get('set-cookie').split(';')[0];
-    const read = async () => (await fetch(api,{headers:{Cookie}})).json();
-    const submit = action => post(api,action,{Cookie});
+    const headers = {'X-Atmos-Visit':initial.headers.get('x-atmos-visit')};
+    const read = async () => (await fetch(api,{headers})).json();
+    const submit = action => post(api,action,headers);
     assert.deepEqual((await initial.json()).state.confirmedSlots,[]);
     const started = await (await submit({action:'start',transcript:intro})).json();
     assert.deepEqual(started.state.confirmedSlots,[]);
@@ -267,15 +278,16 @@ test('only explicit catalog selections confirm itinerary sections, including the
 
     const eventChoice = {action:'choose',slot:'event',id:catalog.event.id};
     const confirmed = await (await submit({...eventChoice,revision:started.state.revision})).json();
-    assert.deepEqual(confirmed.tracker,started.tracker);
+    assert.deepEqual(started.tracker.lines,[]);
+    assert.ok(confirmed.tracker.lines.some(line=>line.title.includes('opening remarks')));
     assert.equal(confirmed.state.choices.event,catalog.event.id);
     assert.deepEqual(confirmed.state.confirmedSlots,['event']);
     assert.deepEqual(confirmed.catalog.event,started.catalog.event);
     assert.equal((await submit({...eventChoice,revision:started.state.revision})).status,409);
     const reselected = await (await submit({...eventChoice,revision:confirmed.state.revision})).json();
     assert.deepEqual(reselected.state.confirmedSlots,['event']);
-    assert.deepEqual(reselected.tracker,started.tracker);
-    const recall = await post(app.url+'/api/recall',{scope:'private',query:'event'},{Cookie});
+    assert.deepEqual(reselected.tracker,confirmed.tracker);
+    const recall = await post(app.url+'/api/recall',{scope:'private',query:'event'},headers);
     assert.ok((await recall.json()).results.includes('event: '+catalog.event.title));
 
     const expected = ['event'];
@@ -297,112 +309,105 @@ test('only explicit catalog selections confirm itinerary sections, including the
   } finally { await app.close(); }
 });
 
-test('approval saves the displayed dinner text locally for both demo contacts and survives a restart',async () => {
-  const dir = await mkdtemp(join(tmpdir(),'atmos-text-test-'));
-  const filename = join(dir,'texts.sqlite');
-  let app = await listen(filename);
+test('each page starts empty, while concurrent pages keep independent active choices',async () => {
+  const app = await listen(':memory:');
   try {
-    const initial = await fetch(app.url+'/api/demo');
-    const Cookie = initial.headers.get('set-cookie').split(';')[0];
-    const preview = await initial.json();
-    const submit = data => post(app.url+'/api/demo',data,{Cookie});
-    const read = async () => (await fetch(app.url+'/api/demo',{headers:{Cookie}})).json();
-    const draft = preview.dinnerTextDraft;
-    assert.deepEqual(preview.state.sentDinnerTexts,[]);
-    assert.deepEqual(draft.recipientIds,['gio','andrew']);
-    assert.deepEqual(draft.recipients,['Gio L.','Andrew S.']);
-    assert.equal(draft.time,preview.previewTracker.lines.find(line=>line.slot==='dinner').time);
-    assert.ok(draft.body.includes(draft.venue) && draft.body.includes(draft.address));
-    assert.ok(new URL(draft.url).searchParams.get('query').includes(draft.address));
-    const send = {action:'sendDinnerText',key:draft.key};
-    assert.equal((await submit(send)).status,400);
-
-    const started = await (await submit({action:'start',transcript:intro})).json();
-    assert.deepEqual(started.dinnerTextDraft,draft);
-    assert.equal((await submit({...send,key:'old-draft'})).status,400);
-    assert.equal((await submit({...send,recipients:['custom recipient']})).status,400);
-    assert.equal((await submit({...send,revision:0})).status,409);
-    assert.deepEqual((await read()).state.sentDinnerTexts,[]);
-    const saved = await (await submit({...send,revision:started.state.revision})).json();
-    const [message] = saved.state.sentDinnerTexts;
-    const {id,sentAt,...snapshot} = message;
-    assert.ok(id);
-    assert.equal(new Date(sentAt).toISOString(),sentAt);
-    assert.deepEqual(snapshot,draft);
-    assert.deepEqual(saved.state.invitations,[]);
-    const repeated = await (await submit({...send,revision:saved.state.revision})).json();
-    assert.deepEqual(repeated.state,saved.state);
-
-    const changedDinner = catalog.dinner.find(option=>option.id!==draft.dinnerId && option.available!==false);
-    const changed = await (await submit({action:'choose',slot:'dinner',id:changedDinner.id})).json();
-    assert.notEqual(changed.dinnerTextDraft.key,draft.key);
-    assert.deepEqual(changed.state.sentDinnerTexts,[message]);
-    assert.equal((await submit({...send,revision:changed.state.revision})).status,400);
-    const second = await (await submit({action:'sendDinnerText',key:changed.dinnerTextDraft.key})).json();
-    const history = second.state.sentDinnerTexts;
-    assert.equal(history.length,2);
-    assert.deepEqual(history[0],message);
-    assert.equal(history[1].venue,changedDinner.title);
-    assert.notEqual(history[0].id,history[1].id);
+    const api = app.url+'/api/demo';
+    const legacyCookie = {Cookie:'atmos_visit='+'a'.repeat(64)};
+    const first = await fetch(api,{headers:legacyCookie});
+    assert.equal(first.headers.get('set-cookie'),null);
+    const headers = {'X-Atmos-Visit':first.headers.get('x-atmos-visit')};
+    const built = await (await post(api,{action:'start',transcript:intro},headers)).json();
+    assert.deepEqual(built.state.choices,{});
+    assert.deepEqual(built.state.confirmedSlots,[]);
+    assert.equal(built.dinnerTextDraft,null);
+    assert.deepEqual(built.tracker,{lines:[],legs:[],cost:0,spent:0,steps:0,calories:0});
+    assert.equal(built.state.profile.discretion,true);
+    assert.ok(!Object.hasOwn(built.state,'transcript'));
+    const submit = action => post(api,action,headers);
+    await submit({action:'choose',slot:'dinner',id:catalog.dinner[0].id});
+    const recall = async (scope,query,h={}) => (await post(app.url+'/api/recall',{scope,query},h)).json();
+    assert.ok((await recall('private','boss',headers)).results.some(f=>f.includes('sick')));
+    assert.equal((await recall('private','boss')).results.length,0);
+    assert.equal((await recall('shared','boss',headers)).results.length,0);
+    assert.ok((await recall('shared','tofu')).results.some(f=>f.includes('Proper Food')));
+    const second = await post(api,{action:'begin'},legacyCookie);
+    assert.notEqual(second.headers.get('x-atmos-visit'),headers['X-Atmos-Visit']);
+    const fresh = await second.json();
+    assert.deepEqual(fresh.state.choices,{});
+    assert.deepEqual(fresh.state.invitations,[]);
+    assert.deepEqual(fresh.state.skippedSlots,[]);
+    assert.equal(fresh.dinnerTextDraft,null);
+    assert.equal(fresh.state.profile.workplaceNote,undefined);
+    const original = await (await fetch(api,{headers})).json();
+    assert.equal(original.state.choices.dinner,catalog.dinner[0].id);
+    assert.deepEqual(original.state.invitations,[]);
+    assert.equal((await submit({action:'reset',revision:0})).status,409);
     const skipped = await (await submit({action:'skip',slot:'dinner'})).json();
     assert.equal(skipped.dinnerTextDraft,null);
-    assert.equal((await submit({action:'sendDinnerText',key:changed.dinnerTextDraft.key})).status,400);
-
-    await app.close(); app = await listen(filename);
-    assert.deepEqual((await read()).state.sentDinnerTexts,history);
-    const other = await (await fetch(app.url+'/api/demo')).json();
-    assert.deepEqual(other.state.sentDinnerTexts,[]);
-    const reset = await (await submit({action:'reset'})).json();
-    assert.deepEqual(reset.state.sentDinnerTexts,[]);
-    assert.deepEqual(reset.dinnerTextDraft,draft);
-  } finally {
-    await app.close();
-    await rm(dir,{recursive:true,force:true});
-  }
+  } finally { await app.close(); }
 });
 
-test('browser memories are isolated and survive a restart, native handoffs are single use',async () => {
+test('browser and single-use native briefings never enter SQLite or survive a restart',async () => {
   const dir = await mkdtemp(join(tmpdir(),'atmos-trip-test-'));
-  let app = await listen(join(dir,'test.sqlite'));
+  const filename = join(dir,'test.sqlite');
+  let app = await listen(filename);
   try {
-    let res = await fetch(app.url+'/api/demo');
-    const cookie = res.headers.get('set-cookie').split(';')[0];
-    const preview = await res.json();
-    assert.equal(preview.state.started,false);
-    assert.deepEqual(preview.state.choices,{});
-    assert.deepEqual(preview.tracker.lines,[]);
-    assert.ok(preview.previewTracker.lines.length > 0);
-    res = await post(app.url+'/api/demo',{action:'start',transcript:intro},{Cookie:cookie});
-    const built = await res.json();
-    assert.deepEqual(preview.previewTracker,built.tracker);
-    assert.equal(built.state.profile.discretion,true);
-    assert.match(built.briefing[0],/9:30 AM/);
-    assert.ok(built.briefing.join(' ').includes('1:30 PM'));
-    const recall = (scope,query,headers={}) => post(app.url+'/api/recall',{scope,query},headers).then(r=>r.json());
-    assert.ok((await recall('private','boss',{Cookie:cookie})).results.some(f=>f.includes('sick')));
-    assert.equal((await recall('private','boss')).results.length,0);
-    assert.equal((await recall('shared','boss',{Cookie:cookie})).results.length,0);
-    assert.ok((await recall('shared','tofu')).results.some(f=>f.includes('Proper Food')));
-    let other = await (await fetch(app.url+'/api/demo')).json();
-    assert.equal(other.state.transcript,''); assert.equal(other.state.profile.workplaceNote,undefined);
-    res = await post(app.url+'/api/demo',{action:'reset',revision:0},{Cookie:cookie});
-    assert.equal(res.status,409);
-    res = await post(app.url+'/api/demo',{action:'skip',slot:'breakfast'},{Cookie:cookie});
-    assert.equal(res.status,200);
-    await app.close(); app = await listen(join(dir,'test.sqlite'));
-    const saved = await (await fetch(app.url+'/api/demo',{headers:{Cookie:cookie}})).json();
-    assert.equal(saved.state.transcript,intro);
-    assert.deepEqual(saved.state.skippedSlots,['breakfast']);
-    assert.equal(new URL(saved.tracker.lines[0].url).searchParams.get('destination'),catalog.event.address);
-    res = await post(app.url+'/api/handoff',{transcript:'Richmond SF for the weekend'},{'X-Atmos-Client':'native-demo'});
-    assert.equal(res.status,201); const {ticket} = await res.json();
-    res = await fetch(app.url+'/handoff/'+ticket,{redirect:'manual'});
-    assert.equal(res.status,303);
-    assert.equal(res.headers.get('location'),'/#planning');
-    const nativeCookie = res.headers.get('set-cookie').split(';')[0];
+    const marker = 'private-native-browser-marker';
+    const transcript = 'Visiting Richmond SF from Singapore with a budget of $71342. '+marker;
+    const first = await post(app.url+'/api/demo',{action:'start',transcript});
+    const headers = {'X-Atmos-Visit':first.headers.get('x-atmos-visit')};
+    const profile = (await first.json()).state.profile;
+    assert.equal(profile.budget,71342);
+    await post(app.url+'/api/demo',{action:'choose',slot:'lunch',id:catalog.lunch[0].id},headers);
+    const native = await post(app.url+'/api/handoff',{transcript},{'X-Atmos-Client':'native-demo'});
+    assert.equal(native.status,201);
+    const {ticket} = await native.json();
+    const handoff = await fetch(app.url+'/handoff/'+ticket,{redirect:'manual'});
+    assert.equal(handoff.status,303);
+    const location = handoff.headers.get('location');
+    assert.match(location,/^\/#planning=[0-9a-f]{64}$/);
     assert.equal((await fetch(app.url+'/handoff/'+ticket)).status,410);
-    other = await (await fetch(app.url+'/api/demo',{headers:{Cookie:nativeCookie}})).json();
-    assert.equal(other.state.transcript,'Richmond SF for the weekend');
-    assert.equal(other.state.profile.discretion,false);
+    const claim = {action:'handoff',ticket:location.split('=')[1]};
+    const active = await (await post(app.url+'/api/demo',claim)).json();
+    assert.deepEqual(active.state.profile,profile);
+    assert.ok(!JSON.stringify(active).includes(marker));
+    assert.deepEqual(active.state.choices,{});
+    assert.equal((await post(app.url+'/api/demo',claim)).status,410);
+    await app.close(); app = await listen(filename);
+    assert.equal((await fetch(app.url+'/api/demo',{headers})).status,410);
+    const other = await (await fetch(app.url+'/api/demo')).json();
+    assert.deepEqual(other.state,newState());
+    const db = new DatabaseSync(filename,{readOnly:true});
+    try {
+      assert.equal(db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name IN ('visitors','handoffs')").get().n,0);
+      assert.equal(db.prepare('SELECT count(*) AS n FROM test_memory_jobs').get().n,0);
+    } finally { db.close(); }
+    const file = await readFile(filename);
+    assert.ok(!file.includes(marker) && !file.includes('71342'));
+  } finally { await app.close(); await rm(dir,{recursive:true,force:true}); }
+});
+
+test('a previously valid visitor cookie opens fresh options in an upgraded database',async () => {
+  const dir = await mkdtemp(join(tmpdir(),'atmos-legacy-test-'));
+  const filename = join(dir,'test.sqlite');
+  const cookie = 'a'.repeat(64);
+  const db = new DatabaseSync(filename);
+  try {
+    db.exec('CREATE TABLE visitors (id TEXT PRIMARY KEY,state TEXT NOT NULL)');
+    const old = choose(start(),'dinner',catalog.dinner[0].id);
+    db.prepare('INSERT INTO visitors VALUES (?,?)').run(createHash('sha256').update(cookie).digest('hex'),
+      JSON.stringify({...old,transcript:'private legacy briefing',sentDinnerTexts:[{body:'previous invitation'}]}));
+  } finally { db.close(); }
+  const app = await listen(filename);
+  try {
+    const response = await post(app.url+'/api/demo',{action:'begin'},{Cookie:'atmos_visit='+cookie});
+    const fresh = await response.json();
+    assert.equal(response.status,200);
+    assert.deepEqual(fresh.state.choices,{});
+    assert.deepEqual(fresh.tracker.lines,[]);
+    assert.equal(fresh.dinnerTextDraft,null);
+    assert.ok(!JSON.stringify(fresh).includes('private legacy briefing'));
+    assert.ok(!JSON.stringify(fresh).includes('previous invitation'));
   } finally { await app.close(); await rm(dir,{recursive:true,force:true}); }
 });

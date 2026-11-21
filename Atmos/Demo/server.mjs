@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, extname, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { catalog, catalogRevision, intro, InputError, newState, trackerFor, updateState, searchLocalMemory, guideForVisit, itineraryBriefing, dinnerTextFor } from './scenario.mjs';
+import { catalog, catalogRevision, InputError, newState, trackerFor, updateState, searchLocalMemory, guideForVisit, itineraryBriefing, dinnerTextFor } from './scenario.mjs';
 import { createMemoryWorker } from './memory.mjs';
 import { createObserver } from './observer.mjs';
 
@@ -33,47 +33,50 @@ export function createDemo({filename=':memory:',env={}} = {}) {
   if (filename !== ':memory:') mkdirSync(dirname(resolve(filename)), {recursive:true});
   const db = new DatabaseSync(filename);
   db.exec(`PRAGMA journal_mode=WAL;
-    CREATE TABLE IF NOT EXISTS visitors (id TEXT PRIMARY KEY, state TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS guide (id INTEGER PRIMARY KEY CHECK(id = 1), version TEXT NOT NULL, snapshot TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS handoffs (id TEXT PRIMARY KEY, briefing TEXT NOT NULL, expires INTEGER NOT NULL);`);
-  // Shared evidence is installed once per revision. Individual sessions only store
-  // the briefing and decisions, so they can never contribute facts to the guide.
+    CREATE TABLE IF NOT EXISTS guide (id INTEGER PRIMARY KEY CHECK(id = 1), version TEXT NOT NULL, snapshot TEXT NOT NULL);`);
   db.prepare(`INSERT INTO guide VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET
     version=excluded.version,snapshot=excluded.snapshot WHERE guide.version != excluded.version`).run(catalogRevision,JSON.stringify(catalog));
   const sharedGuide = JSON.parse(db.prepare('SELECT snapshot FROM guide WHERE id=1').get().snapshot);
-  const previewState = updateState(newState(),{action:'start',transcript:intro});
-  const previewTracker = trackerFor(previewState);
   const memory = createMemoryWorker(db,env);
   const observer = createObserver(db,{enabled:env.ATMOS_DEMO_LIVE_SOURCES === '1'});
   observer.start();
   memory.queueShared(sharedGuide);
-  if (env.ATMOS_TEST_COGNEE_URL && env.ATMOS_TEST_COGNEE_KEY) {
-    // Include changes saved while test sync was off before accepting any recall.
-    for (const row of db.prepare('SELECT id,state FROM visitors').iterate()) {
-      memory.queueVisitor(row.id,JSON.parse(row.state));
-    }
-  }
   memory.start();
-  const read = db.prepare('SELECT state FROM visitors WHERE id=?');
-  const write = db.prepare('INSERT INTO visitors VALUES (?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state');
-  function save(id,state) {
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      write.run(id,JSON.stringify(state));
-      memory.queueVisitor(id,state);
-      db.exec('COMMIT');
-    } catch (err) { db.exec('ROLLBACK'); throw err; }
-  }
-  function visitor(req,res) {
-    const cookie = /(?:^|;\s*)atmos_visit=([0-9a-f]{64})(?:;|$)/.exec(req.headers.cookie ?? '')?.[1];
-    if (cookie) {
-      const id = hash(cookie), row = read.get(id);
-      if (row) return {id, state:{confirmedSlots:[],skippedSlots:[],sentDinnerTexts:[],...JSON.parse(row.state)}};
+  // The browser holds its visit key only for the lifetime of this document.
+  const visits = new Map();
+  const handoffs = new Map();
+  const visitLifetime = 4*60*60_000;
+  const cleanup = setInterval(() => {
+    const now = Date.now();
+    for (const records of [visits,handoffs]) {
+      for (const [id,entry] of records) if (entry.expires <= now) records.delete(id);
     }
-    const key = token(), id = hash(key), state = newState();
-    write.run(id,JSON.stringify(state));
-    res.setHeader('Set-Cookie',`atmos_visit=${key}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800`);
-    return {id,state};
+  },60_000).unref();
+  function visitor(req,res) {
+    const key = req.headers['x-atmos-visit'];
+    if (key !== undefined) {
+      const visit = visits.get(hash(key));
+      if (!visit || visit.expires <= Date.now()) return null;
+      visit.expires = Date.now()+visitLifetime;
+      return visit;
+    }
+    const fresh = token();
+    const visit = {id:hash(fresh),state:newState(),expires:Date.now()+visitLifetime};
+    visits.set(visit.id,visit);
+    res.setHeader('X-Atmos-Visit',fresh);
+    return visit;
+  }
+  function issueHandoff(stage,state,expires) {
+    const key = token();
+    handoffs.set(hash(stage+key),{state,expires});
+    return key;
+  }
+  function takeHandoff(stage,key) {
+    if (typeof key !== 'string' || !/^[0-9a-f]{64}$/.test(key)) return;
+    const id = hash(stage+key);
+    const entry = handoffs.get(id);
+    handoffs.delete(id);
+    if (entry && entry.expires > Date.now()) return entry;
   }
   const server = createServer(async (req,res) => {
     res.setHeader('Cache-Control','no-store');
@@ -90,35 +93,38 @@ export function createDemo({filename=':memory:',env={}} = {}) {
         if (req.headers['x-atmos-client'] !== 'native-demo') return json(res,403,{error:'Native demo handoff required.'});
         const input = await body(req);
         const checked = updateState(newState(),{action:'start',transcript:input?.transcript});
-        db.prepare('DELETE FROM handoffs WHERE expires <= ?').run(Date.now());
-        const ticket = token();
-        db.prepare('INSERT INTO handoffs VALUES (?,?,?)').run(hash(ticket),checked.transcript,Date.now()+60_000);
+        const ticket = issueHandoff('native',checked,Date.now()+60_000);
         return json(res,201,{ticket});
       }
       const match = /^\/handoff\/([0-9a-f]{64})$/.exec(url.pathname);
       if (req.method === 'GET' && match) {
-        const handoff = db.prepare('DELETE FROM handoffs WHERE id=? RETURNING briefing,expires').get(hash(match[1]));
-        if (!handoff || handoff.expires < Date.now()) return json(res,410,{error:'This one-time briefing has expired.'});
-        const v = visitor(req,res);
-        const s = updateState(v.state,{action:'start',transcript:handoff.briefing});
-        save(v.id,s);
-        res.writeHead(303,{Location:'/#planning'}); return res.end();
+        const handoff = takeHandoff('native',match[1]);
+        if (!handoff) return json(res,410,{error:'This one-time briefing has expired.'});
+        const claim = issueHandoff('browser',handoff.state,handoff.expires);
+        res.writeHead(303,{Location:'/#planning='+claim}); return res.end();
       }
       if (url.pathname === '/api/demo' && ['GET','POST'].includes(req.method)) {
-        // Read the latest row after the async body read, then update synchronously.
         const input = req.method === 'POST' ? await body(req) : null;
         const v = visitor(req,res);
+        if (!v) return json(res,410,{error:'This visit expired. Reload to start a fresh trip.'});
         if (req.method === 'POST') {
-          if (input?.revision !== undefined && input.revision !== v.state.revision) return json(res,409,{error:'The plan changed in another tab. Reload to see the latest choices.'});
-          v.state = updateState(v.state,input);
-          save(v.id,v.state);
+          if (input?.revision !== undefined && input.revision !== v.state.revision) return json(res,409,{error:'The plan changed. Review your latest choices.'});
+          if (input?.action === 'handoff') {
+            if (v.state.started) throw new InputError('Open the handoff in a fresh visit.');
+            const handoff = takeHandoff('browser',input.ticket);
+            if (!handoff) return json(res,410,{error:'This one-time briefing has expired.'});
+            v.state = handoff.state;
+          } else {
+            const updated = updateState(v.state,input);
+            if (['choose','skip','reroute','reset'].includes(input.action)) memory.queueVisitor(v.id,updated);
+            v.state = updated;
+          }
         }
         const evidence = observer.snapshot();
         const guide = guideForVisit(sharedGuide,v.state,evidence);
         const tracker = trackerFor(v.state);
-        const dinnerTextDraft = v.state.started ? dinnerTextFor(v.state,tracker) : dinnerTextFor(previewState,previewTracker);
+        const dinnerTextDraft = dinnerTextFor(v.state,tracker);
         return json(res,200,{catalog:guide,state:v.state,tracker,
-          ...(!v.state.started && {previewTracker}),
           dinnerTextDraft,briefing:itineraryBriefing(v.state,tracker),memoryStatus:memory.status(v.id),evidence});
       }
       if (url.pathname === '/api/recall' && req.method === 'POST') {
@@ -127,12 +133,14 @@ export function createDemo({filename=':memory:',env={}} = {}) {
           throw new InputError('Choose a memory and enter a question of up to 500 characters.');
         }
         const v = visitor(req,res);
+        if (!v) return json(res,410,{error:'This visit expired. Reload to start a fresh trip.'});
         const remote = await memory.recall(v.id,input.query,input.scope);
         if (remote.status === 'ready' && remote.results.length) return json(res,200,{status:'Cognee test memory',results:remote.results});
         // A reset or edit may have happened while the remote lookup was pending.
-        const latest = JSON.parse(read.get(v.id).state);
+        const latest = v.state;
         const results = searchLocalMemory(guideForVisit(sharedGuide,latest,observer.snapshot()),latest,input.scope,input.query);
-        return json(res,200,{status:results.length ? 'From this local test database' : 'No matching facts in this memory',results});
+        const source = input.scope === 'private' ? 'From this visit' : 'From the local city guide';
+        return json(res,200,{status:results.length ? source : 'No matching facts in this memory',results});
       }
       if (!['GET','HEAD'].includes(req.method)) return json(res,405,{error:'Method unavailable.'});
       const path = resolve(publicRoot,'.'+(url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname)));
@@ -146,7 +154,7 @@ export function createDemo({filename=':memory:',env={}} = {}) {
       return json(res,500,{error:'The local demo could not complete this request.'});
     }
   });
-  server.on('close',()=>{ void Promise.all([observer.stop(),memory.stop()]).finally(()=>db.close()); });
+  server.on('close',()=>{ clearInterval(cleanup); void Promise.all([observer.stop(),memory.stop()]).finally(()=>db.close()); });
   return server;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

@@ -8,12 +8,13 @@ const env = {ATMOS_TEST_COGNEE_URL:'https://mock-test.aws.cognee.ai', ATMOS_TEST
 const catalog = {
   date:'2026-11-20', intro:'private briefing',
   contacts:[{title:'unpublished friend'}], alert:{title:'private footage'},
-  lunch:[{id:'bowl',title:'Rice bowl',notes:'Prepared with tofu.', sources:[{label:'Menu',url:'https://example.org/menu'}]}],
+  lunch:[{id:'bowl',title:'Rice bowl',notes:'Prepared with tofu.', sources:[{label:'Menu',url:'https://example.org/menu'}]},
+    {id:'salad',title:'Green salad'}, {id:'soup',title:'Tomato soup'}],
 };
-const visitor = (budget, revision=1) => ({started:true,revision,
-  profile:{budget, workplaceNote:'private workplace note', discretion:true, trip:'private trip',
+const visitor = (lunch, revision=1) => ({started:true,revision,
+  profile:{budget:71342,walkingGoal:87321,workplaceNote:'private workplace note', discretion:true, trip:'private trip',
     socialStatus:'Socialize', diet:'Vegan, dairy-free, gluten-free'},
-  transcript:'private transcript', invitations:['private friend'], choices:{lunch:'bowl'},
+  transcript:'private transcript', invitations:['private friend'], choices:{lunch}, confirmedSlots:['lunch'],
   expenses:[{label:'private ledger'}]});
 
 // These tests explicitly inject a local transport. Nothing resolves the example host.
@@ -75,10 +76,10 @@ test('offline mode stores no cloud jobs and requires explicit test credentials',
     fetchImpl:()=>assert.fail('Offline worker attempted a request'),
   });
   worker.queueShared(catalog);
-  worker.queueVisitor('a', visitor(60));
+  worker.queueVisitor('a', visitor('bowl'));
   worker.start();
   await worker.flush();
-  assert.deepEqual(await worker.recall('a','What is my budget?','private'),{status:'offline',results:[]});
+  assert.deepEqual(await worker.recall('a','What is my lunch?','private'),{status:'offline',results:[]});
   assert.match(worker.status('a'), /sync is off/);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM test_memory_jobs').get().n,0);
   assert.throws(() => createMemoryWorker(db,{...env,ATMOS_TEST_COGNEE_URL:'https://outside.example.org'}));
@@ -88,31 +89,33 @@ test('offline mode stores no cloud jobs and requires explicit test credentials',
 
 test('per-visitor search, replacement and reset are isolated from the public guide', async () => {
   const {worker,db,datasets,calls} = harness();
-  worker.queueVisitor('A',visitor(60)); worker.queueVisitor('B',visitor(120));
+  worker.queueVisitor('empty',{...visitor('bowl'),confirmedSlots:[]});
+  assert.equal(db.prepare("SELECT count(*) AS n FROM test_memory_jobs WHERE owner!='shared-guide'").get().n,0);
+  worker.queueVisitor('A',visitor('bowl')); worker.queueVisitor('B',visitor('salad'));
   await worker.flush();
   assert.equal(datasets.size,3);
   const texts = [...datasets.values()].map(v=>v.body).join('\n');
   for (const forbidden of ['private briefing','private transcript','private workplace','private trip',
-    'unpublished friend','private footage','private friend','private ledger']) assert.ok(!texts.includes(forbidden));
-  const result = await worker.recall('A','Budget?','private');
+    '71342','87321','Social goal','gluten-free','unpublished friend','private footage','private friend','private ledger']) assert.ok(!texts.includes(forbidden));
+  const result = await worker.recall('A','Lunch?','private');
   assert.equal(result.status,'ready'); assert.equal(result.results.length,1);
-  assert.match(result.results[0], /USD 60/); assert.doesNotMatch(result.results[0], /120|stale|across/);
+  assert.match(result.results[0], /Rice bowl/); assert.doesNotMatch(result.results[0], /Green salad|stale|across/);
   const shared = await worker.recall('B','What food?','shared');
   assert.match(shared.results[0],/example.org\/menu/); assert.doesNotMatch(shared.results[0], /budget/i);
-  worker.queueVisitor('A',visitor(70,2));
-  assert.equal((await worker.recall('A','Budget?','private')).status,'queued');
+  worker.queueVisitor('A',visitor('soup',2));
+  assert.equal((await worker.recall('A','Lunch?','private')).status,'queued');
   await worker.flush();
-  assert.match((await worker.recall('A','Budget?','private')).results[0], /70/);
+  assert.match((await worker.recall('A','Lunch?','private')).results[0], /Tomato soup/);
   assert.ok(calls.some(req=>req.method==='PATCH'));
   const before = calls.length;
-  worker.queueVisitor('A',visitor(70,3)); await worker.flush();
+  worker.queueVisitor('A',visitor('soup',3)); await worker.flush();
   assert.equal(calls.length,before);
   worker.queueVisitor('A',{started:false,revision:4});
   await worker.flush();
   assert.equal(datasets.size,2);
-  assert.equal((await worker.recall('A','Budget?','private')).status,'empty');
-  assert.match((await worker.recall('B','Budget?','private')).results[0], /120/);
-  worker.queueVisitor('A',visitor(70,3)); await worker.flush();
+  assert.equal((await worker.recall('A','Lunch?','private')).status,'empty');
+  assert.match((await worker.recall('B','Lunch?','private')).results[0], /Green salad/);
+  worker.queueVisitor('A',visitor('soup',3)); await worker.flush();
   assert.equal(datasets.size,2);
   await worker.stop(); db.close();
 });
@@ -120,15 +123,15 @@ test('per-visitor search, replacement and reset are isolated from the public gui
 test('removing and restoring lunch updates only the visitor’s indexed plan', async () => {
   const {worker,db} = harness();
   try {
-    worker.queueVisitor('A',visitor(100));
+    worker.queueVisitor('A',visitor('bowl'));
     await worker.flush();
-    worker.queueVisitor('A',{...visitor(100,2),skippedSlots:['lunch']});
+    worker.queueVisitor('A',{...visitor('bowl',2),skippedSlots:['lunch']});
     await worker.flush();
     const skipped = (await worker.recall('A','lunch','private')).results.join(' ');
     assert.match(skipped,/lunch: skipped for this visit/);
     assert.doesNotMatch(skipped,/Rice bowl/);
     assert.match((await worker.recall('A','lunch','shared')).results.join(' '),/Rice bowl/);
-    worker.queueVisitor('A',{...visitor(100,3),skippedSlots:[]});
+    worker.queueVisitor('A',{...visitor('bowl',3),skippedSlots:[]});
     await worker.flush();
     assert.match((await worker.recall('A','lunch','private')).results.join(' '),/lunch: Rice bowl/);
   } finally {
@@ -140,7 +143,7 @@ test('removing and restoring lunch updates only the visitor’s indexed plan', a
 test('the private index remembers confirmed evening modes without route endpoints', async () => {
   const {worker,db} = harness();
   try {
-    const state = visitor(100);
+    const state = visitor('bowl');
     state.choices.toDinner = 'walk';
     state.choices.toNightlife = 'waymo';
     state.confirmedSlots = ['toDinner','toNightlife'];
@@ -164,36 +167,36 @@ test('rate limits survive worker replacement and a fresh edit supersedes an in-f
   const next = makeWorker(); next.queueShared(catalog);
   control.time += 54_999; await next.flush(); assert.equal(datasets.size,0);
   control.time++; await next.flush(); assert.equal(datasets.size,1);
-  next.queueVisitor('A', visitor(60));
+  next.queueVisitor('A', visitor('bowl'));
   let began, release;
   const entered = new Promise(resolve => { began=resolve; });
   control.onUpload = () => { began(); return new Promise(resolve => { release=resolve; }); };
   const working = next.flush();
   await entered;
-  next.queueVisitor('A',visitor(85,2));
+  next.queueVisitor('A',visitor('soup',2));
   release(); await working;
-  assert.equal((await next.recall('A','Budget?','private')).status,'queued');
+  assert.equal((await next.recall('A','Lunch?','private')).status,'queued');
   control.onUpload = null;
   await next.flush();
-  const fresh = await next.recall('A','Budget?','private');
-  assert.match(fresh.results[0],/85/); assert.doesNotMatch(fresh.results[0],/60/);
+  const fresh = await next.recall('A','Lunch?','private');
+  assert.match(fresh.results[0],/Tomato soup/); assert.doesNotMatch(fresh.results[0],/Rice bowl/);
   await next.stop(); db.close();
 });
 
 test('a reset made offline still clears the matching remote dataset when the tenant reconnects', async () => {
   const {worker,db,makeWorker,datasets} = harness();
-  worker.queueVisitor('A',visitor(100)); worker.queueVisitor('B',visitor(200));
+  worker.queueVisitor('A',visitor('bowl')); worker.queueVisitor('B',visitor('salad'));
   await worker.flush(); await worker.stop();
   const offline = createMemoryWorker(db,{}, {fetchImpl:()=>assert.fail('unexpected offline request')});
   offline.queueVisitor('A',{started:false, revision:10});
   offline.queueVisitor('A',{started:false, revision:11});
   await offline.stop();
   const connected = makeWorker(); connected.queueShared(catalog);
-  connected.queueVisitor('A',visitor(150,10));
-  assert.equal((await connected.recall('A','Budget?','private')).results.length,0);
+  connected.queueVisitor('A',visitor('soup',10));
+  assert.equal((await connected.recall('A','Lunch?','private')).results.length,0);
   await connected.flush();
   assert.equal(datasets.size,2);
-  assert.match((await connected.recall('B','Budget?','private')).results[0],/200/);
-  assert.equal((await connected.recall('A','Budget?','private')).status,'empty');
+  assert.match((await connected.recall('B','Lunch?','private')).results[0],/Green salad/);
+  assert.equal((await connected.recall('A','Lunch?','private')).status,'empty');
   await connected.stop(); db.close();
 });

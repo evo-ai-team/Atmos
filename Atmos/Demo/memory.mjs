@@ -28,17 +28,8 @@ function sharedSnapshot(catalog) {
 }
 
 function visitorSnapshot(state, catalog) {
-  // Only controlled fixture choices and numbers cross the network. The briefing,
-  // home, work context, social contacts, expenses and draft messages stay local.
-  const preferences = state.profile ?? {};
-  const lines = ['Synthetic San Francisco trip plan.'];
-  if (preferences.diet === 'Vegan, dairy-free, gluten-free') lines.push('Diet: vegan, dairy-free and gluten-free.');
-  if (preferences.socialStatus === 'Socialize') lines.push('Social goal: meet people.');
-  if (preferences.habits === 'Coffee and breakfast around 8 AM. Likes an evening drink.') {
-    lines.push('Prefers coffee and breakfast around 8 AM and an evening drink.');
-  }
-  if (Number.isFinite(preferences.budget)) lines.push(`Trip budget: USD ${preferences.budget}.`);
-  if (Number.isFinite(preferences.walkingGoal)) lines.push(`Walking goal: ${preferences.walkingGoal} steps.`);
+  // Build the cloud snapshot from explicit catalog decisions only.
+  const lines = [];
   if (state.confirmedSlots?.includes('event') && catalog?.event?.id === state.choices?.event) {
     lines.push(`Confirmed event: ${catalog.event.title}.`);
   }
@@ -47,6 +38,7 @@ function visitorSnapshot(state, catalog) {
       lines.push(`${slot}: skipped for this visit.`);
       continue;
     }
+    if (!state.confirmedSlots?.includes(slot)) continue;
     const item = catalog?.[slot]?.find(entry => entry.id === state.choices?.[slot]);
     if (item) lines.push(`${slot}: ${item.title}.`);
   }
@@ -129,6 +121,7 @@ export function createMemoryWorker(db, env = process.env, { fetchImpl = fetch, n
     }
     if (!config) return;
     const body = visitorSnapshot(state, catalog);
+    if (!body) return;
     put.run(datasetOf(owner), config.origin, owner, body, hash(body), state.revision);
   }
 
@@ -140,7 +133,7 @@ export function createMemoryWorker(db, env = process.env, { fetchImpl = fetch, n
     return 'queued';
   };
   function status(id) {
-    if (!config) return 'Local SQLite memory active. Cognee test sync is off.';
+    if (!config) return 'Current visit and local city guide available. Cognee test sync is off.';
     return `Cognee test workspace · guide: ${brief(lookup.get(datasetOf(shared)))} · visitor: ${brief(lookup.get(datasetOf(ownerOf(id))))}.`;
   }
 

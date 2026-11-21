@@ -1,4 +1,4 @@
-import { alertView, briefingView, dashboard, detailsFor, esc, menuPhotoFor, messageApproval, profileView, routeSection, routeSlots, updateClock } from "./views.js";
+import { alertView, briefingView, dashboard, detailsFor, esc, menuPhotoFor, invitationPreview, profileView, routeSection, routeSlots, updateClock } from "./views.js";
 
 import { isTravelSlot, routeFor, routeMap } from "./route-map.js";
 
@@ -11,18 +11,15 @@ const transcript = $("#transcript");
 const voiceButton = $("#voice-button");
 const voiceStatus = $("#voice-status");
 let data;
+let visitKey;
 let sending = false;
-// Open on the option menus, including any choices already saved on this trip.
 let sectionEdits = Object.fromEntries(routeSlots.map(slot=>[slot,null]));
 let noticeTimer;
 let recognition;
 const detailDialog = $("#detail-dialog");
-let mapSlot = isTravelSlot(history.state?.mapSlot) ? history.state.mapSlot : "transit";
+let mapSlot = "transit";
 let replayFrame;
 let activeReading;
-let threadOpen = false;
-let sendingMessageId;
-let deliveryTimer;
 
 function stopReading() {
   if (!activeReading) return;
@@ -69,7 +66,14 @@ function readGuide(button) {
   }
 }
 
-window.addEventListener("pagehide",stopReading);
+window.addEventListener("pagehide",()=>{
+  stopReading();
+  recognition?.abort();
+  transcript.value="";
+  const prompt = $("#home-prompt");
+  if (prompt) prompt.value="";
+});
+window.addEventListener("pageshow",event=>{ if (event.persisted) location.reload(); });
 
 function notice(message) {
   const element = $("#notice");
@@ -84,7 +88,7 @@ function show(dialog) {
 function showBrief() {
   if (!data) return;
   stopReading();
-  transcript.value = data.state.transcript || data.catalog.intro?.transcript || data.catalog.intro || "";
+  transcript.value = "";
   $("#start-button").textContent = data.state.started ? "Update my day" : "Build my day";
   voiceStatus.textContent = "";
   $("#memory-profile").innerHTML = briefingView(data) + profileView(data.state.profile);
@@ -100,7 +104,6 @@ function openDetail(view) {
 
 function focusMap(slot) {
   mapSlot=slot;
-  history.replaceState({...history.state,mapSlot},"");
 }
 function currentMapRoute(slot=mapSlot) {
   return routeFor(data,slot,sectionEdits[slot]);
@@ -131,7 +134,6 @@ function showHome(prompt = "", error = "") {
   content.setAttribute("aria-busy","false");
   $("#home-prompt").value = prompt;
   $("#home-status").textContent = error;
-  $("#resume-trip").hidden = !data.state.started;
   if (error) $("#home-prompt").focus();
 }
 async function showPlanning(pendingTrip) {
@@ -169,7 +171,7 @@ function render(newData, preserve = true) {
   }
   const revealing = Boolean($("#planning-status"));
   $(".skip").hidden = false;
-  content.innerHTML = dashboard(data,sectionEdits,{open:threadOpen,sendingId:sendingMessageId});
+  content.innerHTML = dashboard(data,sectionEdits);
   drawMaps();
   content.querySelectorAll("details").forEach(el=>{
     if(prior.has(el.querySelector("summary")?.textContent)) el.open=true;
@@ -203,8 +205,15 @@ function editSection(slot,id) {
   focus?.focus({preventScroll:true});
 }
 async function request(payload) {
-  const options=payload ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...payload,revision:data.state.revision})} : {};
-  const response=await fetch("/api/demo",{...options,cache:"no-store"});
+  const headers = {};
+  if (visitKey) headers["X-Atmos-Visit"] = visitKey;
+  const options = {headers,cache:"no-store"};
+  if (payload) {
+    headers["Content-Type"] = "application/json";
+    options.method = "POST";
+    options.body = JSON.stringify({...payload,revision:data?.state.revision});
+  }
+  const response = await fetch("/api/demo",options);
   const result=await response.json().catch(()=>null);
   if (!response.ok) {
     const error = new Error(result?.error || "The trip service could not complete that request.");
@@ -212,19 +221,25 @@ async function request(payload) {
     throw error;
   }
   if (!result?.state || !result?.catalog || !result?.tracker) throw new Error("The trip service returned an incomplete itinerary.");
+  visitKey = response.headers.get("X-Atmos-Visit") ?? visitKey;
   return result;
 }
 async function load() {
   try {
-    data = await request();
     const url = new URL(window.location.href);
-    const handoff = url.hash === "#planning";
-    const resume = url.searchParams.get("view") === "trip" || url.hash === "#day-plan";
-    if (!data.state.started || !(handoff || resume)) {
+    const claim = /^#planning=([0-9a-f]{64})$/.exec(url.hash);
+    const trip = url.searchParams.get("view") === "trip" || ["#day-plan","#planning"].includes(url.hash);
+    if (claim) {
+      history.replaceState(null,"","/?view=trip");
+      data = await showPlanning(request({action:"handoff",ticket:claim[1]}));
+    } else if (trip) {
+      history.replaceState(null,"","/?view=trip");
+      data = await request({action:"begin"});
+    } else {
+      data = await request();
       showHome();
       return;
     }
-    if (handoff) await showPlanning(data);
     render(data,false);
   }
   catch(error) {
@@ -264,20 +279,6 @@ async function act(payload) {
     const pendingTrip = request(payload);
     const result = await (fromHome ? showPlanning(pendingTrip) : pendingTrip);
     if (detailDialog.open) detailDialog.close();
-    if (payload.action === "sendDinnerText") {
-      threadOpen = true;
-      const message = result.state.sentDinnerTexts.find(m=>m.key===payload.key);
-      if (message) {
-        clearTimeout(deliveryTimer);
-        sendingMessageId = message.id;
-        deliveryTimer = setTimeout(()=>{
-          sendingMessageId = undefined;
-          const status = $("#group-thread .message-new .delivery");
-          if (status) status.textContent = "Delivered";
-          status?.closest("li")?.classList.remove("message-new");
-        },1150);
-      }
-    }
     if(payload.action==="start") {
       if(brief.open) brief.close();
     }
@@ -293,14 +294,13 @@ async function act(payload) {
       focusMap("toDinner");
     }
     if (payload.action==="reset") focusMap("transit");
-    if(payload.action==="reset") {sectionEdits={}; threadOpen=false; clearTimeout(deliveryTimer); sendingMessageId=undefined;}
+    if(payload.action==="reset") sectionEdits={};
     render(result,payload.action!=="reset");
     if(payload.action==="choose" && !interruption.open) {
       sectionElement(payload.slot)?.querySelector("[data-options]")?.focus({preventScroll:true});
       if (payload.slot==="lunch") openDetail(detailsFor(data,"lunchPosts"));
     }
     if(["invite","reserve"].includes(payload.action)) showDraft(payload.action,payload.id);
-    if(payload.action==="sendDinnerText") focusConversation();
     if(payload.action==="reroute") {
       $("#slot-dinner")?.scrollIntoView();
       notice("Your dinner and evening route have been updated. Review the new dinner choice before preparing new drafts.");
@@ -314,7 +314,7 @@ async function act(payload) {
     if(payload.action==="skip") notice("Stop removed from your route.");
     if(payload.action==="choose" && data.state.alert!=="shown") notice("Route updated.");
     if(payload.action==="start") {
-      notice("Your briefing is saved. Choose how you’ll get there.");
+      notice("Choose how you’ll get there.");
     }
   } catch(error) {
     if(error.status===409) {
@@ -328,13 +328,7 @@ async function act(payload) {
       showHome(payload.transcript,error.message);
       return;
     }
-    if (detailDialog.open && payload.action==="sendDinnerText") {
-      if (data.dinnerTextDraft) {
-        openDetail({title:"Dinner invitation",body:messageApproval(data.dinnerTextDraft)});
-        $("#approval-status").textContent = error.message;
-      } else { detailDialog.close(); notice(error.message); }
-    }
-    else if(brief.open) voiceStatus.textContent=error.message;
+    if(brief.open) voiceStatus.textContent=error.message;
     else if(interruption.open) $("#alert-feedback").textContent=error.message;
     else notice(error.message);
   } finally {
@@ -397,7 +391,7 @@ async function recallMemory(form) {
   try {
     const response = await fetch("/api/recall", {
       method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:{"Content-Type":"application/json","X-Atmos-Visit":visitKey},
       body:JSON.stringify({query,scope:fields.get("scope")})
     });
     const result = await response.json();
@@ -440,20 +434,10 @@ function replayCommute(button) {
   }
   replayFrame=requestAnimationFrame(step);
 }
-function focusConversation() {
-  const panel = $("#group-thread");
-  if (!panel) return;
-  panel.focus({preventScroll:true});
-  panel.scrollIntoView({block:"nearest"});
-  const messages = panel.querySelector(".messages");
-  const outgoing = messages.querySelector(".message-new");
-  if (outgoing) outgoing.scrollIntoView({block:"nearest"});
-  else messages.scrollTop = messages.scrollHeight;
-}
 setInterval(updateClock, 15000);
 detailDialog.addEventListener("close",()=>cancelAnimationFrame(replayFrame));
 voiceButton.addEventListener("click",()=>beginVoice(transcript,voiceButton,voiceStatus));
-brief.addEventListener("close",()=>{recognition?.abort(); stopReading();});
+brief.addEventListener("close",()=>{recognition?.abort(); transcript.value=""; stopReading();});
 $("#brief-form").addEventListener("submit",event=>{
   event.preventDefault();
   recognition?.stop();
@@ -504,18 +488,7 @@ document.addEventListener("click",event=>{
   if(button.hasAttribute("data-group-invite")) {
     const draft = data.dinnerTextDraft;
     if (!draft) {notice("Include dinner to invite Gio and Andrew.");return;}
-    openDetail({title:"Dinner invitation",body:messageApproval(draft)});
-    return;
-  }
-  if(button.hasAttribute("data-approve-text")) {
-    act({action:"sendDinnerText",key:button.dataset.key});
-    return;
-  }
-  if(button.hasAttribute("data-show-messages") || button.hasAttribute("data-hide-messages")) {
-    threadOpen = button.hasAttribute("data-show-messages");
-    render(data);
-    if (threadOpen) focusConversation();
-    else $("[data-show-messages]")?.focus({preventScroll:true});
+    openDetail({title:"Dinner invitation draft",body:invitationPreview(draft)});
     return;
   }
   if(button.hasAttribute("data-detail")) {
@@ -535,7 +508,7 @@ document.addEventListener("click",event=>{
     else document.getElementById(button.dataset.close)?.close();
     return;
   }
-  if(button.hasAttribute("data-reset")) {if(window.confirm("Clear this demo’s saved trip choices and drafts?")) act({action:"reset"});return;}
+  if(button.hasAttribute("data-reset")) {if(window.confirm("Clear the choices and drafts from this visit?")) act({action:"reset"});return;}
   const {action,slot,id}=button.dataset;
   if(action) act({action,...(slot ? {slot} : {}),...(id ? {id} : {})});
 });

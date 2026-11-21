@@ -203,10 +203,7 @@ function displayTime(value) {
 }
 function activeOption(data,slot) {
   const rows = data.catalog[slot];
-  return rows.find(o=>o.id === data.state.choices[slot]) || rows.find(o=>o.available !== false);
-}
-function tracking(data) {
-  return data.state.started ? data.tracker : data.previewTracker || data.tracker;
+  return rows.find(o=>o.id === data.state.choices[slot]);
 }
 function venueName(o) { return o.title.split(" · ")[0]; }
 function roundButton(attributes, symbol, label, className="") {
@@ -272,22 +269,21 @@ function stopBody(slot,item,confirmed) {
     <div class="stop-links">
       <button class="sheet-link" data-detail="${slot}" data-item-id="${esc(item.id)}">${detail} ${icon("chevron")}</button>
       ${isTravel(slot) ? link(item.url,"Directions "+icon("external"),"sheet-link") : ""}
-      ${slot==="dinner" && confirmed ? '<button class="sheet-link" data-group-invite>Invite Gio &amp; Andrew</button>' : ""}
+      ${slot==="dinner" && confirmed ? '<button class="sheet-link" data-group-invite>Preview dinner invitation</button>' : ""}
     </div>`;
 }
 export function routeSection(data,slot,edit) {
   const options = slotOptions(data,slot);
   if (!options?.length) return "";
   const saved = data.state.confirmedSlots.includes(slot) && !data.state.skippedSlots?.includes(slot);
-  const leg = isEveningLeg(slot) && tracking(data).legs?.find(l=>l.slot===slot);
-  const selected = options.find(o=>o.id===(data.state.choices[slot] || leg?.id)) || options[0];
-  const confirmed = saved && edit === undefined;
+  const selected = saved ? options.find(o=>o.id===data.state.choices[slot]) : undefined;
+  const confirmed = Boolean(selected) && edit === undefined;
   const item = confirmed ? selected : options.find(o=>o.id===edit);
   const reference = item || selected;
-  const at = tracking(data).lines.find(line=>line.title===reference.title || (slot==="nightlife" && selected.id===reference.id && line.slot===slot))?.time;
-  const when = slot === "transit" ? "" : displayTime(at || (slot === "event" ? reference.starts : reference.time));
+  const at = reference && data.tracker.lines.find(line=>line.title===reference.title || (slot==="nightlife" && selected?.id===reference.id && line.slot===slot))?.time;
+  const when = slot === "transit" || !reference ? "" : displayTime(at || (slot === "event" ? reference.starts : reference.time));
   const title = slotNames[slot];
-  const routed = isTravel(slot) && reference.originName && reference.destinationName;
+  const routed = isTravel(slot) && reference?.originName && reference.destinationName;
   const routeLabel = routed ? `${reference.originName.split(" · ")[0]} → ${reference.destinationName.split(" · ")[0]}` : "";
   const timing = routed ? `Leave ${displayTime(reference.time)}${item?.arrivesAt ? " · Arrive "+displayTime(item.arrivesAt) : ""}` : when;
   const id = slot === "transit" ? "transit" : "slot-"+slot;
@@ -301,7 +297,7 @@ export function routeSection(data,slot,edit) {
         ${item && slot==="transit" && item.title!==optionName(slot,item) ? `<small>${esc(item.title)}</small>` : ""}
         ${item && !isTravel(slot) ? `<small>${esc(item.address)}</small>` : ""}
       </div>${item ? selectionActions(slot,item,confirmed) : ""}</div>
-    ${item ? stopBody(slot,item,confirmed) : `<div class="choices" role="group" aria-label="${title} options">${options.map(o=>choiceButton(slot,o,saved ? selected.id : null)).join("")}</div>`}
+    ${item ? stopBody(slot,item,confirmed) : `<div class="choices" role="group" aria-label="${title} options">${options.map(o=>choiceButton(slot,o,selected?.id)).join("")}</div>`}
   </section>`;
 }
 function locationMap(data) {
@@ -329,46 +325,24 @@ function nearby(data) {
       ${icon("chevron")}
     </button>`).join("")}
     <button class="group-invite" type="button" ${dinnerChosen ? "data-group-invite" : "data-pick-dinner"}>
-      ${icon("message")}${!dinnerChosen ? "Choose dinner to invite" : data.state.sentDinnerTexts?.some(m=>m.key===data.dinnerTextDraft?.key) ? "Replay dinner invitation" : "Invite both to dinner"}
+      ${icon("message")}${dinnerChosen ? "Preview dinner invitation" : "Choose dinner to preview an invitation"}
     </button>
-    ${data.state.sentDinnerTexts?.length ? '<button type="button" class="sheet-link" data-show-messages>View messages</button>' : ""}
   </section>`;
 }
 function groupAvatars() {
   return '<span class="group-avatars" aria-hidden="true"><b>G</b><b>A</b></span>';
 }
-export function messageApproval(draft) {
-  return `<div class="approval-to">${groupAvatars()}<div><small>To</small><strong>${draft.recipients.map(esc).join(" &amp; ")}</strong></div></div>
+export function invitationPreview(draft) {
+  return `<div class="approval-to">${groupAvatars()}<div><small>Draft for</small><strong>${draft.recipients.map(esc).join(" &amp; ")}</strong></div></div>
     <p class="preview-bubble">${esc(draft.body)}</p>
-    <p class="subtle">Simulated iMessage · 2 recipients</p>
-    <div class="dialog-actions">
-      <button class="btn secondary" data-close="detail-dialog">Cancel</button>
-      <button class="btn primary" data-approve-text data-key="${esc(draft.key)}">Approve to send</button>
-    </div><p id="approval-status" role="status"></p>`;
-}
-function conversation(state, options) {
-  if (!options.open || !state.sentDinnerTexts?.length) return "";
-  const history = state.sentDinnerTexts;
-  return `<section class="imessage glass" id="group-thread" tabindex="-1" aria-labelledby="thread-heading">
-    <div class="message-top"><span>iMessage · Demo</span>${roundButton("data-hide-messages","close","Hide conversation")}</div>
-    <div class="conversation-head">${groupAvatars()}<h2 id="thread-heading">Gio &amp; Andrew</h2></div>
-    <ol class="messages">${history.map(m=>{
-      const pending = options.sendingId === m.id;
-      const sentTime = clockFormat.format(new Date(m.sentAt));
-      return `<li${pending ? ' class="message-new"' : ''}><time datetime="${esc(m.sentAt)}">${esc(sentTime)}</time>
-        <div class="sent-bubble">${esc(m.body)}</div>
-        ${link(m.url,`${icon("pin")}<span><strong>${esc(m.venue.split(" · ")[0])} · ${esc(displayTime(m.time))}</strong><small>${esc(m.address)}</small></span>`,"shared-place")}
-        <span class="delivery" role="status">${pending ? "Sending…" : "Delivered"}</span>
-      </li>`;
-    }).join("")}</ol>
-  </section>`;
+    <div class="dialog-actions"><button class="btn primary" data-close="detail-dialog">Done</button></div>`;
 }
 function trackerCard(data) {
   const {profile} = data.state;
-  const track = tracking(data);
+  const track = data.tracker;
   const summaries = [];
   for (const slot of routeSlots.slice(1)) {
-    if (data.state.skippedSlots?.includes(slot)) continue;
+    if (!data.state.confirmedSlots.includes(slot) || data.state.skippedSlots?.includes(slot)) continue;
     if (isEveningLeg(slot)) {
       const leg = track.legs?.find(l=>l.slot===slot);
       if (leg) summaries.push(`<li class="tracker-leg">${icon(leg.id==="walk" ? "walk" : "route")}<span>${esc(optionName(slot,leg))} · ~${esc(leg.minutes)} min</span><time>${esc(displayTime(leg.time))}</time></li>`);
@@ -391,14 +365,14 @@ function trackerCard(data) {
     <button class="sheet-link" data-detail="schedule">Full schedule ${icon("chevron")}</button>
   </section>`;
 }
-export function dashboard(data,edits = {},thread = {}) {
+export function dashboard(data,edits = {}) {
   return `${locationMap(data)}
     <div class="workspace">
       <section class="route-column" id="day-plan" aria-label="Today's route">
         ${routeSection(data,"transit",edits.transit)}
         <div class="stops">${routeSlots.slice(1).map(s=>routeSection(data,s,edits[s])).join("")}</div>
       </section>
-      <aside class="sidebar">${nearby(data)}${conversation(data.state,thread)}${trackerCard(data)}${toolsPanel(data)}</aside>
+      <aside class="sidebar">${nearby(data)}${trackerCard(data)}${toolsPanel(data)}</aside>
     </div>`;
 }
 function friendPost(person) {
@@ -417,6 +391,7 @@ export function detailsFor(data,kind,id,mapRoute) {
   }
   if (kind==="map") {
     const r=mapRoute;
+    if (!r.option) return {title:r.title,body:`<p>${esc(r.modeLabel)}.</p><div class="leg-map replay-map" data-route-slot="active"></div>`};
     return {title:r.title,body:`<p>${r.stops.map(s=>esc(s.label)).join(" → ")}</p>
       <div class="leg-map replay-map" data-route-slot="active"></div>
       <button type="button" class="btn secondary" data-commute>${icon("route")}${r.slot==="transit" ? "Replay commute" : "Replay route"}</button>
@@ -434,6 +409,7 @@ export function detailsFor(data,kind,id,mapRoute) {
   }
   if (kind==="transit") {
     const opt = catalog.transit.find(o=>o.id===id) || activeOption(data,"transit");
+    if (!opt) return;
     const art = transportArt[opt.id];
     return { title:opt.id==="walk" ? "Your walk" : "Your ride", body:`
       <p>${esc(catalog.origin)}</p>
@@ -444,13 +420,13 @@ export function detailsFor(data,kind,id,mapRoute) {
     if (!c) return;
     return {title:c.name,body:`<p class="subtle">${esc(c.platform)} · fictional post</p>
       ${friendPost(c)}
-      ${!state.confirmedSlots.includes("dinner") ? '<button class="btn primary" data-pick-dinner>Choose dinner to invite</button>' : `<button class="btn primary" data-group-invite>Invite Gio &amp; Andrew</button>
+      ${!state.confirmedSlots.includes("dinner") ? '<button class="btn primary" data-pick-dinner>Choose dinner to preview an invitation</button>' : `<button class="btn primary" data-group-invite>Preview dinner invitation</button>
       <button class="btn secondary" type="button" data-action="invite" data-id="${esc(c.id)}">
       ${state.invitations.includes(c.id)?"Review individual draft":"Draft individual invite"}</button>`}`};
   }
   if (kind==="schedule") {
-    const schedule = tracking(data).lines.map(l=>`<li><time>${esc(displayTime(l.time))}</time>${link(l.url,esc(l.title))}</li>`).join("");
-    return {title:"Full schedule",body:`<ol class="schedule">${schedule}</ol>`};
+    const schedule = data.tracker.lines.map(l=>`<li><time>${esc(displayTime(l.time))}</time>${link(l.url,esc(l.title))}</li>`).join("");
+    return {title:"Full schedule",body:schedule ? `<ol class="schedule">${schedule}</ol>` : "<p>Confirm a stop or transportation option to add it to your schedule.</p>"};
   }
   const item = slotOptions(data,kind)?.find(option=>option.id===id);
   if (!item) return;

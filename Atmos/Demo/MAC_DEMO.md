@@ -26,7 +26,7 @@ Allow about five minutes on screen after setup. Drive the app through its visibl
 
    For voice, allow microphone access, let the English (US) speech assets finish loading and close the expanded menu before using the wake phrase. The native typed command uses the same local handoff.
 
-   Before the audience joins, open the root URL `http://127.0.0.1:4317/` and leave the blank prompt on screen. This address always opens the home screen. If this browser has a saved itinerary, **Resume saved day** opens it. For a repeat rehearsal with the original choices and empty message history, use the fresh database from step 2 or choose **Trip tools → Reset demo** on the disposable itinerary and confirm.
+   Before the audience joins, open the root URL `http://127.0.0.1:4317/` and leave the blank prompt on screen. This address always opens the home screen. Use **Explore trip options** to open the dashboard with an empty tracker. Reloading the dashboard starts a fresh rehearsal.
 
 ## The five-minute walkthrough
 
@@ -45,7 +45,7 @@ Allow about five minutes on screen after setup. Drive the app through its visibl
 
 Under **Breakfast**, preview **Boichik Bagels · Battery Street** at **22 Battery St**. Pause on the bagel and beverage photos. Open **Menu & dietary details** to show the evidence behind the recommendation, then close the details and click the green check. Choose Battery Street first so the comparison uses that destination.
 
-Scroll up to **Transportation**. Preview **Waymo** to show its example driving route, pickup wait and fare. Click the red × to restore the saved path. Preview **Muni** and watch the path switch to the **38R Geary Rapid** with walking connections. Confirm with the green check. The gray return arrow lets the traveler compare another mode.
+Scroll up to **Transportation**. Preview **Waymo** to show its example driving route, pickup wait and fare. Click the red × to return to the map with no selected route. Preview **Muni** and watch the path switch to the **38R Geary Rapid** with walking connections. Confirm with the green check. The gray return arrow lets the traveler compare another mode.
 
 ### 3. Anchor the day at the hackathon and pick lunch
 
@@ -53,34 +53,30 @@ Open **Hackathon → Personal Agents Hackathon** and confirm the event. Under **
 
 ### 4. Choose dinner and make the walking goal visible
 
-Under **Dinner**, select **Oren’s Hummus**, **71 3rd St**, and confirm. In **Travel to dinner**, select **Walk** and confirm. Repeat in **Travel to nightlife**. Leave the **Tech Afterhours SF** tile for step 6.
+Under **Dinner**, select **Oren’s Hummus**, **71 3rd St**, and confirm. In **Travel to dinner**, select **Walk** and confirm. Choose **Totem Game Night** under **Nightlife** and confirm it to compare onward travel. Select **Walk** in **Travel to nightlife**. Leave **Tech Afterhours SF** for step 6.
 
-**Show** the tracker alongside the map. With these selections, the hackathon ends at **7:30 PM**, dinner starts at **7:39 PM**, and the suggested nightlife stop is reached at **9:07 PM**. The estimate is **$60.85**, **5,871 steps** and **235 kcal**. If the choices differ, read the figures on screen. They are projections for the selected plan.
+Point to the dinner arrival time, estimated costs and steps in the tracker. Each confirmed travel leg updates these figures.
 
-### 5. Approve the invitation and show exactly what was sent
+### 5. Preview a dinner invitation
 
-In **People nearby**, choose **Invite both to dinner**. Pause with the two recipients, Oren’s address and the computed dinner time visible. Each person’s post can also be reopened here.
-
-Click **Approve to send**. The right-hand iMessage-style thread opens for **Gio L. & Andrew S.** Pause on the outgoing invitation and place link as its status becomes **Delivered**. This is an in-app simulation. On a narrow screen, hide the conversation to reach the next stop.
+In **People nearby**, choose **Preview dinner invitation**. Show the recipients, Oren’s address and the dinner time. Choose **Done** to close the draft. Gio’s and Andrew’s posts can also be reopened from their names.
 
 ### 6. Trigger the interruption and reroute
 
 Under **Nightlife**, click the **Tech Afterhours SF** tile once. Opening its preview triggers **Your boss just posted on X**. Pause on “Dinner with the team! :)” and the generated team photo. The demo associates the restaurant sign with the fictional **Ferry Lane Kitchen**, near the Loft. The workplace detail in the briefing makes this interruption relevant.
 
-Click **Reroute my evening**. Show the dinner card and tracker. Dinner changes to **Tacolicious, 741 Valencia St**. The saved walking choices now project **8:34 PM** at dinner and **10:03 PM** at BuzzWorks. Scroll back to the open nightlife preview and click its green check to confirm **Tech Afterhours SF**.
+Click **Reroute my evening**. Show the dinner card and tracker. Dinner changes to **Tacolicious, 741 Valencia St**. The selected walking routes update for the new restaurant. Return to the nightlife preview and confirm **Tech Afterhours SF**.
 
-Choose **View messages**. The approved invitation still says **Oren’s at 7:39 PM**. To finish coordinating, choose **Invite both to dinner**, review **Tacolicious at 8:34 PM**, and **Approve to send** again. The thread now shows the two decisions in order.
+Open **Preview dinner invitation** again. The draft now uses Tacolicious and the revised dinner time.
 
-### 7. Prove what Atmos remembered
+### 7. Compare the active visit with a fresh load
 
-Open **Trip tools → Recall a memory**. Set **Search in** to **My trip**, enter `budget`, and click **Search**. Show `budget: 400`. Switch to **City guide** and search `Personal Agents Hackathon`. Show the matching organizer and venue information. For a direct comparison, search `boss` in each scope. The fictional workplace note appears in **My trip** and the city guide returns zero matches. These results come from the local test database.
+Open **Trip tools → Recall a memory**. Set **Search in** to **My trip**, enter `budget`, and click **Search**. Show `budget: 400`. Switch to **City guide** and search `Personal Agents Hackathon`. Show the matching organizer and venue information. For a direct comparison, search `boss` in each scope. The fictional workplace note appears in **My trip** and the city guide returns zero matches. The local demo uses the active visit for personal context and its stored guide for shared facts.
 
-Under **Trip tools → Source checks**, show the status for the event page, menu PDF and hourly weather feed. The observer checks these at startup and every 30 minutes while enabled. Read the check times or fallback status actually displayed. Refresh the current itinerary URL in the same browser. The saved day reopens immediately. Point to the saved stops and use **View messages** to reopen the approved conversation.
-
-**Close with** “Atmos remembered why this traveler was here. When dinner moved, it recalculated both walks and left it to the traveler to tell their friends.”
+Under **Trip tools → Source checks**, show the status for the event page, menu PDF and hourly weather feed. The observer checks these at startup and every 30 minutes while enabled. Read the check times or fallback status actually displayed. Refresh the current itinerary URL in the same browser. Show the empty tracker and unselected menus. Open **Trip briefing** to show the blank input.
 
 ## Presenter notes
 
-- The broader product would use continuously running agents and Cognee-backed memory. This packaged walkthrough demonstrates the local SQLite path. It uses preset preferences and supported briefing fields, a dated city guide, and optional public source checks. The social posts, team-photo match and messages are scripted demo interactions. Ride waits, fares, steps and calories are estimates.
+- The broader product would use continuously running agents and Cognee-backed memory. This packaged walkthrough demonstrates the local SQLite path. It uses preset preferences and supported briefing fields, a dated city guide, and optional public source checks. The social posts, team-photo match and invitation drafts are scripted demo interactions. Ride waits, fares, steps and calories are estimates.
 - If a source is unreachable, present the saved guide and the displayed check status. If the post fails to appear, verify the submitted brief contains both **boss** and **sick**, close any overlays, and preview **Tech Afterhours SF**. **Trip tools** also offers a manual replay.
 - If port 4317 is occupied, set `export ATMOS_DEMO_PORT=4318` in **both** terminals before launch and open `http://127.0.0.1:4318/`.

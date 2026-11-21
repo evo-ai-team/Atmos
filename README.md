@@ -4,6 +4,7 @@ The project is [Atmos](Atmos/README.md), a native Mac voice interface. Its maste
 
 - Source, tests, resources, and development scripts: [`Atmos/`](Atmos/README.md)
 - Runnable app: `Atmos.app`
+- Local San Francisco hackathon itinerary and voice demo: [run the test environment](Atmos/Demo/README.md)
 - Code organization: [source directory guide](Atmos/Sources/README.md)
 
 Build and test scripts keep intermediates in a temporary directory by default. An optional workspace `work/` directory or explicit environment overrides can select another location. Keep generated artifacts out of the source tree.

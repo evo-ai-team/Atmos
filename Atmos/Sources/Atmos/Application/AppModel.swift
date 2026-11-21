@@ -877,7 +877,27 @@ final class AppModel: ObservableObject {
         let timing = captureID.flatMap { voiceTimings.removeValue(forKey: $0) }
             ?? (benchmarkEnabled ? PipelineTiming(origin: .typed, maximumRecords: 2_048, maximumAnnotations: 512)
                 : PipelineTiming(origin: .typed))
+        // TESTING END
         retainTiming(timing)
+        if ItineraryDemo.matches(text) {
+            if let captureID { invalidateSpeculativeCapture(captureID) }
+            guard !benchmarkEnabled, !working, !speechScreening.isScreening, taskState == nil else {
+                timing.mark("Local itinerary deferred while busy")
+                timing.finish(.ignored)
+                let message = benchmarkEnabled ? "Turn off benchmarks to use the itinerary demo."
+                    : "Finish the current command, then ask for the itinerary again."
+                log(message, detail: "Local itinerary")
+                if benchmarkEnabled { benchmarkStatus = message }
+                if !working && !speechScreening.isScreening {
+                    transcript = ""
+                    showNotice(message)
+                }
+                return
+            }
+            openDemoItinerary(text, timing: timing)
+            return
+        }
+        // TESTING BEGIN: only regular commands can become benchmark trials.
         guard beginBenchmarkTrial(timing: timing, command: text) else { return }
         // TESTING END
         // Menu input can be delivered after its closing animation. Opening
@@ -895,6 +915,44 @@ final class AppModel: ObservableObject {
             noticeTask?.cancel()
             status = "Checking command…"
             notch.show(.thinking)
+        }
+    }
+
+    private func openDemoItinerary(_ text: String, timing: PipelineTiming) {
+        let token = UUID()
+        generation = token
+        latestCommandTiming = timing
+        runningTiming = timing
+        transcript = ""
+        error = nil
+        noticeTask?.cancel()
+        invalidateSpeculativeCapture()
+        working = true
+        voice.setExecuting(true)
+        status = "Opening local itinerary…"
+        notch.show(.thinking)
+        runningTask = Task {
+            do {
+                let url = try await measureStage(timing, "Create local itinerary handoff") {
+                    try await ItineraryDemo.handoff(text)
+                }
+                try checkCurrentTask(token)
+                guard NSWorkspace.shared.open(url) else {
+                    finishTask(token, outcome: .failed)
+                    let message = "Your default browser couldn’t open the local itinerary."
+                    self.error = message
+                    showNotice(message)
+                    return
+                }
+                finishTask(token)
+                showNotice("Itinerary opened in your browser")
+            } catch {
+                guard generation == token else { return }
+                finishTask(token, outcome: .failed)
+                let message = "Couldn’t open the itinerary. Check that the local demo server is running."
+                self.error = message
+                showNotice(message)
+            }
         }
     }
 

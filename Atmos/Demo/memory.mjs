@@ -50,6 +50,12 @@ function visitorSnapshot(state, catalog) {
     const item = catalog?.[slot]?.find(entry => entry.id === state.choices?.[slot]);
     if (item) lines.push(`${slot}: ${item.title}.`);
   }
+  const modeNames = {walk:'walking',muni:'Muni',waymo:'Waymo',taxi:'taxi',tesla:'supervised Tesla rideshare'};
+  for (const [slot,leg] of [['toDinner','dinner'],['toNightlife','nightlife']]) {
+    if (slot === 'toDinner' && state.skippedSlots?.includes('dinner')) continue;
+    const mode = modeNames[state.choices?.[slot]];
+    if (mode && state.confirmedSlots?.includes(slot)) lines.push(`Travel to ${leg}: ${mode}.`);
+  }
   return lines.join('\n');
 }
 

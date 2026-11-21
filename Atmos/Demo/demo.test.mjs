@@ -22,7 +22,10 @@ test('all stop icons preview the named option before offering confirmation', () 
       const preview = routeSection(data,slot,item.id);
       assert.ok(preview.includes(`data-action="choose" data-slot="${slot}" data-id="${item.id}"`));
       assert.ok(preview.includes(`data-options="${slot}"`));
-      if (slot === 'transit') assert.ok(preview.includes(item.wait));
+      if (['transit','toDinner','toNightlife'].includes(slot)) {
+        assert.ok(preview.includes(item.id === 'walk' ? item.minutes+' min' : item.wait));
+        if (slot !== 'transit') assert.ok(preview.includes('km'));
+      }
       else assert.ok(preview.includes(`data-photo-id="${item.id}"`));
     }
     const saved = {...data,state:choose(state,slot,options[0].id)};
@@ -48,7 +51,7 @@ test('each itinerary branch yields chronological, linked route legs and finite d
             assert.equal(track.calories,Math.round(track.steps*0.04));
             const first = new URL(track.lines[0].url);
             assert.equal(first.searchParams.get('destination'),am.address);
-            assert.equal(first.searchParams.get('travelmode'),t.id==='muni'?'transit':'driving');
+            assert.equal(first.searchParams.get('travelmode'),t.id==='walk'?'walking':t.id==='muni'?'transit':'driving');
             const lastLeg = track.lines.filter(l=>l.url?.includes('/maps/dir/') && l.title.includes('min')).at(-1);
             assert.equal(new URL(lastLeg.url).searchParams.get('origin'),d.address);
           }
@@ -69,6 +72,76 @@ test('notification updates the route and clears dinner-specific drafts without s
   assert.equal(trackerFor(s).spent,11.5);
   const fresh = updateState(s,{action:'reset'});
   assert.equal(fresh.started,false); assert.equal(fresh.transcript,''); assert.deepEqual(fresh.expenses,[]);
+});
+
+test('evening travel choices connect the selected venues and update only the confirmed mode, totals and invitation time', () => {
+  const legacy = choose(start(),'dinner','dinner-lataqueria');
+  const base = trackerFor(legacy);
+  assert.equal(legacy.choices.toDinner,undefined);
+  assert.deepEqual(base.legs.map(leg=>leg.id),['muni','muni']);
+  assert.equal(base.legs[1].price,0); // A second Muni boarding within the transfer window.
+  const expectedIds = ['walk','muni','waymo','tesla','taxi'].sort();
+  const toMins = time => time.split(':').reduce((value,part)=>value*60+Number(part),0);
+  for (const id of expectedIds) {
+    const s = choose(legacy,'toDinner',id);
+    assert.ok(s.confirmedSlots.includes('toDinner'));
+    const guide = guideForVisit(catalog,s);
+    for (const slot of ['toDinner','toNightlife']) {
+      assert.deepEqual(guide[slot].map(option=>option.id).sort(),expectedIds);
+      for (const option of guide[slot]) {
+        assert.ok(option.originName && option.destinationName && option.wait && option.notes);
+        const params = new URL(option.url).searchParams;
+        assert.equal(params.get('origin'),option.origin);
+        assert.equal(params.get('destination'),option.destination);
+        assert.equal(params.get('travelmode'),option.id==='muni'?'transit':option.id==='walk'?'walking':'driving');
+        assert.equal(toMins(option.arrivesAt)-toMins(option.time),option.minutes);
+        assert.ok(option.distanceKm>0 && option.steps>0 && option.price>=0);
+      }
+    }
+    for (const next of expectedIds) {
+      const fullyChosen = choose(s,'toNightlife',next);
+      const tracker = trackerFor(fullyChosen);
+      assert.deepEqual(tracker.legs.map(leg=>leg.id),[id,next]);
+      assert.equal(tracker.legs[0].origin,catalog.event.address);
+      assert.equal(tracker.legs[1].origin,tracker.legs[0].destination);
+      const delta = (items,field) => items.reduce((sum,item)=>sum+item[field],0)-base.legs.reduce((sum,item)=>sum+item[field],0);
+      assert.equal(tracker.steps,base.steps+delta(tracker.legs,'steps'));
+      assert.equal(tracker.cost,Math.round((base.cost+delta(tracker.legs,'price'))*100)/100);
+      assert.equal(tracker.calories,Math.round(tracker.steps*0.04));
+      assert.equal(tracker.lines.find(line=>line.slot==='dinner').time,tracker.legs[0].arrivesAt);
+    }
+  }
+  const skipped = updateState(choose(legacy,'toNightlife','taxi'),{action:'skip',slot:'dinner'});
+  assert.deepEqual(guideForVisit(catalog,skipped).toDinner,[]);
+  assert.throws(()=>choose(skipped,'toDinner','walk'));
+  const [only] = trackerFor(skipped).legs;
+  assert.deepEqual(trackerFor(skipped).legs.map(leg=>leg.slot),['toNightlife']);
+  assert.equal(only.origin,catalog.event.address);
+  assert.equal(only.id,'taxi');
+  assert.throws(()=>choose(legacy,'toNightlife','unlisted-car'));
+});
+
+test('long walking routes show real ordering, late hackathon arrival and closing-time conflicts', () => {
+  let s = choose(start(),'transit','walk');
+  s = choose(s,'dinner','dinner-lataqueria');
+  s = choose(s,'nightlife','game-night');
+  s = choose(s,'toDinner','walk');
+  s = choose(s,'toNightlife','walk');
+  const t = trackerFor(s);
+  const guide = guideForVisit(catalog,s);
+  const morning = guide.transit.find(mode=>mode.id==='walk');
+  assert.equal(morning.url,t.lines[0].url);
+  assert.equal(morning.time,t.lines[0].time);
+  assert.equal(t.lines.find(l=>l.title.startsWith('Arrive at the Loft')).time,'09:40');
+  assert.deepEqual(t.lines.map(l=>l.time),t.lines.map(l=>l.time).sort());
+  assert.match(t.legs[0].timingNote,/closing times/);
+  assert.match(t.legs[1].timingNote,/10 PM closing/);
+  assert.match(t.lines.at(-1).title,/after closing/);
+  assert.match(itineraryBriefing(s,t).join(' '),/after the opening begins/);
+  const direct = updateState(s,{action:'skip',slot:'breakfast'});
+  const first = trackerFor(direct).lines[0];
+  assert.equal(new URL(first.url).searchParams.get('travelmode'),'walking');
+  assert.equal(new URL(first.url).searchParams.get('destination'),catalog.event.address);
 });
 
 test('spoken details live in private memory and absence of a work conflict suppresses that alert', () => {
@@ -153,6 +226,31 @@ async function listen(filename) {
   return {url:'http://127.0.0.1:'+server.address().port,close:()=>new Promise(resolve=>server.close(resolve))};
 }
 const post = (url,data,extra={}) => fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...extra},body:JSON.stringify(data)});
+test('restaurant and travel changes recompute a dated dinner text before an approval can send it',async () => {
+  const app = await listen(':memory:');
+  try {
+    const api = app.url+'/api/demo';
+    const initial = await fetch(api);
+    const Cookie = initial.headers.get('set-cookie').split(';')[0];
+    const preview = await initial.json();
+    assert.equal(preview.previewTracker.legs.length,2);
+    assert.equal(preview.catalog.toDinner[0].origin,catalog.event.address);
+    const submit = action => post(api,action,{Cookie});
+    await submit({action:'start',transcript:intro});
+    const pm = await (await submit({action:'choose',slot:'dinner',id:'dinner-lataqueria'})).json();
+    const walking = await (await submit({action:'choose',slot:'toDinner',id:'walk',revision:pm.state.revision})).json();
+    assert.equal(walking.dinnerTextDraft.time,walking.tracker.legs[0].arrivesAt);
+    assert.notEqual(pm.dinnerTextDraft.time,walking.dinnerTextDraft.time);
+    assert.notEqual(pm.dinnerTextDraft.key,walking.dinnerTextDraft.key);
+    assert.equal((await submit({action:'sendDinnerText',key:pm.dinnerTextDraft.key})).status,400);
+    const taxi = await (await submit({action:'choose',slot:'toNightlife',id:'taxi'})).json();
+    assert.equal(taxi.dinnerTextDraft.key,walking.dinnerTextDraft.key);
+    const recalled = await (await post(app.url+'/api/recall',{scope:'private',query:'travel'},{Cookie})).json();
+    assert.ok(recalled.results.includes('Travel to dinner: Walk'));
+    assert.ok(recalled.results.includes('Travel to nightlife: City taxi'));
+  } finally { await app.close(); }
+});
+
 test('only explicit catalog selections confirm itinerary sections, including the fixed hackathon',async () => {
   const app = await listen(':memory:');
   try {

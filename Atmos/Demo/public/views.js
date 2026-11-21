@@ -175,10 +175,16 @@ function toolsPanel(data) {
    </div></details>`;
 }
 export function alertView(alert) {
-  return `<div class="dialog-heading"><span class="eyebrow">Fictional social update</span><button type="button" class="icon-button" data-close="alert-dialog" aria-label="Close interruption">×</button></div><h2 id="alert-title">${esc(alert.title || "A change of plans")}</h2>${photo(alert,"alert-photo")}${alert.place ? `<p class="address">${icon("pin")}${esc(alert.place)}</p>` : ""}<p class="option-note">${esc(alert.caption)}</p><p class="subtle">${esc(readable(alert.notes))}</p>${alert.alternative ? `<p class="option-note">Alternative · ${esc(readable(alert.alternative))}</p>` : ""}<div class="dialog-actions"><button type="button" class="btn secondary" data-action="dismiss">Keep my plan</button><button type="button" class="btn primary" data-action="reroute">Reroute my evening</button></div>`;
+  return `<div class="dialog-heading"><span class="post-network"><b aria-hidden="true">𝕏</b> Fictional demo post</span><button type="button" class="icon-button" data-close="alert-dialog" aria-label="Close interruption">×</button></div>
+    <h2 id="alert-title">${esc(alert.title)}</h2><blockquote class="team-post">
+      <p>${esc(alert.caption)}</p>${photo(alert,"alert-photo")}
+      ${alert.place ? `<p class="post-place">${icon("pin")}${esc(alert.place)}</p>` : ""}</blockquote>
+    <p class="subtle">${esc(alert.notes)}</p>
+    ${alert.alternative ? `<details class="alternate-dinner"><summary>Suggested dinner · ${esc(alert.alternative.split(" at ")[0])}</summary><p>${esc(alert.alternative)}</p></details>` : ""}
+    <div class="dialog-actions"><button type="button" class="btn secondary" data-action="dismiss">Keep my plan</button><button type="button" class="btn primary" data-action="reroute">Reroute my evening</button></div>`;
 }
 
-const slotNames = { transit:"Transportation", breakfast:"Breakfast", event:"Hackathon", lunch:"Lunch", dinner:"Dinner", nightlife:"Nightlife" };
+const slotNames = { transit:"Transportation", breakfast:"Breakfast", event:"Hackathon", lunch:"Lunch", toDinner:"Travel to dinner", dinner:"Dinner", toNightlife:"Travel to nightlife", nightlife:"Nightlife" };
 export const routeSlots = Object.keys(slotNames);
 const clockFormat = new Intl.DateTimeFormat("en-US", { hour:"numeric", minute:"2-digit", timeZone:"America/Los_Angeles" });
 export function updateClock() {
@@ -207,26 +213,31 @@ function venueName(o) { return o.title.split(" · ")[0]; }
 function roundButton(attributes, symbol, label, className="") {
   return `<button type="button" ${attributes} class="round ${className}" title="${esc(label)}" aria-label="${esc(label)}">${icon(symbol)}</button>`;
 }
-const rideNames = {muni:"Muni",waymo:"Waymo",tesla:"Tesla Robotaxi",taxi:"Taxi"};
+const rideNames = {walk:"Walk",muni:"Muni",waymo:"Waymo",tesla:"Tesla Robotaxi",taxi:"Taxi"};
 const mealSlots = ["breakfast","lunch","dinner"];
+function isEveningLeg(slot) { return slot === "toDinner" || slot === "toNightlife"; }
+function isTravel(slot) { return slot === "transit" || isEveningLeg(slot); }
+function legSuffix(slot) { return slot==="toDinner" ? " to dinner" : slot==="toNightlife" ? " to nightlife" : ""; }
 function slotOptions(data,slot) {
   return slot === "event" ? [data.catalog.event] : data.catalog[slot];
 }
 function optionName(slot,item) {
-  return slot === "transit" ? rideNames[item.id] || item.title : venueName(item);
+  return isTravel(slot) ? rideNames[item.id] || item.title : venueName(item);
 }
 function choiceArt(slot,item) {
-  const src = slot === "transit" ? transportArt[item.id]?.src : optionPhotos[item.id] || previewPhotos[item.id]?.[0]?.src;
-  return `<span class="choice-art ${slot === "transit" ? "brand-box "+esc(item.id) : ""}">${src ? `<img src="${esc(src)}" alt="">` : icon(slot)}</span>`;
+  const src = isTravel(slot) ? transportArt[item.id]?.src : optionPhotos[item.id] || previewPhotos[item.id]?.[0]?.src;
+  return `<span class="choice-art ${isTravel(slot) ? "brand-box "+esc(item.id) : ""}">${src ? `<img src="${esc(src)}" alt="">` : icon(item.id === "walk" ? "walk" : slot)}</span>`;
 }
 function choiceButton(slot,item,savedId) {
   const name = optionName(slot,item);
+  const destination = legSuffix(slot);
   const branch = ["breakfast","breakfast-battery"].includes(item.id) ? item.title.split(" · ")[1] : "";
   const saved = savedId === item.id;
   return `<button type="button" class="choice-tile" data-preview="${esc(item.id)}" data-slot="${slot}"
-    aria-label="${esc("Preview "+name+(branch ? ", "+branch : "")+(saved ? ", on your route" : ""))}">
+    aria-label="${esc("Preview "+name+destination+(branch ? ", "+branch : "")+(saved ? ", on your route" : ""))}">
     <span class="tile-art">${choiceArt(slot,item)}${saved ? `<i class="saved-mark">${icon("check")}</i>` : ""}</span>
     <strong>${esc(name)}</strong>${branch ? `<small>${esc(branch)}</small>` : ""}
+    ${isEveningLeg(slot) ? `<small>~${esc(item.minutes)} min</small>` : ""}
   </button>`;
 }
 function gallery(slot,item) {
@@ -237,47 +248,59 @@ function gallery(slot,item) {
     </button>`).join("")}</div>` : "";
 }
 function selectionActions(slot,item,confirmed) {
-  const name = optionName(slot,item);
+  const name = optionName(slot,item)+legSuffix(slot);
+  const options = isEveningLeg(slot) ? (slot==="toDinner" ? "dinner travel" : "nightlife travel") : slotNames[slot].toLowerCase();
   return `<div class="selection-actions">${confirmed
-    ? roundButton(`data-options="${slot}"`,"return","Return to "+slotNames[slot].toLowerCase()+" options","return-choice")
+    ? roundButton(`data-options="${slot}"`,"return","Return to "+options+" options","return-choice")
     : roundButton(`data-action="choose" data-slot="${slot}" data-id="${esc(item.id)}"`,"check","Confirm "+name,"included")
       + roundButton(`data-options="${slot}"`,"close","Cancel "+name+" preview","excluded")}</div>`;
 }
 function rideDetails(item) {
+  const walking = item.id === "walk";
+  const distance = Number.isFinite(item.distanceKm) ? `${item.distanceKm.toFixed(1)} km` : "";
   return `<dl class="ride-facts">
-    <div><dt>Expected wait</dt><dd>${esc(item.wait || "Check service")}</dd></div>
-    <div><dt>Direct to downtown</dt><dd>${esc(item.minutes)} min</dd></div>
-    <div><dt>Est. downtown fare</dt><dd>${esc(money(item.price))}</dd></div>
-    </dl>${item.waitNote ? `<p class="ride-note">${esc(item.waitNote)}</p>` : ""}
-    <p class="ride-payment">${icon("money")}${esc(item.payment)}</p>`;
+    <div><dt>${walking && distance ? "Distance" : "Expected wait"}</dt><dd>${esc(walking && distance ? distance : item.wait || "Check service")}</dd></div>
+    <div><dt>${walking ? "Walking time" : "Travel time"}</dt><dd>${esc(item.minutes)} min</dd>${!walking && distance ? `<dd class="ride-distance">${esc(distance)}</dd>` : ""}</div>
+    <div><dt>Est. fare</dt><dd>${esc(money(item.price))}</dd></div>
+    </dl>${!walking && item.waitNote ? `<p class="ride-note">${esc(item.waitNote)}</p>` : ""}
+    ${item.timingNote ? `<p class="timing-note">${esc(item.timingNote)}</p>` : ""}
+    ${walking ? `<p class="ride-payment">${icon("walk")}About ${Number(item.steps).toLocaleString("en-US")} steps</p>` :
+      `<p class="ride-payment">${icon("money")}${esc(item.payment)}</p>`}`;
 }
 function stopBody(slot,item,confirmed) {
-  const detail = slot==="transit" ? "Ride details" : mealSlots.includes(slot) ? "Menu & dietary details" : "Venue details";
-  return `${slot==="transit" ? rideDetails(item) : gallery(slot,item)}
+  const detail = isTravel(slot) ? (item.id==="walk" ? "Walk details" : "Ride details") : mealSlots.includes(slot) ? "Menu & dietary details" : "Venue details";
+  return `${isTravel(slot) ? rideDetails(item) : gallery(slot,item)}
     <div class="stop-links">
       <button class="sheet-link" data-detail="${slot}" data-item-id="${esc(item.id)}">${detail} ${icon("chevron")}</button>
+      ${isTravel(slot) ? link(item.url,"Directions "+icon("external"),"sheet-link") : ""}
       ${slot==="dinner" && confirmed ? '<button class="sheet-link" data-group-invite>Invite Gio &amp; Andrew</button>' : ""}
     </div>`;
 }
 export function routeSection(data,slot,edit) {
   const options = slotOptions(data,slot);
+  if (!options?.length) return "";
   const saved = data.state.confirmedSlots.includes(slot) && !data.state.skippedSlots?.includes(slot);
-  const selected = options.find(o=>o.id===data.state.choices[slot]) || options[0];
+  const leg = isEveningLeg(slot) && tracking(data).legs?.find(l=>l.slot===slot);
+  const selected = options.find(o=>o.id===(data.state.choices[slot] || leg?.id)) || options[0];
   const confirmed = saved && edit === undefined;
   const item = confirmed ? selected : options.find(o=>o.id===edit);
   const reference = item || selected;
-  const at = tracking(data).lines.find(line=>line.title===reference.title)?.time;
+  const at = tracking(data).lines.find(line=>line.title===reference.title || (slot==="nightlife" && selected.id===reference.id && line.slot===slot))?.time;
   const when = slot === "transit" ? "" : displayTime(at || (slot === "event" ? reference.starts : reference.time));
   const title = slotNames[slot];
+  const routed = isTravel(slot) && reference.originName && reference.destinationName;
+  const routeLabel = routed ? `${reference.originName.split(" · ")[0]} → ${reference.destinationName.split(" · ")[0]}` : "";
+  const timing = routed ? `Leave ${displayTime(reference.time)}${item?.arrivesAt ? " · Arrive "+displayTime(item.arrivesAt) : ""}` : when;
   const id = slot === "transit" ? "transit" : "slot-"+slot;
   return `<section class="stop glass stop-${slot}${item ? " expanded" : ""}" id="${id}" aria-labelledby="${id}-heading">
     <div class="stop-head">
-      <span class="stop-pin pin-${slot}">${icon(slot)}</span><div class="stop-title">
-        ${item ? `<span class="stop-type">${title}${when ? `<i></i><time>${esc(when)}</time>` : ""}</span>` : ""}
+      <span class="stop-pin pin-${isTravel(slot) ? "transit" : slot}">${icon(item?.id === "walk" ? "walk" : isEveningLeg(slot) ? "route" : slot)}</span><div class="stop-title">
+        ${item ? `<span class="stop-type">${title}${timing ? `<i></i><span>${esc(timing)}</span>` : ""}</span>` : ""}
         <h2 id="${id}-heading">${item ? esc(optionName(slot,item)) : title}</h2>
-        ${!item && when ? `<time class="section-time">${esc(when)}</time>` : ""}
+        ${routeLabel ? `<small>${esc(routeLabel)}</small>` : ""}
+        ${!item && timing ? `<span class="section-time">${esc(timing)}</span>` : ""}
         ${item && slot==="transit" && item.title!==optionName(slot,item) ? `<small>${esc(item.title)}</small>` : ""}
-        ${item && slot!=="transit" ? `<small>${esc(item.address)}</small>` : ""}
+        ${item && !isTravel(slot) ? `<small>${esc(item.address)}</small>` : ""}
       </div>${item ? selectionActions(slot,item,confirmed) : ""}</div>
     ${item ? stopBody(slot,item,confirmed) : `<div class="choices" role="group" aria-label="${title} options">${options.map(o=>choiceButton(slot,o,saved ? selected.id : null)).join("")}</div>`}
   </section>`;
@@ -345,11 +368,16 @@ function trackerCard(data) {
   const {profile} = data.state;
   const track = tracking(data);
   const summaries = [];
-  for (const slot of ["breakfast","event","lunch","dinner","nightlife"]) {
+  for (const slot of routeSlots.slice(1)) {
     if (data.state.skippedSlots?.includes(slot)) continue;
+    if (isEveningLeg(slot)) {
+      const leg = track.legs?.find(l=>l.slot===slot);
+      if (leg) summaries.push(`<li class="tracker-leg">${icon(leg.id==="walk" ? "walk" : "route")}<span>${esc(optionName(slot,leg))} · ~${esc(leg.minutes)} min</span><time>${esc(displayTime(leg.time))}</time></li>`);
+      continue;
+    }
     const o = slot==="event" ? data.catalog.event : activeOption(data,slot);
     if (!o) continue;
-    const found = track.lines.find(line => line.title===o.title);
+    const found = track.lines.find(line => line.title===o.title || line.slot===slot);
     summaries.push(`<li><i class="dot-${slot}"></i><span>${esc(slot==="event" ? "AWS Builder Loft" : venueName(o))}</span>
       <time>${esc(displayTime(found?.time || (slot==="event" ? o.starts : o.time)))}</time></li>`);
   }
@@ -376,10 +404,19 @@ export function dashboard(data,edits = {},thread = {}) {
 }
 export function detailsFor(data,kind,id) {
   const {catalog,state} = data;
+  if (isEveningLeg(kind)) {
+    const leg = slotOptions(data,kind)?.find(o=>o.id===id);
+    if (!leg) return;
+    return {title:optionName(kind,leg)+" · "+slotNames[kind],body:`
+      <p>${esc(leg.originName)} · ${esc(leg.origin)}</p>
+      <p>${esc(leg.destinationName)} · ${esc(leg.destination)}</p>
+      <p>${esc(leg.notes)}</p>${stats(leg)}${detailList(leg)}${sources(leg)}
+      ${link(leg.url,"Open directions "+icon("external"),"btn secondary")}`};
+  }
   if (kind==="transit" || kind==="map") {
     const opt = catalog.transit.find(o=>o.id===id) || activeOption(data,"transit");
     const art = transportArt[opt.id];
-    return { title:kind==="map" ? "Current location" : "Your ride", body:`
+    return { title:kind==="map" ? "Morning route" : opt.id==="walk" ? "Your walk" : "Your ride", body:`
       <p>${esc(catalog.origin)}</p>
       ${info(opt)}${art?.source ? link(art.source,"Service icon source","photo-credit") : ""}
       ${kind==="map" ? `<button class="btn secondary" data-commute>${icon("route")}Replay commute</button><div id="commute-replay" role="status"></div>` : ""}

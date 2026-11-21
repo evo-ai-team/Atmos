@@ -206,7 +206,10 @@ async function act(payload) {
       $("#slot-dinner")?.scrollIntoView();
       notice("Your dinner and evening route have been updated. Review the new dinner choice before preparing new drafts.");
     }
-    if(payload.action==="dismiss") notice("Kept your original evening plan.");
+    if(payload.action==="dismiss") {
+      if (sectionEdits.nightlife==="afterhours") sectionElement("nightlife")?.querySelector('[data-action="choose"]')?.focus({preventScroll:true});
+      notice("Kept your original evening plan.");
+    }
     if(payload.action==="expense") notice("Expense added to your spending log.");
     if(payload.action==="reset") {window.scrollTo({top:0,behavior:"smooth"}); notice("Trip demo reset.");}
     if(payload.action==="skip") notice("Stop removed from your route.");
@@ -362,7 +365,15 @@ document.addEventListener("click",event=>{
   const button=event.target.closest("button");
   if(!button) return;
   if(button.id==="brief-button") {showBrief();return;}
-  if(button.hasAttribute("data-preview")) {editSection(button.dataset.slot,button.dataset.preview);return;}
+  if(button.hasAttribute("data-preview")) {
+    const {slot,preview} = button.dataset;
+    if (sending) return;
+    editSection(slot,preview);
+    if (slot==="nightlife" && preview==="afterhours" && (!data.state.started || data.state.profile.discretion)) {
+      act({action:"previewNightlife",id:preview});
+    }
+    return;
+  }
   if(button.hasAttribute("data-options")) {editSection(button.dataset.options,null);return;}
   if(button.hasAttribute("data-pick-dinner")) {
     if (detailDialog.open) detailDialog.close();

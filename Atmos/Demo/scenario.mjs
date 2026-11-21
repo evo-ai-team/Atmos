@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { event, transit, transitForBreakfast, nightlife, weekend, visitorTips, visitorSources, weather, weatherSources, origin, originCoords } from './city.mjs';
+import { event, transit as rideModes, transitForBreakfast, nightlife, weekend, visitorTips, visitorSources, weather, weatherSources, origin, originCoords } from './city.mjs';
 import { breakfast, lunch, dinner } from './food.mjs';
 
 export const intro = "Hey Atmos, I'm visiting Richmond SF for the first time from Singapore for work, and I signed up for a hackathon at the AWS building. I've told my boss I'm sick today because I really wanted to attend this event and meet cool people. I'm here until Sunday and want to explore the best food and entertainment this city has to offer. Can you plan my itinerary for me?";
@@ -8,8 +8,9 @@ const contacts = [
   { id: 'gio', name: 'Gio L.', platform: 'Instagram story', caption: 'First stop in SF 🌉 Anyone around for dinner?', place: 'Golden Gate Bridge', image: heroImage },
   { id: 'andrew', name: 'Andrew S.', platform: 'X post', caption: 'In San Francisco for the Systems Forum. Free once the last session wraps!', place: 'SF Systems Forum', image: '/assets/forum.jpg' },
 ];
-const loft = { address: event.address, coords: event.coords ?? [37.7906, -122.3992] };
-const home = { address: 'Clement St & 14th Ave, San Francisco, CA', coords: originCoords };
+const loft = { title:'AWS Builder Loft', address:event.address, coords:event.coords ?? [37.7906, -122.3992] };
+const home = { title:'Richmond pickup', address:'Clement St & 14th Ave, San Francisco, CA', coords:originCoords };
+const transit = [...rideModes,walkingOption(home,loft)];
 // The image and its transcription are paired test fixtures. Match the visible
 // business name and street to the demo gazetteer, independent of who is pictured.
 const teamPost = { caption: 'Dinner with the team! :)', observedSigns: ['FERRY LANE KITCHEN', 'MARKET ST'] };
@@ -23,6 +24,7 @@ export const catalog = { date: '2026-11-20', intro, heroImage, heroCredit: { lab
 export const catalogRevision = createHash('sha256').update(JSON.stringify(catalog)).digest('hex');
 const meals = ['breakfast','lunch','dinner'];
 const slots = ['transit',...meals,'nightlife'];
+const eveningSlots = ['toDinner','toNightlife'];
 function choiceById(guide,slot,id) {
   if (slot === 'event') return id === guide.event.id ? guide.event : undefined;
   return guide[slot]?.find(option => option.id === id);
@@ -31,9 +33,9 @@ export const defaultProfile = { diet: 'Vegan, dairy-free, gluten-free', walkingG
 export function searchLocalMemory(guide, state, scope, query) {
   const facts = scope === 'private'
     ? [...Object.entries(state.profile).filter(([,v])=>typeof v !== 'boolean').map(([k,v]) => `${k}: ${v}`),
-      ...Object.entries(state.choices).map(([slot,id]) => state.skippedSlots?.includes(slot)
+      ...Object.entries(state.choices).filter(([slot])=>slot !== 'toDinner' || !state.skippedSlots?.includes('dinner')).map(([slot,id]) => state.skippedSlots?.includes(slot)
         ? `${slot}: skipped for this visit`
-        : `${slot}: ${choiceById(guide,slot,id)?.title ?? ''}`)]
+        : `${{toDinner:'Travel to dinner',toNightlife:'Travel to nightlife'}[slot] ?? slot}: ${choiceById(guide,slot,id)?.title ?? ''}`)]
     : [guide.event,...guide.transit,...guide.breakfast,...guide.lunch,...guide.dinner,...guide.nightlife,...guide.weekend]
       .map(o=>[o.title,o.address,o.notes,o.diet,o.sources?.[0]?.url].filter(Boolean).join(' · ')).concat(guide.weather,guide.visitorTips);
   const ignored = new Set(['what','which','where','when','would','could','should','about','that','the','and','for','are','was','can','does','will','you','how','tell']);
@@ -78,17 +80,33 @@ function alternateDinner(s) {
 }
 
 export function guideForVisit(guide,s,evidence) {
-  const eveningOrigin = selected(s,'dinner') ?? loft;
   const alternate = alternateDinner(s);
   const morning = s.started ? selected(s,'breakfast') : guide.breakfast.find(place => place.available !== false);
+  const routePlan = eveningPlan(s);
+  const eveningOrigin = routePlan.toNightlife.from;
+  const first = morning ?? loft;
+  const firstTime = morning ? minutes(morning.time) : 555;
+  const departures = transitForBreakfast(guide.transit,morning).map(base=>{
+    const option = base.id === 'walk' ? walkingOption(home,first) : base;
+    const path = modeRoute(home,first,base.id);
+    const sources = option.sources.filter(source=>!source.url.includes('google.com/maps/dir'));
+    const fareNote = path.mode === 'driving'
+      ? ` The demo budgets $${option.price} for this ride. If another ride is needed after breakfast, the tracker adds the same allowance for that leg.` : '';
+    return {...option,...path,time:clock(firstTime-path.minutes),arrivesAt:clock(firstTime),
+      origin:home.address,destination:first.address,originName:home.title,destinationName:first.title,
+      notes:option.notes+fareNote,
+      sources:[...sources,{label:'Google Maps · directions from public pickup',url:path.url}]};
+  });
   return {
     ...guide,
-    transit:transitForBreakfast(guide.transit,morning),
+    transit:departures,
+    toDinner:routePlan.toDinner?.options ?? [],
+    toNightlife:routePlan.toNightlife.options,
     weather:evidence?.weather ?? guide.weather,
     alert:{...guide.alert,alternative:alternate && `${alternate.title} at ${alternate.address}. ${alternate.diet}`},
-    nightlife:s.started ? guide.nightlife.map(night=>({
-      ...night,url:route(eveningOrigin,night,km(eveningOrigin,night)>1.6 ? 'transit' : 'walking').url,
-    })) : guide.nightlife,
+    nightlife:guide.nightlife.map(night=>({
+      ...night,url:route(eveningOrigin,night,travelMode(s.choices.toNightlife ?? automaticMode(eveningOrigin,night))).url,
+    })),
   };
 }
 function changeDinner(s, id) {
@@ -115,14 +133,24 @@ export function updateState(previous, input) {
   } else {
     if (!s.started) throw new InputError('Start your trip briefing first.');
     switch (input.action) {
+      case 'previewNightlife': {
+        const option = choiceById(catalog,'nightlife',input.id);
+        if (!option || option.available === false) throw new InputError('This nightlife option is unavailable.');
+        if (option.id !== 'afterhours' || !s.profile.discretion || s.alert === 'shown') return s;
+        s.alert = 'shown';
+        break;
+      }
       case 'choose': {
-        if (input.slot !== 'event' && !slots.includes(input.slot)) throw new InputError('Unknown itinerary segment.');
-        const o = choiceById(catalog,input.slot,input.id);
+        const evening = eveningSlots.includes(input.slot);
+        if (input.slot !== 'event' && !slots.includes(input.slot) && !evening) throw new InputError('Unknown itinerary segment.');
+        const o = evening ? eveningPlan(s)[input.slot]?.options.find(option => option.id === input.id)
+          : choiceById(catalog,input.slot,input.id);
         if (!o || o.available === false) throw new InputError('This option is unavailable.');
         if (input.slot === 'dinner') changeDinner(s, o.id);
         else s.choices[input.slot] = o.id;
         confirm(s,input.slot);
-        if (input.slot === 'nightlife' && s.profile.discretion && s.alert === 'idle') s.alert = 'shown';
+        // Direct confirmation also works for clients that never preview the tile.
+        if (input.slot === 'nightlife' && o.id === 'afterhours' && s.profile.discretion && s.alert === 'idle') s.alert = 'shown';
         break;
       }
       case 'skip': {
@@ -195,17 +223,91 @@ function route(a,b,mode) {
   const duration = distance < 0.06 ? 0 : Math.ceil(walk ? distance*13 : bus ? 9+distance*4.2 : 5+distance*2.8);
   const url = new URL('https://www.google.com/maps/dir/');
   url.search = new URLSearchParams({api:'1',origin:a.address,destination:b.address,travelmode:mode}).toString();
-  return { minutes:duration, steps:Math.round(walkingKm*1350), url:url.href, mode };
+  return { minutes:duration, steps:Math.round(walkingKm*1350), distanceKm:Math.round(distance*100)/100, url:url.href, mode };
+}
+function travelMode(id) {
+  if (id === 'walk') return 'walking';
+  return id === 'muni' ? 'transit' : 'driving';
+}
+function automaticMode(from,to) { return km(from,to)>1.6 ? 'muni' : 'walk'; }
+function pickupAllowance(id) { return id === 'waymo' ? 10 : 15; }
+function modeRoute(from,to,id) {
+  const path = route(from,to,travelMode(id));
+  if (path.mode === 'driving' && path.minutes) path.minutes += pickupAllowance(id)-5;
+  return path;
+}
+
+function walkingOption(from,to) {
+  const path = route(from,to,'walking');
+  return {
+    ...path,id:'walk',title:'Walk',price:0,origin:from.address,destination:to.address,
+    originName:from.title,destinationName:to.title,address:from.address+' → '+to.address,
+    wait:'No pickup wait', waitNote:'Leave when you are ready.', payment:'Free.',
+    notes:`Walk from ${from.title} to ${to.title}. Allow about ${path.minutes} minutes over an estimated ${path.distanceKm.toFixed(1)} km. Check Maps for crossings and accessible paths.`,
+    sources:[{label:'Google Maps · walking directions',url:path.url}]
+  };
+}
+
+function eveningLeg(slot,from,to,departure,lastFare,chosenId) {
+  const walk = walkingOption(from,to);
+  const options = [walk,...rideModes.filter(mode=>mode.available!==false).map(provider=>{
+    const muni = provider.id === 'muni';
+    const path = modeRoute(from,to,provider.id);
+    const pickup = pickupAllowance(provider.id);
+    const transfer = departure-lastFare <= 120;
+    // These are comparison allowances for a short city ride, never provider fare quotes.
+    const base = provider.id === 'waymo' ? 8 : 6;
+    const perKm = provider.id === 'waymo' ? 2.60 : 2.25;
+    const price = muni ? (transfer ? 0 : provider.price) : Math.round((base+path.distanceKm*perKm)*100)/100;
+    const name = muni ? 'Muni' : provider.title;
+    const note = muni ? `The estimate assumes Muni service${transfer ? ' within the prior fare’s 120-minute transfer window' : ''}. Choose a Muni itinerary in Maps; regional services can have a separate fare.`
+      : `For this demo allow $${base} plus $${perKm.toFixed(2)} per km. Check with the provider for actual pickup availability and fare.`;
+    const sources = provider.sources.filter(source => !source.url.includes('maps') && (!muni || source.url.includes('/fares')));
+    return {
+      ...path,id:provider.id,title:name,price,origin:from.address,destination:to.address,
+      originName:from.title,destinationName:to.title,address:walk.address,
+      wait:muni ? 'Allow 9 min for boarding' : `Allow ${pickup} min for pickup`,
+      waitNote:'Planning allowance for this evening leg. Check the current departure or pickup estimate.',
+      payment:provider.payment,
+      notes:`${name} from ${from.title} to ${to.title}. About ${path.distanceKm.toFixed(1)} km. ${note}`,
+      sources:[...sources,{label:'Google Maps · directions for this leg',url:path.url}]
+    };
+  })].map(option=>{
+    const arrival = departure+option.minutes;
+    // The Totem host lists a 10 PM close. A long travel choice can miss the event.
+    let timingNote = to.id === 'game-night' && arrival >= 22*60
+      ? 'Arrival is at or after Totem’s 10 PM closing time. Choose an earlier route or another event.'
+      : undefined;
+    if (to.id === 'dinner-lataqueria' && arrival >= 20*60+15) {
+      timingNote = arrival >= 20*60+45
+        ? 'Arrival is at or after both published Friday closing times for La Taqueria. Pick a faster route or another dinner venue.'
+        : 'Arrival falls between La Taqueria’s conflicting 8:15 and 8:45 PM closing times. Call the restaurant before leaving.';
+    }
+    return {...option,slot,time:clock(departure),arrivesAt:clock(arrival),calories:Math.round(option.steps*0.04),
+      ...(timingNote && {timingNote,notes:option.notes+' '+timingNote})};
+  });
+  const preferred = chosenId ?? automaticMode(from,to);
+  return {from,options,current:options.find(o=>o.id===preferred) ?? options[0]};
+}
+
+function eveningPlan(s) {
+  const pm = s.started ? selected(s,'dinner') : catalog.dinner.find(o=>o.available!==false);
+  const night = s.started ? selected(s,'nightlife') : catalog.nightlife.find(o=>o.available!==false);
+  const programEnds = minutes(event.ends);
+  const toDinner = pm ? eveningLeg('toDinner',loft,pm,programEnds,-Infinity,s.choices.toDinner) : null;
+  const depart = pm ? programEnds+toDinner.current.minutes+(pm.minutes ?? 60) : programEnds;
+  const lastFare = toDinner?.current.id === 'muni' ? programEnds : -Infinity;
+  const toNightlife = eveningLeg('toNightlife',pm ?? loft,night,depart,lastFare,s.choices.toNightlife);
+  return {toDinner,toNightlife};
 }
 export function trackerFor(s) {
-  if (!s.started) return {lines:[],cost:0,spent:0,steps:0,calories:0};
+  if (!s.started) return {lines:[],legs:[],cost:0,spent:0,steps:0,calories:0};
   const [transport,am,noon,pm,night] = slots.map(slot => selected(s,slot));
-  const transportMode = transport.id === 'muni' ? 'transit' : 'driving';
+  const transportMode = travelMode(transport.id);
   const lines = [];
   let steps = 0, fares = 0;
   const add = (at,title,url) => lines.push({ time:clock(at), title, url });
-  const leg = (a,b,at,mode,label) => {
-    const travel = route(a,b,mode);
+  const leg = (a,b,at,mode,label,travel=route(a,b,mode)) => {
     if (travel.minutes) {
       add(at,`${label} · ~${travel.minutes} min`,travel.url);
       steps += travel.steps;
@@ -215,20 +317,21 @@ export function trackerFor(s) {
   const checkIn = 9*60+15;
   const firstStop = am ?? loft;
   const firstTime = am ? minutes(am.time) : checkIn;
-  const firstTravel = route(home,firstStop,transportMode);
+  const firstTravel = modeRoute(home,firstStop,transport.id);
   const firstMode = am && transportMode === 'transit' && km(am,loft)>1.6 ? 'Muni' : transport.title;
   let arrival = leg(home,firstStop,firstTime-firstTravel.minutes,transportMode,
-    `${firstMode} to ${am?.title ?? 'AWS Builder Loft'}`);
+    `${firstMode} to ${am?.title ?? 'AWS Builder Loft'}`,firstTravel);
   if (am) {
     add(firstTime,am.title,am.url);
     const onward = km(am,loft)>1.6 ? transportMode : 'walking';
-    const secondLeg = route(am,loft,onward);
+    const secondLeg = onward === 'walking' ? route(am,loft,onward) : modeRoute(am,loft,transport.id);
     if (onward === 'driving' && secondLeg.minutes > 0) fares += transport.price;
     const leave = Math.max(firstTime + (am.minutes ?? 20), checkIn-secondLeg.minutes-(onward === 'transit' ? 15 : 0));
     const onwardsLabel = onward === 'transit' ? 'Muni' : transport.title;
-    arrival = leg(am,loft,leave,onward,onward === 'walking' ? 'Walk to AWS Builder Loft' : `${onwardsLabel} to AWS Builder Loft`);
+    arrival = leg(am,loft,leave,onward,onward === 'walking' ? 'Walk to AWS Builder Loft' : `${onwardsLabel} to AWS Builder Loft`,secondLeg);
   }
-  add(Math.max(arrival,555),'Arrive at the Loft · courtyard check-in');
+  const late = arrival > minutes(event.starts);
+  add(Math.max(arrival,555),late ? 'Arrive at the Loft · after opening remarks begin' : 'Arrive at the Loft · courtyard check-in');
   add(570,'Hackathon doors & opening remarks');
   add(660,'Kickoff & building time');
   if (noon) {
@@ -237,27 +340,26 @@ export function trackerFor(s) {
     leg(noon,loft,at+(noon.minutes ?? 30),'walking','Return to the hackathon');
   }
   add(990,'Project submission'); add(1020,'Finalist demos & judging'); add(1140,'Awards & closing'); add(1170,'Hackathon ends');
-  const nightLeg = (from,to,time) => {
-    const mode = km(from,to)>1.6 ? 'transit' : 'walking';
-    if (mode === 'transit') {
-      // Charge a second fare only when the last transfer has expired.
-      if (time-lastPaid > 120) { fares += catalog.transit.find(t => t.id==='muni').price; lastPaid = time; }
+  const plan = eveningPlan(s);
+  const legs = [plan.toDinner,plan.toNightlife].filter(Boolean).map(part => part.current);
+  for (const trip of legs) {
+    lines.push({time:trip.time,title:`${trip.title} to ${trip.destinationName} · ~${trip.minutes} min`,url:trip.url});
+    steps += trip.steps;
+    fares += trip.price;
+    if (trip.slot === 'toDinner') {
+      lines.push({time:trip.arrivesAt,title:pm.title,url:trip.url,slot:'dinner'});
+      if (trip.timingNote) lines.push({time:trip.arrivesAt,title:trip.timingNote});
+    } else {
+      const activity = trip.timingNote ? night.title+' · arrives after closing' : night.title;
+      lines.push({time:clock(Math.max(minutes(trip.arrivesAt),minutes(night.time))),title:activity,
+        url:night.sources[0]?.url,slot:'nightlife'});
     }
-    return leg(from,to,time,mode,`${mode === 'transit' ? 'Muni' : 'Walk'} to ${to.title}`);
-  };
-  let lastPaid = -Infinity;
-  let leaveForNightlife = 1170;
-  if (pm) {
-    const dinnerArrival = nightLeg(loft,pm,1170);
-    lines.push({time:clock(dinnerArrival),title:pm.title,url:pm.url,slot:'dinner'});
-    leaveForNightlife = dinnerArrival+(pm.minutes ?? 60);
   }
-  const nightArrival = nightLeg(pm ?? loft,night,leaveForNightlife);
-  add(Math.max(nightArrival,minutes(night.time)),night.title,night.sources[0]?.url);
+  lines.sort((a,b)=>a.time.localeCompare(b.time));
   const itemTotal = [transport,am,noon,pm,night].reduce((sum,item) => sum+(item?.price ?? 0),0);
   const cost = Math.round((fares+itemTotal)*100)/100;
   const spent = Math.round((s.expenses ?? []).reduce((sum,e) => sum+e.amount,0)*100)/100;
-  return {lines,cost,spent,steps,calories:Math.round(steps*0.04)};
+  return {lines,legs,cost,spent,steps,calories:Math.round(steps*0.04)};
 }
 
 export function dinnerTextFor(state,tracker) {
@@ -284,16 +386,21 @@ export function itineraryBriefing(state, tracker) {
   const evening = selected(state,'dinner');
   const night = selected(state,'nightlife');
   const transit = selected(state,'transit');
+  const arrival = tracker.lines.find(line=>line.title.startsWith('Arrive at the Loft'));
+  const late = arrival && minutes(arrival.time)>minutes(event.starts);
+  const morningMode = transit.id === 'walk' ? 'on foot' : 'by '+(transit.id === 'muni' ? 'Muni' : transit.title);
   const opening = state.profile.trip.includes('First visit') ? 'Welcome to San Francisco. ' : '';
   return [
-    opening+'Your Personal Agents Hackathon opens at 9:30 AM on the second floor of 525 Market Street. Use the courtyard entrance and bring your physical photo ID.',
+    opening+'Your Personal Agents Hackathon opens at 9:30 AM on the second floor of 525 Market Street. Use the courtyard entrance and bring your physical photo ID.'+
+      (late ? ` Your route reaches check-in at ${arrival.time}, after the opening begins.` : ''),
     morning
-      ? `For your 8 AM coffee stop, leave the Richmond pickup around ${tracker.lines[0].time} by ${transit.id === 'muni' ? 'Muni' : transit.title}. I’ve penciled in ${morning.title}. ${morning.diet}`
-      : `Leave the Richmond pickup around ${tracker.lines[0].time} and head directly to the Loft by ${transit.title}.`,
+      ? `For your 8 AM coffee stop, leave the Richmond pickup around ${tracker.lines[0].time} ${morningMode}. I’ve penciled in ${morning.title}. ${morning.diet}`
+      : `Leave the Richmond pickup around ${tracker.lines[0].time} and head directly to the Loft ${morningMode}.`,
     ...(noon ? [`The organizer provides lunch at 1:30 PM and hasn’t published dietary accommodations. ${noon.id === 'lunch-host' ? 'You selected the hosted meal. Ask the caterer before eating.' : 'Your backup is '+noon.title+'. '+noon.diet}`] : []),
     evening
       ? `The hackathon ends at 7:30 PM. Your dinner pick is ${evening.title}. ${evening.reservable ? 'You can draft a reservation and invite Gio or Andrew after confirming dinner.' : 'Check availability before leaving the Loft.'} After dinner, your plan takes you to ${night.title}.`
       : `After the 7:30 PM close, head from the Loft to ${night.title}.`,
+    ...tracker.legs.filter(leg=>leg.timingNote).map(leg=>leg.timingNote),
     `Friday’s selected stops and travel come to about $${tracker.cost.toFixed(2)} against your $${state.profile.budget} budget. The walking legs add up to about ${tracker.steps.toLocaleString('en-US')} steps toward your ${state.profile.walkingGoal.toLocaleString('en-US')}-step goal.`,
   ];
 }

@@ -137,6 +137,23 @@ test('removing and restoring lunch updates only the visitor’s indexed plan', a
   }
 });
 
+test('the private index remembers confirmed evening modes without route endpoints', async () => {
+  const {worker,db} = harness();
+  try {
+    const state = visitor(100);
+    state.choices.toDinner = 'walk';
+    state.choices.toNightlife = 'waymo';
+    state.confirmedSlots = ['toDinner','toNightlife'];
+    state.privateRoute = {origin:'Private departure address',destination:'Private arrival address'};
+    worker.queueVisitor('A',state);
+    await worker.flush();
+    const snapshot = (await worker.recall('A','travel','private')).results.join(' ');
+    assert.match(snapshot,/Travel to dinner: walking/);
+    assert.match(snapshot,/Travel to nightlife: Waymo/);
+    assert.doesNotMatch(snapshot,/Private departure|Private arrival/);
+  } finally { await worker.stop(); db.close(); }
+});
+
 test('rate limits survive worker replacement and a fresh edit supersedes an in-flight revision', async () => {
   const {worker,db,control,makeWorker,datasets} = harness();
   control.fail = true;

@@ -1,5 +1,9 @@
 # Atmos itinerary demo
 
+Atmos is a city companion for travelers. The platform idea pairs shared city memory with private traveler memory. Background agents would keep track of event schedules, restaurant openings and closures, menus, prices and availability. A traveler can give Atmos a plain-language briefing, then use those facts alongside their dietary needs, schedule, spending limit, walking goal and social plans to choose a day in the city.
+
+This local San Francisco demo follows a first-time visitor from Singapore attending a hackathon. The map, menu photos, transport comparisons, trip tracker and simulated dinner invitations make each decision visible. Selected event, menu and weather sources can refresh while the test server runs. Social posts, messages and bookings are simulated, and pickup and walking times are estimates.
+
 From the repository root, run the following with Node.js 22.18 or later and open [the local dashboard](http://127.0.0.1:4317). The server uses Node’s built-in SQLite driver and requires no package installation.
 
 ```sh
@@ -8,11 +12,12 @@ node Atmos/Demo/server.mjs
 
 ## Replay the trip
 
-1. The map opens at the simulated Richmond District pickup, with a clock in San Francisco time. Tap a ride icon to see the boarding or pickup wait, direct downtown journey estimate, fare and payment method. **Trip briefing** lets you edit or dictate the sample request.
+1. The map opens at the simulated Richmond District pickup, with a clock in San Francisco time. Tap a transport icon to see walking distance or pickup wait, travel time to the next stop, and estimated fare. **Trip briefing** lets you edit or dictate the sample request.
 2. Tap a named option in breakfast, hackathon, lunch, dinner or nightlife. Each opens its menu or venue gallery inline. The green check adds that choice to the route. The red × returns to the options and preserves the saved route. After confirming, use the gray return arrow to compare alternatives. **Menu & dietary details** includes sources, directions and an optional **Skip this meal** for confirmed meals.
 3. Under **People nearby**, select **Invite both to dinner**. Review the recipients, venue, address and time, then select **Approve to send**. A simulated iMessage conversation opens beside the route. The local history keeps the approved wording if dinner changes later. Use **View messages** to reopen it.
-4. Select a nightlife option or use **Show demo notification** in **Trip tools** to replay the fictional team post. The demo matches the transcribed restaurant and street signs in the generated photo to a fictional venue. Accept the alternative to update dinner and the evening route.
-5. Use **Trip tools** to record expenses, check sources or search memory. **Reset demo** clears this browser’s test itinerary and message history.
+4. After lunch the traveler returns to the hackathon. **Travel to dinner** starts at the Loft after closing. **Travel to nightlife** starts at the selected restaurant, or at the Loft if dinner is skipped. Choose **Walk** or a ride on either leg, then confirm to update directions, arrival times, costs and steps.
+5. Tap **Tech Afterhours SF** with the sample briefing to open the boss’s fictional X post. **Keep my plan** returns to the event preview. **Reroute my evening** changes dinner and updates the travel legs. **Trip tools** also includes a manual replay.
+6. Use **Trip tools** to record expenses, check sources or search memory. **Reset demo** clears this browser’s test itinerary and message history.
 
 The Friday replay is dated November 20, 2026. The clock shows current San Francisco time. The event, menus and nightlife listings include sources. The home location, social posts and group messages are fictional. Transit times and rideshare prices are planning estimates. Walking estimates use 1,350 steps per km and 0.04 kcal per step. The Friday budget includes selected stops and modeled inter-stop fares. A return journey, optional drinks and purchases are outside that projection.
 
@@ -38,7 +43,7 @@ For an optional Cognee integration test, set **both** `ATMOS_TEST_COGNEE_URL` an
 Run the behavioral tests from the repository root.
 
 ```sh
-node --test Atmos/Demo/demo.test.mjs Atmos/Demo/memory.test.mjs Atmos/Demo/observer.test.mjs
+node --test "Atmos/Demo/*.test.mjs"
 ```
 
 Each menu photo opens its venue or manufacturer attribution. The ride details link to the source of the selected service icon. The local map uses OpenStreetMap data, OpenFreeMap and OpenMapTiles. Its downtown 38R segment follows the SFMTA route geometry. Dotted segments illustrate connections between stops. [OpenStreetMap attribution](https://www.openstreetmap.org/copyright) · [SFMTA route data](https://data.sf.gov/d/9exe-acju)

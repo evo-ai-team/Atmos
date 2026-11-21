@@ -1,5 +1,7 @@
 import { alertView, briefingView, dashboard, detailsFor, esc, menuPhotoFor, messageApproval, profileView, routeSection, routeSlots, updateClock } from "./views.js";
 
+import { isTravelSlot, routeFor, routeMap } from "./route-map.js";
+
 const $ = selector => document.querySelector(selector);
 const content = $("#dashboard");
 const brief = $("#brief-dialog");
@@ -15,7 +17,8 @@ let sectionEdits = Object.fromEntries(routeSlots.map(slot=>[slot,null]));
 let noticeTimer;
 let recognition;
 const detailDialog = $("#detail-dialog");
-let replayTimer;
+let mapSlot = isTravelSlot(history.state?.mapSlot) ? history.state.mapSlot : "transit";
+let replayFrame;
 let activeReading;
 let threadOpen = false;
 let sendingMessageId;
@@ -92,7 +95,32 @@ function openDetail(view) {
   $("#detail-title").textContent = view.title;
   $("#detail-content").innerHTML = view.body;
   show(detailDialog);
+  if (detailDialog.querySelector("[data-route-slot]")) drawMaps(detailDialog);
 }
+
+function focusMap(slot) {
+  mapSlot=slot;
+  history.replaceState({...history.state,mapSlot},"");
+}
+function currentMapRoute(slot=mapSlot) {
+  return routeFor(data,slot,sectionEdits[slot]);
+}
+function drawMaps(root=content) {
+  for (const element of root.querySelectorAll("[data-route-slot]")) {
+    const slot=element.dataset.routeSlot;
+    const {width,height}=element.getBoundingClientRect();
+    if (!width || !height) continue;
+    element.innerHTML=routeMap(currentMapRoute(slot==="active" ? mapSlot : slot),width,height,element.classList.contains("basemap"));
+  }
+}
+let resizeFrame;
+window.addEventListener("resize",()=>{
+  cancelAnimationFrame(resizeFrame);
+  resizeFrame=requestAnimationFrame(()=>{
+    drawMaps();
+    if (detailDialog.open) drawMaps(detailDialog);
+  });
+});
 function openedDetails() {
   return new Set([...content.querySelectorAll("details[open]")].map(el=>el.querySelector("summary")?.textContent));
 }
@@ -131,7 +159,7 @@ async function showPlanning(pendingTrip) {
 }
 function render(newData, preserve = true) {
   stopReading();
-  clearTimeout(replayTimer);
+  cancelAnimationFrame(replayFrame);
   const prior = preserve ? openedDetails() : new Set();
   data = newData;
   if (!data.state.started) {
@@ -142,6 +170,7 @@ function render(newData, preserve = true) {
   const revealing = Boolean($("#planning-status"));
   $(".skip").hidden = false;
   content.innerHTML = dashboard(data,sectionEdits,{open:threadOpen,sendingId:sendingMessageId});
+  drawMaps();
   content.querySelectorAll("details").forEach(el=>{
     if(prior.has(el.querySelector("summary")?.textContent)) el.open=true;
   });
@@ -167,6 +196,7 @@ function editSection(slot,id) {
   const oldId = sectionEdits[slot] || data.state.choices[slot];
   sectionEdits[slot] = id;
   sectionElement(slot).outerHTML = routeSection(data,slot,id);
+  if (isTravelSlot(slot)) { focusMap(slot); drawMaps(); }
   const section = sectionElement(slot);
   const focus = id ? section.querySelector('[data-action="choose"]') :
     [...section.querySelectorAll("[data-preview]")].find(button=>button.dataset.preview===oldId) || section.querySelector("[data-preview]");
@@ -251,11 +281,24 @@ async function act(payload) {
     if(payload.action==="start") {
       if(brief.open) brief.close();
     }
-    if (payload.action==="choose" || payload.action==="skip") delete sectionEdits[payload.slot];
-    if (payload.action==="reroute") delete sectionEdits.dinner;
+    if (payload.action==="choose" || payload.action==="skip") {
+      delete sectionEdits[payload.slot];
+      if (isTravelSlot(payload.slot)) focusMap(payload.slot);
+      else if (payload.slot==="breakfast") focusMap("transit");
+      else if (payload.slot==="dinner") focusMap(payload.action==="skip" ? "toNightlife" : "toDinner");
+      else if (payload.slot==="nightlife") focusMap("toNightlife");
+    }
+    if (payload.action==="reroute") {
+      delete sectionEdits.dinner;
+      focusMap("toDinner");
+    }
+    if (payload.action==="reset") focusMap("transit");
     if(payload.action==="reset") {sectionEdits={}; threadOpen=false; clearTimeout(deliveryTimer); sendingMessageId=undefined;}
     render(result,payload.action!=="reset");
-    if(payload.action==="choose" && !interruption.open) sectionElement(payload.slot)?.querySelector("[data-options]")?.focus({preventScroll:true});
+    if(payload.action==="choose" && !interruption.open) {
+      sectionElement(payload.slot)?.querySelector("[data-options]")?.focus({preventScroll:true});
+      if (payload.slot==="lunch") openDetail(detailsFor(data,"lunchPosts"));
+    }
     if(["invite","reserve"].includes(payload.action)) showDraft(payload.action,payload.id);
     if(payload.action==="sendDinnerText") focusConversation();
     if(payload.action==="reroute") {
@@ -371,39 +414,31 @@ async function recallMemory(form) {
   finally {button.disabled=false;}
 }
 function replayCommute(button) {
-  clearTimeout(replayTimer);
-  const {catalog,state}=data;
-  const breakfast=catalog.breakfast.find(option=>option.id===state.choices.breakfast) || catalog.breakfast[0];
-  const stops=[
-    {title:"Clement St & 14th Ave · public pickup",coords:catalog.originCoords},
-    ...(!state.skippedSlots?.includes("breakfast") ? [breakfast] : []),
-    {title:"AWS Builder Loft · 525 Market St",coords:catalog.event.coords}
-  ];
-  const box=$("#commute-replay");
-  if(stops.some(stop=>!stop?.coords?.every(Number.isFinite))) {
-    box.textContent="Coordinates are unavailable for this route.";
-    return;
-  }
-  const longitudeScale = Math.cos(catalog.originCoords[0]*Math.PI/180);
-  const projected = stops.map(stop=>[stop.coords[1]*longitudeScale,stop.coords[0]]);
-  const xs=projected.map(p=>p[0]), ys=projected.map(p=>p[1]);
-  const xMin=Math.min(...xs),yMin=Math.min(...ys);
-  const xRange=Math.max(...xs)-xMin,yRange=Math.max(...ys)-yMin;
-  const scale=Math.min(280/(xRange || 1e-8),72/(yRange || 1e-8));
-  const points=projected.map(([x,y])=>[20+(280-scale*xRange)/2+(x-xMin)*scale,16+(72-scale*yRange)/2+(yMin+yRange-y)*scale]);
+  cancelAnimationFrame(replayFrame);
+  const route=currentMapRoute();
+  const status=$("#commute-replay");
+  const duration=window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 3600;
+  const start=performance.now();
   button.disabled=true;
-  function showStop(index) {
-    const stop=stops[index], [mx,my]=points[index];
-    const line=points.map(p=>p.join(",")).join(" ");
-    box.innerHTML=`<svg class="commute-map" viewBox="0 0 320 104" aria-hidden="true">
-      <polyline points="${line}" fill="none" stroke="#71879b" stroke-width="2" stroke-dasharray="4 3"/>
-      ${points.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#fff" stroke="#344b6b" stroke-width="2"/>`).join("")}
-      <circle cx="${mx}" cy="${my}" r="10" fill="#ae4b2e" opacity=".2"/><circle cx="${mx}" cy="${my}" r="5" fill="#aa4029"/>
-      </svg><p><strong>Simulated GPS · ${index+1} of ${stops.length}</strong><br>${esc(stop.title)}<br><span class="subtle">${stop.coords.map(n=>n.toFixed(5)).join(", ")}</span></p>`;
-    if(index < stops.length-1) replayTimer = setTimeout(()=>showStop(index+1),1800);
-    else button.disabled=false;
+  status.textContent="Simulated GPS · "+route.stops.map(s=>s.label).join(" → ");
+  function step(now) {
+    if (!detailDialog.open || !button.isConnected) return;
+    const path=detailDialog.querySelector("[data-replay-path]");
+    const marker=detailDialog.querySelector("[data-gps-marker]");
+    if (!path || !marker) { button.disabled=false; return; }
+    const progress=duration ? Math.min(1,(now-start)/duration) : 1;
+    const at=path.getPointAtLength(path.getTotalLength()*progress);
+    marker.setAttribute("cx",at.x);
+    marker.setAttribute("cy",at.y);
+    marker.setAttribute("visibility","visible");
+    if (progress<1) replayFrame=requestAnimationFrame(step);
+    else {
+      const stop=route.stops.at(-1);
+      status.textContent="Simulated GPS · Arrived at "+stop.label+" · "+stop.coords.map(n=>n.toFixed(5)).join(", ");
+      button.disabled=false;
+    }
   }
-  showStop(0);
+  replayFrame=requestAnimationFrame(step);
 }
 function focusConversation() {
   const panel = $("#group-thread");
@@ -416,7 +451,7 @@ function focusConversation() {
   else messages.scrollTop = messages.scrollHeight;
 }
 setInterval(updateClock, 15000);
-detailDialog.addEventListener("close",()=>clearTimeout(replayTimer));
+detailDialog.addEventListener("close",()=>cancelAnimationFrame(replayFrame));
 voiceButton.addEventListener("click",()=>beginVoice(transcript,voiceButton,voiceStatus));
 brief.addEventListener("close",()=>{recognition?.abort(); stopReading();});
 $("#brief-form").addEventListener("submit",event=>{
@@ -484,7 +519,8 @@ document.addEventListener("click",event=>{
     return;
   }
   if(button.hasAttribute("data-detail")) {
-    openDetail(detailsFor(data,button.dataset.detail,button.dataset.person || button.dataset.itemId));
+    const kind=button.dataset.detail;
+    openDetail(detailsFor(data,kind,button.dataset.person || button.dataset.itemId,kind==="map" ? currentMapRoute() : undefined));
     return;
   }
   if(button.hasAttribute("data-photo-slot")) {

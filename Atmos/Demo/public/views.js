@@ -1,6 +1,5 @@
 import { previewPhotos, optionPhotos } from './menu-photos.js';
 import { transportArt } from './transport-art.js';
-import { routeMap } from './route-map.js';
 
 const iconPaths = {
   locate:'<path d="m21 3-6.8 18-3.1-8.1L3 9.8 21 3Z"/>',
@@ -269,7 +268,7 @@ function rideDetails(item) {
 }
 function stopBody(slot,item,confirmed) {
   const detail = isTravel(slot) ? (item.id==="walk" ? "Walk details" : "Ride details") : mealSlots.includes(slot) ? "Menu & dietary details" : "Venue details";
-  return `${isTravel(slot) ? rideDetails(item) : gallery(slot,item)}
+  return `${isTravel(slot) ? rideDetails(item) + `<div class="leg-map" data-route-slot="${slot}"></div>` : gallery(slot,item)}
     <div class="stop-links">
       <button class="sheet-link" data-detail="${slot}" data-item-id="${esc(item.id)}">${detail} ${icon("chevron")}</button>
       ${isTravel(slot) ? link(item.url,"Directions "+icon("external"),"sheet-link") : ""}
@@ -307,7 +306,7 @@ export function routeSection(data,slot,edit) {
 }
 function locationMap(data) {
   return `<section class="map-stage" aria-labelledby="location-title">
-    ${routeMap(data)}
+    <div class="basemap" data-route-slot="active"></div>
     <div class="map-inner">
       <div class="location glass"><div class="location-context"><i class="gps-dot"></i>Current location <span>· Demo GPS</span></div>
         <time id="local-clock"><b></b><small></small></time>
@@ -402,8 +401,28 @@ export function dashboard(data,edits = {},thread = {}) {
       <aside class="sidebar">${nearby(data)}${conversation(data.state,thread)}${trackerCard(data)}${toolsPanel(data)}</aside>
     </div>`;
 }
-export function detailsFor(data,kind,id) {
+function friendPost(person) {
+  return `${photo(person,"post-photo")}<p>${esc(person.caption)}</p>
+    <p class="post-place">${icon("pin")}${esc(person.place)}</p>`;
+}
+
+export function detailsFor(data,kind,id,mapRoute) {
   const {catalog,state} = data;
+  if (kind==="lunchPosts") {
+    return {title:"Friends in San Francisco",body:`<div class="lunch-posts">
+      ${catalog.contacts.map(person=>`<article class="friend-post">
+        <header><span class="post-channel">${esc(person.platform)}</span><h3>${esc(person.name)}</h3></header>
+        ${friendPost(person)}</article>`).join("")}</div>
+      <div class="dialog-actions"><small class="subtle">Simulated posts</small><button type="button" class="btn primary" data-close="detail-dialog">Back to my trip</button></div>`};
+  }
+  if (kind==="map") {
+    const r=mapRoute;
+    return {title:r.title,body:`<p>${r.stops.map(s=>esc(s.label)).join(" → ")}</p>
+      <div class="leg-map replay-map" data-route-slot="active"></div>
+      <button type="button" class="btn secondary" data-commute>${icon("route")}${r.slot==="transit" ? "Replay commute" : "Replay route"}</button>
+      <p id="commute-replay" role="status"></p>${info(r.option)}
+      <p class="photo-credit">Demo routes · ${link("https://data.sf.gov/d/3psu-pn9h","SF Public Works streets")} · ${link("https://data.sf.gov/d/9exe-acju","SFMTA alignments")} · ${link("https://www.openstreetmap.org/copyright","OpenStreetMap contributors")} · ${link("https://openfreemap.org/","OpenFreeMap")} · ${link("https://openmaptiles.org/","OpenMapTiles")}</p>`};
+  }
   if (isEveningLeg(kind)) {
     const leg = slotOptions(data,kind)?.find(o=>o.id===id);
     if (!leg) return;
@@ -413,20 +432,18 @@ export function detailsFor(data,kind,id) {
       <p>${esc(leg.notes)}</p>${stats(leg)}${detailList(leg)}${sources(leg)}
       ${link(leg.url,"Open directions "+icon("external"),"btn secondary")}`};
   }
-  if (kind==="transit" || kind==="map") {
+  if (kind==="transit") {
     const opt = catalog.transit.find(o=>o.id===id) || activeOption(data,"transit");
     const art = transportArt[opt.id];
-    return { title:kind==="map" ? "Morning route" : opt.id==="walk" ? "Your walk" : "Your ride", body:`
+    return { title:opt.id==="walk" ? "Your walk" : "Your ride", body:`
       <p>${esc(catalog.origin)}</p>
-      ${info(opt)}${art?.source ? link(art.source,"Service icon source","photo-credit") : ""}
-      ${kind==="map" ? `<button class="btn secondary" data-commute>${icon("route")}Replay commute</button><div id="commute-replay" role="status"></div>` : ""}
-      <p class="photo-credit">Map data · ${link("https://www.openstreetmap.org/copyright","OpenStreetMap contributors")} · ${link("https://openfreemap.org/","OpenFreeMap")} · ${link("https://openmaptiles.org/","OpenMapTiles")} · ${link("https://data.sf.gov/d/9exe-acju","SFMTA routes")}</p>` };
+      ${info(opt)}${art?.source ? link(art.source,"Service icon source","photo-credit") : ""}` };
   }
   if (kind==="person") {
     const c = catalog.contacts.find(p=>p.id===id);
     if (!c) return;
     return {title:c.name,body:`<p class="subtle">${esc(c.platform)} · fictional post</p>
-      ${photo(c,"post-photo")}<p>${esc(c.caption)}</p><p class="address">${icon("pin")}${esc(c.place)}</p>
+      ${friendPost(c)}
       ${!state.confirmedSlots.includes("dinner") ? '<button class="btn primary" data-pick-dinner>Choose dinner to invite</button>' : `<button class="btn primary" data-group-invite>Invite Gio &amp; Andrew</button>
       <button class="btn secondary" type="button" data-action="invite" data-id="${esc(c.id)}">
       ${state.invitations.includes(c.id)?"Review individual draft":"Draft individual invite"}</button>`}`};

@@ -45,11 +45,11 @@ Allow about five minutes on screen after setup. Drive the app through its visibl
 
 Under **Breakfast**, preview **Boichik Bagels · Battery Street** at **22 Battery St**. Pause on the bagel and beverage photos. Open **Menu & dietary details** to show the evidence behind the recommendation, then close the details and click the green check. Choose Battery Street first so the comparison uses that destination.
 
-Scroll up to **Transportation**. Preview **Waymo** to show the estimated pickup wait, trip duration and fare. Click the red × to return to the choices. Preview **Muni** and confirm with the green check. Point to the **38R Geary Rapid** and the **8:00 AM** breakfast on the tracker. The gray return arrow on a confirmed card lets the traveler choose again.
+Scroll up to **Transportation**. Preview **Waymo** to show its example driving route, pickup wait and fare. Click the red × to restore the saved path. Preview **Muni** and watch the path switch to the **38R Geary Rapid** with walking connections. Confirm with the green check. The gray return arrow lets the traveler compare another mode.
 
 ### 3. Anchor the day at the hackathon and pick lunch
 
-Open **Hackathon → Personal Agents Hackathon**. Show the building photo and the organizer-backed venue details for **525 Market St**, second floor, with a **9:30 AM** start. Confirm the event. Under **Lunch**, show the alternatives, open **MIXT**, show its menu and dietary sources, and confirm. The tracker places lunch in the **1:30 PM** break and returns the traveler to the Loft for the afternoon.
+Open **Hackathon → Personal Agents Hackathon** and confirm the event. Under **Lunch**, open **MIXT**, show its menu and dietary sources, and confirm. **Friends in San Francisco** opens automatically with Gio’s Instagram story from the Golden Gate Bridge and Andrew’s X post from the SF Systems Forum. Select **Back to my trip** to return to the confirmed lunch.
 
 ### 4. Choose dinner and make the walking goal visible
 
@@ -59,7 +59,7 @@ Under **Dinner**, select **Oren’s Hummus**, **71 3rd St**, and confirm. In **T
 
 ### 5. Approve the invitation and show exactly what was sent
 
-In **People nearby**, open **Gio L.** to show the demo Instagram story at the Golden Gate Bridge. Close it and open **Andrew S.** to show the demo X post from an SF convention. Close the post. Choose **Invite both to dinner**. Pause with the two recipients, Oren’s address and the computed dinner time visible.
+In **People nearby**, choose **Invite both to dinner**. Pause with the two recipients, Oren’s address and the computed dinner time visible. Each person’s post can also be reopened here.
 
 Click **Approve to send**. The right-hand iMessage-style thread opens for **Gio L. & Andrew S.** Pause on the outgoing invitation and place link as its status becomes **Delivered**. This is an in-app simulation. On a narrow screen, hide the conversation to reach the next stop.
 

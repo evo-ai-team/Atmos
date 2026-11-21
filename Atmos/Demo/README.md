@@ -46,6 +46,10 @@ Run the behavioral tests from the repository root.
 node --test "Atmos/Demo/*.test.mjs"
 ```
 
-Each menu photo opens its venue or manufacturer attribution. The ride details link to the source of the selected service icon. The local map uses OpenStreetMap data, OpenFreeMap and OpenMapTiles. Its downtown 38R segment follows the SFMTA route geometry. Dotted segments illustrate connections between stops. [OpenStreetMap attribution](https://www.openstreetmap.org/copyright) · [SFMTA route data](https://data.sf.gov/d/9exe-acju)
+Confirm any lunch option to open Gio’s demo Instagram story and Andrew’s demo X post together. Both posts can be reopened from **People nearby**.
+
+Preview a transport option to see its path in the card and on the main map. Cancel restores the saved mode. The morning, dinner and nightlife maps use the selected stops. The GPS replay follows the displayed path. Walking and example driving paths follow SF Public Works street centerlines. Muni examples use published route alignments with approximate walking connections. Driving alternatives illustrate the demo and carry no provider routing guarantee. The map works offline. Regenerate its bundled paths with `python scripts/build-route-shapes.py` from the Demo directory. [Street centerlines](https://data.sf.gov/d/3psu-pn9h) · [SFMTA alignments](https://data.sf.gov/d/9exe-acju)
+
+Each menu photo opens its venue or manufacturer attribution. Ride details link to the source of the selected service icon. The basemap uses OpenStreetMap, OpenFreeMap and OpenMapTiles. [OpenStreetMap attribution](https://www.openstreetmap.org/copyright)
 
 The building photo is by Gianluca Cogoli (CC BY 3.0, resized). The Golden Gate Bridge photo is by Rich Niewiroski Jr. (CC BY 2.5). The team dinner and conference images were generated for fictional social posts. [Building photo and license](https://commons.wikimedia.org/wiki/File:Looking_up,_525_Market,_SF.jpg) · [Bridge photo and license](https://commons.wikimedia.org/wiki/File:GoldenGateBridge-001.jpg)

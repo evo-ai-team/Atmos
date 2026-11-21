@@ -11,10 +11,52 @@
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <a class="skip" href="#day-plan">Skip to stops</a>
+  <a class="skip" href="#day-plan" hidden>Skip to stops</a>
   <main id="top">
-    <div id="dashboard" aria-busy="true"><p class="loading-note">Loading route…</p></div>
+    <div id="dashboard" aria-busy="true"><p class="loading-note" role="status">Opening Atmos…</p></div>
   </main>
+  <template id="home-template">
+    <section class="arrival-stage" aria-labelledby="home-title">
+      <div class="arrival-content">
+        <div class="arrival-wordmark">
+          <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="m5 23 10-14 12 14M9 23l8-7 7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Atmos
+        </div>
+        <h1 id="home-title">What’s the plan?</h1>
+        <form id="home-form" class="arrival-composer">
+          <textarea id="home-prompt" name="transcript" aria-label="Your trip request" placeholder="Paste your trip prompt here…" rows="3" maxlength="6000" required></textarea>
+          <div class="arrival-actions">
+            <button type="button" id="home-mic" class="arrival-mic" aria-pressed="false">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5.5 10.5v1a6.5 6.5 0 0 0 13 0v-1M12 18v3.5m-3 0h6"/></svg>
+              <span data-mic-label>Use microphone</span>
+            </button>
+            <button type="submit" id="home-submit" class="arrival-submit">
+              Plan my day
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4.5 12h14m-6-6 6 6-6 6"/></svg>
+            </button>
+          </div>
+          <p id="home-status" role="status"></p>
+        </form>
+        <a id="resume-trip" class="arrival-resume" href="/?view=trip" hidden>Resume saved day</a>
+      </div>
+      <small class="arrival-credit"><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · OpenFreeMap · OpenMapTiles</small>
+    </section>
+  </template>
+  <template id="planning-template">
+    <section class="arrival-stage" aria-labelledby="planning-title">
+      <div class="arrival-planning">
+        <svg class="planning-trace" viewBox="0 0 160 88" fill="none" aria-hidden="true">
+          <defs><path id="planning-trail" d="M17 65h19c14 0 15-28 29-28h25c13 0 15 16 27 16h5c12 0 13-29 22-29" pathLength="100"/></defs>
+          <use href="#planning-trail"/>
+          <use class="planning-ink" href="#planning-trail"/>
+          <circle cx="17" cy="65" r="4.5"/><circle cx="77" cy="37" r="4.5"/><circle cx="144" cy="24" r="4.5"/>
+        </svg>
+        <h1 id="planning-title" tabindex="-1">Calculating routes…</h1>
+        <p id="planning-status" role="status" aria-atomic="true">Reading your trip briefing…</p>
+      </div>
+      <small class="arrival-credit"><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · OpenFreeMap · OpenMapTiles</small>
+    </section>
+  </template>
   <dialog id="detail-dialog" class="dialog" aria-labelledby="detail-title">
     <div class="sheet-header">
       <h2 id="detail-title"></h2>

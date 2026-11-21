@@ -96,17 +96,63 @@ function openDetail(view) {
 function openedDetails() {
   return new Set([...content.querySelectorAll("details[open]")].map(el=>el.querySelector("summary")?.textContent));
 }
+function showHome(prompt = "", error = "") {
+  history.replaceState(history.state,"","/");
+  $(".skip").hidden = true;
+  content.replaceChildren($("#home-template").content.cloneNode(true));
+  content.setAttribute("aria-busy","false");
+  $("#home-prompt").value = prompt;
+  $("#home-status").textContent = error;
+  $("#resume-trip").hidden = !data.state.started;
+  if (error) $("#home-prompt").focus();
+}
+async function showPlanning(pendingTrip) {
+  history.replaceState(history.state,"","/?view=trip");
+  $(".skip").hidden = true;
+  content.replaceChildren($("#planning-template").content.cloneNode(true));
+  // Keep the live status readable while the request is pending.
+  content.setAttribute("aria-busy","false");
+  $("#planning-title").focus({preventScroll:true});
+  const status = $("#planning-status");
+  status.textContent = "Reading your trip briefing…";
+  const beat = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 300 : 950;
+  const stopsTimer = setTimeout(() => { status.textContent = "Connecting your stops…"; }, beat);
+  const timesTimer = setTimeout(() => { status.textContent = "Estimating travel times…"; }, 2 * beat);
+  let revealTimer;
+  const transition = new Promise(resolve => { revealTimer = setTimeout(resolve, 3 * beat); });
+  try {
+    const [trip] = await Promise.all([pendingTrip, transition]);
+    return trip;
+  } finally {
+    clearTimeout(stopsTimer);
+    clearTimeout(timesTimer);
+    clearTimeout(revealTimer);
+  }
+}
 function render(newData, preserve = true) {
   stopReading();
   clearTimeout(replayTimer);
   const prior = preserve ? openedDetails() : new Set();
   data = newData;
+  if (!data.state.started) {
+    if (interruption.open) interruption.close();
+    showHome();
+    return;
+  }
+  const revealing = Boolean($("#planning-status"));
+  $(".skip").hidden = false;
   content.innerHTML = dashboard(data,sectionEdits,{open:threadOpen,sendingId:sendingMessageId});
   content.querySelectorAll("details").forEach(el=>{
     if(prior.has(el.querySelector("summary")?.textContent)) el.open=true;
   });
   content.setAttribute("aria-busy","false");
   updateClock();
+  if (revealing) {
+    const locationTitle = $("#location-title");
+    locationTitle.tabIndex = -1;
+    locationTitle.focus({preventScroll:true});
+    window.scrollTo(0,0);
+  }
   if (data.state.alert === "shown" && !brief.open && !draftDialog.open) {
     $("#alert-content").innerHTML=alertView(data.catalog.alert);
     show(interruption);
@@ -139,7 +185,18 @@ async function request(payload) {
   return result;
 }
 async function load() {
-  try {render(await request(),false);}
+  try {
+    data = await request();
+    const url = new URL(window.location.href);
+    const handoff = url.hash === "#planning";
+    const resume = url.searchParams.get("view") === "trip" || url.hash === "#day-plan";
+    if (!data.state.started || !(handoff || resume)) {
+      showHome();
+      return;
+    }
+    if (handoff) await showPlanning(data);
+    render(data,false);
+  }
   catch(error) {
     content.setAttribute("aria-busy","false");
     content.innerHTML=`<div class="error"><p>${esc(error.message)}</p><button type="button" class="btn secondary" id="retry">Retry loading</button></div>`;
@@ -172,11 +229,10 @@ async function act(payload) {
   content.setAttribute("aria-busy","true");
   $("#start-button").disabled=true;
   document.body.classList.add("pending");
+  const fromHome = payload.action === "start" && Boolean($("#home-form"));
   try {
-    if (!data.state.started && !["start","reset"].includes(payload.action)) {
-      data = await request({action:"start",transcript:data.catalog.intro});
-    }
-    const result=await request(payload);
+    const pendingTrip = request(payload);
+    const result = await (fromHome ? showPlanning(pendingTrip) : pendingTrip);
     if (detailDialog.open) detailDialog.close();
     if (payload.action === "sendDinnerText") {
       threadOpen = true;
@@ -219,9 +275,16 @@ async function act(payload) {
     }
   } catch(error) {
     if(error.status===409) {
-      try {render(await request());} catch { /* Keep the current plan while offline. */ }
+      try {
+        data = await request();
+        if (!fromHome) render(data);
+      } catch { /* Keep the current plan while offline. */ }
     }
     if (payload.action !== "start") render(data);
+    if (fromHome) {
+      showHome(payload.transcript,error.message);
+      return;
+    }
     if (detailDialog.open && payload.action==="sendDinnerText") {
       if (data.dinnerTextDraft) {
         openDetail({title:"Dinner invitation",body:messageApproval(data.dinnerTextDraft)});
@@ -239,36 +302,44 @@ async function act(payload) {
   }
 
 }
-function beginVoice() {
+function beginVoice(field,button,status) {
   if(recognition) {recognition.stop(); return;}
   const Speech=window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!Speech) {
-    voiceStatus.textContent="Microphone transcription is unavailable in this browser. Edit the sample or type your briefing here.";
-    transcript.focus();
+    status.textContent="Microphone transcription is unavailable in this browser. Type or paste your briefing here.";
+    field.focus();
     return;
+  }
+  function micLabel(listening) {
+    const label = listening ? "Stop listening" : "Use microphone";
+    button.setAttribute("aria-label",label);
+    button.setAttribute("aria-pressed",String(listening));
+    button.title = label;
+    const caption = button === voiceButton ? button : button.querySelector("[data-mic-label]");
+    if (caption) caption.textContent = label;
   }
   const listener=new Speech();
   listener.continuous=true;
   listener.interimResults=true;
   listener.lang="en-US";
   listener.onstart=()=>{
-    voiceButton.textContent="Stop listening";
-    voiceStatus.textContent="Listening. Your words will replace the sample briefing.";
+    micLabel(true);
+    status.textContent="Listening. Your words will replace the text in the briefing.";
   };
   listener.onresult=event=>{
-    transcript.value=Array.from(event.results).map(result=>result[0].transcript.trim()).join(" ").trim();
+    field.value=Array.from(event.results).map(result=>result[0].transcript.trim()).join(" ").trim();
   };
   listener.onerror=event=>{
-    voiceStatus.textContent=event.error==="not-allowed" ? "Microphone access was declined. Type your briefing or use the sample." : "Transcription paused. You can edit the briefing or use the microphone again.";
+    status.textContent=event.error==="not-allowed" ? "Microphone access was declined. Type or paste your briefing." : "Transcription paused. You can edit the briefing or use the microphone again.";
   };
   listener.onend=()=>{
-    recognition=null;
-    voiceButton.textContent="Use microphone";
-    if(voiceStatus.textContent.startsWith("Listening")) voiceStatus.textContent="Review your briefing before building your day.";
+    if (recognition === listener) recognition=null;
+    micLabel(false);
+    if(status.textContent.startsWith("Listening")) status.textContent="Review your briefing before building your day.";
   };
   recognition=listener;
   try {listener.start();}
-  catch {recognition=null;voiceStatus.textContent="The microphone could not start. Type your briefing or use the sample.";}
+  catch {recognition=null;status.textContent="The microphone could not start. Type or paste your briefing.";}
 }
 async function recallMemory(form) {
   const status = $("#recall-status");
@@ -346,7 +417,7 @@ function focusConversation() {
 }
 setInterval(updateClock, 15000);
 detailDialog.addEventListener("close",()=>clearTimeout(replayTimer));
-voiceButton.addEventListener("click",beginVoice);
+voiceButton.addEventListener("click",()=>beginVoice(transcript,voiceButton,voiceStatus));
 brief.addEventListener("close",()=>{recognition?.abort(); stopReading();});
 $("#brief-form").addEventListener("submit",event=>{
   event.preventDefault();
@@ -355,6 +426,19 @@ $("#brief-form").addEventListener("submit",event=>{
 });
 interruption.addEventListener("cancel",event=>{event.preventDefault();act({action:"dismiss"});});
 document.addEventListener("submit",event=>{
+  if (event.target.id === "home-form") {
+    event.preventDefault();
+    const field = $("#home-prompt");
+    const prompt = field.value.trim();
+    if (!prompt) {
+      $("#home-status").textContent = "Enter your trip briefing to plan your day.";
+      field.focus();
+      return;
+    }
+    recognition?.stop();
+    act({action:"start", transcript:prompt});
+    return;
+  }
   if(event.target.id==="recall-form") {event.preventDefault();recallMemory(event.target);return;}
   if(event.target.id!=="expense-form") return;
   event.preventDefault();
@@ -364,12 +448,13 @@ document.addEventListener("submit",event=>{
 document.addEventListener("click",event=>{
   const button=event.target.closest("button");
   if(!button) return;
+  if(button.id==="home-mic") {beginVoice($("#home-prompt"),button,$("#home-status"));return;}
   if(button.id==="brief-button") {showBrief();return;}
   if(button.hasAttribute("data-preview")) {
     const {slot,preview} = button.dataset;
     if (sending) return;
     editSection(slot,preview);
-    if (slot==="nightlife" && preview==="afterhours" && (!data.state.started || data.state.profile.discretion)) {
+    if (slot==="nightlife" && preview==="afterhours" && data.state.profile.discretion) {
       act({action:"previewNightlife",id:preview});
     }
     return;

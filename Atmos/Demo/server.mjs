@@ -102,7 +102,7 @@ export function createDemo({filename=':memory:',env={}} = {}) {
         const v = visitor(req,res);
         const s = updateState(v.state,{action:'start',transcript:handoff.briefing});
         save(v.id,s);
-        res.writeHead(303,{Location:'/'}); return res.end();
+        res.writeHead(303,{Location:'/#planning'}); return res.end();
       }
       if (url.pathname === '/api/demo' && ['GET','POST'].includes(req.method)) {
         // Read the latest row after the async body read, then update synchronously.

@@ -397,7 +397,9 @@ test('browser memories are isolated and survive a restart, native handoffs are s
     res = await post(app.url+'/api/handoff',{transcript:'Richmond SF for the weekend'},{'X-Atmos-Client':'native-demo'});
     assert.equal(res.status,201); const {ticket} = await res.json();
     res = await fetch(app.url+'/handoff/'+ticket,{redirect:'manual'});
-    assert.equal(res.status,303); const nativeCookie = res.headers.get('set-cookie').split(';')[0];
+    assert.equal(res.status,303);
+    assert.equal(res.headers.get('location'),'/#planning');
+    const nativeCookie = res.headers.get('set-cookie').split(';')[0];
     assert.equal((await fetch(app.url+'/handoff/'+ticket)).status,410);
     other = await (await fetch(app.url+'/api/demo',{headers:{Cookie:nativeCookie}})).json();
     assert.equal(other.state.transcript,'Richmond SF for the weekend');

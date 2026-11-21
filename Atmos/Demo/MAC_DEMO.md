@@ -6,7 +6,7 @@ Allow about five minutes on screen after setup. Drive the app through its visibl
 
 ## Before the audience joins
 
-1. Check out the `codex/atmos-itinerary-demo` branch of `evo-ai-team/Atmos`, or extract the supplied source ZIP. Open Terminal in the folder **containing** `Atmos/`. A quick check is `ls Atmos/Demo/server.mjs`. Use Node.js 22.18 or later (`node --version`). The dashboard uses built-in SQLite and needs no package install.
+1. Check out the `codex/atmos-itinerary-demo` branch of `evo-ai-team/Atmos`. On an existing checkout, run `git pull --ff-only` on that branch to get the latest opening screen. Open Terminal in the folder **containing** `Atmos/`. A quick check is `ls Atmos/Demo/server.mjs`. Use Node.js 22.18 or later (`node --version`). The dashboard uses built-in SQLite and needs no package install.
 2. In Terminal 1, start a fresh local rehearsal. Leave this process running. This command gives the run its own database, enables public source checks and keeps memory on the Mac.
 
    ```sh
@@ -24,7 +24,9 @@ Allow about five minutes on screen after setup. Drive the app through its visibl
    ATMOS_ITINERARY_DEMO=1 "$demo_app/Contents/MacOS/Atmos"
    ```
 
-   For voice, allow microphone access, let the English (US) speech assets finish loading and close the expanded menu before using the wake phrase. The native typed command uses the same local handoff. If native setup takes too long, open the browser dashboard and start there.
+   For voice, allow microphone access, let the English (US) speech assets finish loading and close the expanded menu before using the wake phrase. The native typed command uses the same local handoff.
+
+   Before the audience joins, open the root URL `http://127.0.0.1:4317/` and leave the blank prompt on screen. This address always opens the home screen. If this browser has a saved itinerary, **Resume saved day** opens it. For a repeat rehearsal with the original choices and empty message history, use the fresh database from step 2 or choose **Trip tools → Reset demo** on the disposable itinerary and confirm.
 
 ## The five-minute walkthrough
 
@@ -34,10 +36,10 @@ Allow about five minutes on screen after setup. Drive the app through its visibl
 
 > Hey Atmos, plan my itinerary. I’m staying in the Richmond District of San Francisco. I’m here from Singapore for work, it’s my first time here, and I’m in town through Sunday. I signed up for the hackathon at the AWS Loft and told my boss I was sick today so I could attend. I want to meet people, try the local food and go out for drinks tonight. I’m vegan, dairy-free and gluten-free. I like coffee around 8 AM. I want to spend under $400 and walk at least 2,000 steps.
 
-- **In the browser**, click **Trip briefing**, replace **Your trip request** with the text, and click **Build my day**. A returning visit may show **Update my day**.
-- **In the native app**, say “Hey Atmos,” then speak the rest. To type it, choose **Open Atmos Menu**, paste the request under **Let’s Plan Your Day**, and press Return. The default browser opens with the briefing already applied.
+- **In the browser**, paste the request into the empty prompt on the home screen. Pause so the audience can read it, then click **Plan my day**.
+- **In the native app**, say “Hey Atmos,” then speak the rest. To type it, choose **Open Atmos Menu**, paste the request under **Let’s Plan Your Day**, and press Return. The default browser opens with the submitted briefing.
 
-**Show** the Richmond pickup and the large San Francisco clock. The clock shows local time, while the route replays Friday, November 20, 2026. Open **Trip briefing → Atmos’ itinerary** for the response, then close the briefing. Point out that the day’s stops are already visible.
+**Let the audience watch the reveal.** The **Calculating routes** screen plays, then the itinerary appears automatically. Point to the Richmond pickup, the San Francisco clock and the day’s stops. The clock shows local time, while the route replays Friday, November 20, 2026. Open **Trip briefing → Atmos’ itinerary** for the response, then close the briefing.
 
 ### 2. Pick breakfast, then show how it changes the morning ride
 
@@ -73,7 +75,7 @@ Choose **View messages**. The approved invitation still says **Oren’s at 7:39 
 
 Open **Trip tools → Recall a memory**. Set **Search in** to **My trip**, enter `budget`, and click **Search**. Show `budget: 400`. Switch to **City guide** and search `Personal Agents Hackathon`. Show the matching organizer and venue information. For a direct comparison, search `boss` in each scope. The fictional workplace note appears in **My trip** and the city guide returns zero matches. These results come from the local test database.
 
-Under **Trip tools → Source checks**, show the status for the event page, menu PDF and hourly weather feed. The observer checks these at startup and every 30 minutes while enabled. Read the check times or fallback status actually displayed. Reload the dashboard in the same browser, point to the saved stops, and use **View messages** to reopen the approved conversation.
+Under **Trip tools → Source checks**, show the status for the event page, menu PDF and hourly weather feed. The observer checks these at startup and every 30 minutes while enabled. Read the check times or fallback status actually displayed. Refresh the current itinerary URL in the same browser. The saved day reopens immediately. Point to the saved stops and use **View messages** to reopen the approved conversation.
 
 **Close with** “Atmos remembered why this traveler was here. When dinner moved, it recalculated both walks and left it to the traveler to tell their friends.”
 
@@ -81,4 +83,4 @@ Under **Trip tools → Source checks**, show the status for the event page, menu
 
 - The broader product would use continuously running agents and Cognee-backed memory. This packaged walkthrough demonstrates the local SQLite path. It uses preset preferences and supported briefing fields, a dated city guide, and optional public source checks. The social posts, team-photo match and messages are scripted demo interactions. Ride waits, fares, steps and calories are estimates.
 - If a source is unreachable, present the saved guide and the displayed check status. If the post fails to appear, verify the submitted brief contains both **boss** and **sick**, close any overlays, and preview **Tech Afterhours SF**. **Trip tools** also offers a manual replay.
-- If port 4317 is occupied, set `export ATMOS_DEMO_PORT=4318` in **both** terminals before launch and open `http://127.0.0.1:4318/`. To rehearse from the beginning, stop the server with Control-C and rerun Terminal 1’s commands for a fresh database.
+- If port 4317 is occupied, set `export ATMOS_DEMO_PORT=4318` in **both** terminals before launch and open `http://127.0.0.1:4318/`.

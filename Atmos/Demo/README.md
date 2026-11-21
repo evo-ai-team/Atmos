@@ -12,7 +12,7 @@ node Atmos/Demo/server.mjs
 
 ## Replay the trip
 
-1. The map opens at the simulated Richmond District pickup, with a clock in San Francisco time. Tap a transport icon to see walking distance or pickup wait, travel time to the next stop, and estimated fare. **Trip briefing** lets you edit or dictate the sample request.
+1. At the home page, paste or dictate the San Francisco trip request and select **Plan my day**. After the route calculation screen, the map opens at the simulated Richmond District pickup. Tap a transport icon to compare the wait, duration and fare. **Trip briefing** reopens the request. Later, choose **Resume saved day** from home or reload the itinerary to continue. [MacBook presenter guide](MAC_DEMO.md)
 2. Tap a named option in breakfast, hackathon, lunch, dinner or nightlife. Each opens its menu or venue gallery inline. The green check adds that choice to the route. The red × returns to the options and preserves the saved route. After confirming, use the gray return arrow to compare alternatives. **Menu & dietary details** includes sources, directions and an optional **Skip this meal** for confirmed meals.
 3. Under **People nearby**, select **Invite both to dinner**. Review the recipients, venue, address and time, then select **Approve to send**. A simulated iMessage conversation opens beside the route. The local history keeps the approved wording if dinner changes later. Use **View messages** to reopen it.
 4. After lunch the traveler returns to the hackathon. **Travel to dinner** starts at the Loft after closing. **Travel to nightlife** starts at the selected restaurant, or at the Loft if dinner is skipped. Choose **Walk** or a ride on either leg, then confirm to update directions, arrival times, costs and steps.

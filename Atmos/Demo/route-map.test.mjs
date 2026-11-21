@@ -42,8 +42,10 @@ test('transport previews draw different paths without changing the saved morning
   const downtown=routeFor(battery);
   assert.match(downtown.modeLabel,/38R Geary Rapid/);
   assert.equal(downtown.segments.at(-1).kind,'walk');
-  for (const morning of [trip(choose(state,'breakfast','breakfast-proper')),trip(updateState(state,{action:'skip',slot:'breakfast'}))]) {
-    assert.deepEqual(routeFor(morning).stops.map(s=>s.key),['home','loft']);
+  for (const morning of [battery,trip(choose(state,'breakfast','breakfast-proper')),trip(updateState(state,{action:'skip',slot:'breakfast'}))]) {
+    if (morning!==battery) assert.deepEqual(routeFor(morning).stops.map(s=>s.key),['home','loft']);
+    const paths=morning.catalog.transit.map(({id})=>routeFor(morning,'transit',id).segments.flatMap(s=>s.points));
+    assert.equal(new Set(paths.map(p=>JSON.stringify(p))).size,5);
   }
 });
 
@@ -57,15 +59,15 @@ test('evening previews use the selected venues, travel mode and origin after a s
         const effectiveSlot=!dinner && slot==='toDinner' ? 'toNightlife' : slot;
         const options=data.catalog[effectiveSlot];
         const expected=effectiveSlot==='toDinner' ? ['loft',dinner.id] : [dinner?.id ?? 'loft',night.id];
-        const drives=new Set();
+        const paths=new Set();
         for (const {id} of options) {
           const route=routeFor(data,effectiveSlot,id);
           assert.deepEqual(route.stops.map(s=>s.key),expected);
           assert.ok(route.segments.some(s=>s.kind===id));
           assertEndpoints(route);
-          if (['waymo','tesla','taxi'].includes(id)) drives.add(JSON.stringify(route.segments[0].points));
+          paths.add(JSON.stringify(route.segments.flatMap(s=>s.points)));
         }
-        assert.equal(drives.size,3,expected.join(' → '));
+        assert.equal(paths.size,options.length,expected.join(' → '));
         assert.equal(routeFor(data,slot).mode,data.tracker.legs.find(l=>l.slot===effectiveSlot).id);
       }
     }

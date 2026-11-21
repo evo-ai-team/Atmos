@@ -5,10 +5,33 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDemo } from './server.mjs';
+import { routeSection, routeSlots } from './public/views.js';
 import { catalog, intro, newState, updateState, trackerFor, guideForVisit, itineraryBriefing, searchLocalMemory } from './scenario.mjs';
 
 const start = () => updateState(newState(),{action:'start',transcript:intro});
 const choose = (s,slot,id) => updateState(s,{action:'choose',slot,id});
+test('all stop icons preview the named option before offering confirmation', () => {
+  const state = start();
+  const data = {catalog:guideForVisit(catalog,state),state,tracker:trackerFor(state)};
+  for (const slot of routeSlots) {
+    const options = slot === 'event' ? [catalog.event] : data.catalog[slot];
+    const menu = routeSection(data,slot);
+    assert.doesNotMatch(menu,/data-action="choose"/);
+    for (const item of options) {
+      assert.ok(menu.includes(`data-preview="${item.id}"`));
+      const preview = routeSection(data,slot,item.id);
+      assert.ok(preview.includes(`data-action="choose" data-slot="${slot}" data-id="${item.id}"`));
+      assert.ok(preview.includes(`data-options="${slot}"`));
+      if (slot === 'transit') assert.ok(preview.includes(item.wait));
+      else assert.ok(preview.includes(`data-photo-id="${item.id}"`));
+    }
+    const saved = {...data,state:choose(state,slot,options[0].id)};
+    assert.match(routeSection(saved,slot),/aria-label="Return to /);
+    assert.match(routeSection(saved,slot,null),/on your route/);
+  }
+  assert.deepEqual(state.confirmedSlots,[]);
+});
+
 test('each itinerary branch yields chronological, linked route legs and finite daily totals', () => {
   for (const t of catalog.transit.filter(t=>t.available !== false))
     for (const am of catalog.breakfast)
@@ -130,6 +153,52 @@ async function listen(filename) {
   return {url:'http://127.0.0.1:'+server.address().port,close:()=>new Promise(resolve=>server.close(resolve))};
 }
 const post = (url,data,extra={}) => fetch(url,{method:'POST',headers:{'Content-Type':'application/json',...extra},body:JSON.stringify(data)});
+test('only explicit catalog selections confirm itinerary sections, including the fixed hackathon',async () => {
+  const app = await listen(':memory:');
+  try {
+    const api = app.url+'/api/demo';
+    const initial = await fetch(api);
+    const Cookie = initial.headers.get('set-cookie').split(';')[0];
+    const read = async () => (await fetch(api,{headers:{Cookie}})).json();
+    const submit = action => post(api,action,{Cookie});
+    assert.deepEqual((await initial.json()).state.confirmedSlots,[]);
+    const started = await (await submit({action:'start',transcript:intro})).json();
+    assert.deepEqual(started.state.confirmedSlots,[]);
+    assert.equal((await submit({action:'choose',slot:'event',id:'unlisted-event'})).status,400);
+    assert.deepEqual((await read()).state,started.state);
+
+    const eventChoice = {action:'choose',slot:'event',id:catalog.event.id};
+    const confirmed = await (await submit({...eventChoice,revision:started.state.revision})).json();
+    assert.deepEqual(confirmed.tracker,started.tracker);
+    assert.equal(confirmed.state.choices.event,catalog.event.id);
+    assert.deepEqual(confirmed.state.confirmedSlots,['event']);
+    assert.deepEqual(confirmed.catalog.event,started.catalog.event);
+    assert.equal((await submit({...eventChoice,revision:started.state.revision})).status,409);
+    const reselected = await (await submit({...eventChoice,revision:confirmed.state.revision})).json();
+    assert.deepEqual(reselected.state.confirmedSlots,['event']);
+    assert.deepEqual(reselected.tracker,started.tracker);
+    const recall = await post(app.url+'/api/recall',{scope:'private',query:'event'},{Cookie});
+    assert.ok((await recall.json()).results.includes('event: '+catalog.event.title));
+
+    const expected = ['event'];
+    for (const slot of ['transit','breakfast','lunch','dinner','nightlife']) {
+      const before = await read();
+      const option = catalog[slot].find(o=>o.available!==false && o.id!==before.state.choices[slot]);
+      assert.ok(option);
+      const response = await submit({action:'choose',slot,id:option.id,revision:before.state.revision});
+      assert.equal(response.status,200);
+      expected.push(slot);
+      const after = await response.json();
+      assert.equal(after.state.choices[slot],option.id);
+      assert.deepEqual(after.state.confirmedSlots,expected);
+      assert.deepEqual((await read()).state,after.state);
+    }
+    const reset = await (await submit({action:'reset'})).json();
+    assert.deepEqual(reset.state.confirmedSlots,[]);
+    assert.deepEqual(reset.state.choices,{});
+  } finally { await app.close(); }
+});
+
 test('approval saves the displayed dinner text locally for both demo contacts and survives a restart',async () => {
   const dir = await mkdtemp(join(tmpdir(),'atmos-text-test-'));
   const filename = join(dir,'texts.sqlite');

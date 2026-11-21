@@ -39,6 +39,9 @@ function visitorSnapshot(state, catalog) {
   }
   if (Number.isFinite(preferences.budget)) lines.push(`Trip budget: USD ${preferences.budget}.`);
   if (Number.isFinite(preferences.walkingGoal)) lines.push(`Walking goal: ${preferences.walkingGoal} steps.`);
+  if (state.confirmedSlots?.includes('event') && catalog?.event?.id === state.choices?.event) {
+    lines.push(`Confirmed event: ${catalog.event.title}.`);
+  }
   for (const slot of choiceSlots) {
     if (state.skippedSlots?.includes(slot)) {
       lines.push(`${slot}: skipped for this visit.`);

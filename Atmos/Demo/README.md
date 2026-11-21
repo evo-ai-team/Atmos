@@ -8,8 +8,8 @@ node Atmos/Demo/server.mjs
 
 ## Replay the trip
 
-1. The map opens at the simulated Richmond District pickup, with a clock in San Francisco time. Choose a ride, or open **Trip briefing** to edit or dictate the sample itinerary request. After building the day, the briefing includes Atmos’s reply and optional read-aloud.
-2. Open any stop name to change the venue, inspect dietary information and sources, or get directions. Menu photos show examples offered by the venue. Tap a green check to skip that meal or its red × to restore it. The tracker recalculates the route and estimates.
+1. The map opens at the simulated Richmond District pickup, with a clock in San Francisco time. Tap a ride icon to see the boarding or pickup wait, direct downtown journey estimate, fare and payment method. **Trip briefing** lets you edit or dictate the sample request.
+2. Tap a named option in breakfast, hackathon, lunch, dinner or nightlife. Each opens its menu or venue gallery inline. The green check adds that choice to the route. The red × returns to the options and preserves the saved route. After confirming, use the gray return arrow to compare alternatives. **Menu & dietary details** includes sources, directions and an optional **Skip this meal** for confirmed meals.
 3. Under **People nearby**, select **Invite both to dinner**. Review the recipients, venue, address and time, then select **Approve to send**. A simulated iMessage conversation opens beside the route. The local history keeps the approved wording if dinner changes later. Use **View messages** to reopen it.
 4. Select a nightlife option or use **Show demo notification** in **Trip tools** to replay the fictional team post. The demo matches the transcribed restaurant and street signs in the generated photo to a fictional venue. Accept the alternative to update dinner and the evening route.
 5. Use **Trip tools** to record expenses, check sources or search memory. **Reset demo** clears this browser’s test itinerary and message history.

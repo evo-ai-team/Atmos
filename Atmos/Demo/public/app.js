@@ -1,4 +1,4 @@
-import { alertView, briefingView, dashboard, detailsFor, esc, menuPhotoFor, messageApproval, profileView, updateClock } from "./views.js";
+import { alertView, briefingView, dashboard, detailsFor, esc, menuPhotoFor, messageApproval, profileView, routeSection, routeSlots, updateClock } from "./views.js";
 
 const $ = selector => document.querySelector(selector);
 const content = $("#dashboard");
@@ -10,7 +10,8 @@ const voiceButton = $("#voice-button");
 const voiceStatus = $("#voice-status");
 let data;
 let sending = false;
-let transitExpanded = true;
+// Open on the option menus, including any choices already saved on this trip.
+let sectionEdits = Object.fromEntries(routeSlots.map(slot=>[slot,null]));
 let noticeTimer;
 let recognition;
 const detailDialog = $("#detail-dialog");
@@ -100,7 +101,7 @@ function render(newData, preserve = true) {
   clearTimeout(replayTimer);
   const prior = preserve ? openedDetails() : new Set();
   data = newData;
-  content.innerHTML = dashboard(data,transitExpanded,{open:threadOpen,sendingId:sendingMessageId});
+  content.innerHTML = dashboard(data,sectionEdits,{open:threadOpen,sendingId:sendingMessageId});
   content.querySelectorAll("details").forEach(el=>{
     if(prior.has(el.querySelector("summary")?.textContent)) el.open=true;
   });
@@ -111,6 +112,19 @@ function render(newData, preserve = true) {
     show(interruption);
   } else if(interruption.open && data.state.alert!=="shown") interruption.close();
 
+}
+function sectionElement(slot) {
+  return document.getElementById(slot==="transit" ? "transit" : "slot-"+slot);
+}
+function editSection(slot,id) {
+  if (sending) return;
+  const oldId = sectionEdits[slot] || data.state.choices[slot];
+  sectionEdits[slot] = id;
+  sectionElement(slot).outerHTML = routeSection(data,slot,id);
+  const section = sectionElement(slot);
+  const focus = id ? section.querySelector('[data-action="choose"]') :
+    [...section.querySelectorAll("[data-preview]")].find(button=>button.dataset.preview===oldId) || section.querySelector("[data-preview]");
+  focus?.focus({preventScroll:true});
 }
 async function request(payload) {
   const options=payload ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...payload,revision:data.state.revision})} : {};
@@ -162,10 +176,6 @@ async function act(payload) {
     if (!data.state.started && !["start","reset"].includes(payload.action)) {
       data = await request({action:"start",transcript:data.catalog.intro});
     }
-    if (["invite","reserve"].includes(payload.action) && !data.state.confirmedSlots.includes("dinner")) {
-      if (data.state.skippedSlots?.includes("dinner")) throw new Error("Restore dinner before preparing a draft.");
-      data = await request({action:"choose",slot:"dinner",id:data.state.choices.dinner});
-    }
     const result=await request(payload);
     if (detailDialog.open) detailDialog.close();
     if (payload.action === "sendDinnerText") {
@@ -185,9 +195,11 @@ async function act(payload) {
     if(payload.action==="start") {
       if(brief.open) brief.close();
     }
-    if(payload.action==="choose" && payload.slot === "transit") transitExpanded=false;
-    if(payload.action==="reset") {transitExpanded=false; threadOpen=false; clearTimeout(deliveryTimer); sendingMessageId=undefined;}
+    if (payload.action==="choose" || payload.action==="skip") delete sectionEdits[payload.slot];
+    if (payload.action==="reroute") delete sectionEdits.dinner;
+    if(payload.action==="reset") {sectionEdits={}; threadOpen=false; clearTimeout(deliveryTimer); sendingMessageId=undefined;}
     render(result,payload.action!=="reset");
+    if(payload.action==="choose" && !interruption.open) sectionElement(payload.slot)?.querySelector("[data-options]")?.focus({preventScroll:true});
     if(["invite","reserve"].includes(payload.action)) showDraft(payload.action,payload.id);
     if(payload.action==="sendDinnerText") focusConversation();
     if(payload.action==="reroute") {
@@ -216,10 +228,6 @@ async function act(payload) {
     else if(brief.open) voiceStatus.textContent=error.message;
     else if(interruption.open) $("#alert-feedback").textContent=error.message;
     else notice(error.message);
-    if(payload.action==="choose" && payload.slot!=="transit") {
-      const select=document.getElementById("select-"+payload.slot);
-      if(select && data.state.choices[payload.slot]) select.value=data.state.choices[payload.slot];
-    }
   } finally {
     sending=false;
     document.body.classList.remove("pending");
@@ -343,10 +351,6 @@ $("#brief-form").addEventListener("submit",event=>{
   act({action:"start",transcript:transcript.value.trim()});
 });
 interruption.addEventListener("cancel",event=>{event.preventDefault();act({action:"dismiss"});});
-document.addEventListener("change",event=>{
-  const slot=event.target.dataset?.chooseSlot;
-  if(slot) act({action:"choose",slot,id:event.target.value});
-});
 document.addEventListener("submit",event=>{
   if(event.target.id==="recall-form") {event.preventDefault();recallMemory(event.target);return;}
   if(event.target.id!=="expense-form") return;
@@ -358,6 +362,14 @@ document.addEventListener("click",event=>{
   const button=event.target.closest("button");
   if(!button) return;
   if(button.id==="brief-button") {showBrief();return;}
+  if(button.hasAttribute("data-preview")) {editSection(button.dataset.slot,button.dataset.preview);return;}
+  if(button.hasAttribute("data-options")) {editSection(button.dataset.options,null);return;}
+  if(button.hasAttribute("data-pick-dinner")) {
+    if (detailDialog.open) detailDialog.close();
+    editSection("dinner",null);
+    sectionElement("dinner").scrollIntoView({block:"center"});
+    return;
+  }
   if(button.hasAttribute("data-group-invite")) {
     const draft = data.dinnerTextDraft;
     if (!draft) {notice("Include dinner to invite Gio and Andrew.");return;}
@@ -376,11 +388,11 @@ document.addEventListener("click",event=>{
     return;
   }
   if(button.hasAttribute("data-detail")) {
-    openDetail(detailsFor(data,button.dataset.detail,button.dataset.person));
+    openDetail(detailsFor(data,button.dataset.detail,button.dataset.person || button.dataset.itemId));
     return;
   }
-  if(button.hasAttribute("data-menu-slot")) {
-    openDetail(menuPhotoFor(data,button.dataset.menuSlot,Number(button.dataset.menuIndex)));
+  if(button.hasAttribute("data-photo-slot")) {
+    openDetail(menuPhotoFor(data,button.dataset.photoSlot,button.dataset.photoId,Number(button.dataset.photoIndex)));
     return;
   }
   if(button.id==="retry") {load();return;}
@@ -392,7 +404,6 @@ document.addEventListener("click",event=>{
     return;
   }
   if(button.hasAttribute("data-reset")) {if(window.confirm("Clear this demo’s saved trip choices and drafts?")) act({action:"reset"});return;}
-  if(button.hasAttribute("data-toggle-transit")) {transitExpanded=true;render(data);$("#transit button")?.focus({preventScroll:true});return;}
   const {action,slot,id}=button.dataset;
   if(action) act({action,...(slot ? {slot} : {}),...(id ? {id} : {})});
 });

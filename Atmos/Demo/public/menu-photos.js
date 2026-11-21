@@ -61,3 +61,50 @@ export const menuPhotos = {
     photo("chipotle-burrito", "Burrito", chipotle)
   ]
 };
+
+function venue(file, label, source) {
+  return { src: `/assets/venues/${file}.webp`, label, source };
+}
+
+const boichikLocations = "https://boichikbagels.com/pages/locations";
+const sacramentoShop = venue("boichik-sacramento", "Boichik on Sacramento Street", boichikLocations);
+const batteryShop = venue("boichik-battery", "Boichik on Battery Street", boichikLocations);
+const properShop = venue("proper-525-market", "Proper Food at 525 Market Street", "https://properfood.com/location/");
+const builderLoft = venue("aws-builder-loft", "Inside the AWS Builder Loft at 525 Market", "https://builder.aws.com/connect/events/builder-lofts/san-francisco");
+const buzzworks = "https://www.sfbuzzworks.com/press-kit";
+const folsomRooms = "https://1015.com/venue-rental/";
+
+export const previewPhotos = {
+  ...menuPhotos,
+  breakfast: [...boichik, sacramentoShop],
+  "breakfast-battery": [...boichik, batteryShop],
+  "breakfast-proper": [...menuPhotos["breakfast-proper"], properShop],
+  lunch: [...menuPhotos.lunch, properShop],
+  "lunch-host": [builderLoft],
+  "personal-agents-hackathon": [
+    builderLoft,
+    {src:"/assets/525-market.jpg", label:"525 Market Street · Gianluca Cogoli, CC BY 3.0", source:"https://commons.wikimedia.org/wiki/File:Looking_up,_525_Market,_SF.jpg"},
+    venue("personal-agents-hackathon-poster", "Personal Agents Hackathon · organizer’s poster", "https://luma.com/personalagenthack")
+  ],
+  afterhours: [
+    venue("buzzworks-bar", "The bar at BuzzWorks", buzzworks),
+    venue("buzzworks-taps", "BuzzWorks draft taps", buzzworks),
+    venue("buzzworks-pool", "Pool tables at BuzzWorks", buzzworks),
+    venue("tech-afterhours-poster", "Tech Afterhours SF · organizer’s poster", "https://luma.com/kkzbahld")
+  ],
+  "game-night": [
+    venue("totem-game-night-poster", "Totem Game Night · organizer’s poster", "https://luma.com/zvwoxudt"),
+    venue("501-folsom-archive", "501 Folsom Street · SF Planning archival photograph", "https://generalplan.sfplanning.org/Rincon_Hill.htm")
+  ],
+  westend: [
+    venue("1015-dance-floor", "Inside the main room at 1015 Folsom", folsomRooms),
+    venue("westend-poster", "Westend · 1015 Folsom’s show poster", "https://1015.com/events/westend-2026-11-20/"),
+    venue("1015-front-room", "The front room at 1015 Folsom", folsomRooms)
+  ]
+};
+
+export const optionPhotos = {
+  breakfast: sacramentoShop.src,
+  "breakfast-battery": batteryShop.src,
+  "breakfast-proper": properShop.src
+};

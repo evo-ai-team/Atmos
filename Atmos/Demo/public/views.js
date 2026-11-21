@@ -1,4 +1,4 @@
-import { menuPhotos } from './menu-photos.js';
+import { previewPhotos, optionPhotos } from './menu-photos.js';
 import { transportArt } from './transport-art.js';
 import { routeMap } from './route-map.js';
 
@@ -25,6 +25,7 @@ const iconPaths = {
   external: '<path d="M14 4h6v6m-9 3 9-9M10 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-4"/>',
   money: '<rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M5 9h1m12 6h1"/>',
   check: '<path d="m4 12 5 5L20 6"/>',
+  return: '<path d="m8 4-5 5 5 5M4 9h10a6 6 0 0 1 0 12h-3"/>',
   chart: '<path d="M3 17v3h18M5 13l5-5 4 3 6-7"/>',
   message: '<path d="M21 12a8 8 0 0 1-8 8H5l-3 2 1-6a8 8 0 1 1 18-4Z"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m4 18 5-5 3 2 4-5 4 6"/>',
@@ -178,6 +179,7 @@ export function alertView(alert) {
 }
 
 const slotNames = { transit:"Transportation", breakfast:"Breakfast", event:"Hackathon", lunch:"Lunch", dinner:"Dinner", nightlife:"Nightlife" };
+export const routeSlots = Object.keys(slotNames);
 const clockFormat = new Intl.DateTimeFormat("en-US", { hour:"numeric", minute:"2-digit", timeZone:"America/Los_Angeles" });
 export function updateClock() {
   const clock = document.getElementById("local-clock");
@@ -205,24 +207,79 @@ function venueName(o) { return o.title.split(" · ")[0]; }
 function roundButton(attributes, symbol, label, className="") {
   return `<button type="button" ${attributes} class="round ${className}" title="${esc(label)}" aria-label="${esc(label)}">${icon(symbol)}</button>`;
 }
-function travelDock(data,expanded) {
-  const saved = data.state.choices.transit;
-  const collapsed = data.state.confirmedSlots.includes("transit") && !expanded;
-  const shown = collapsed ? data.catalog.transit.filter(t=>t.id===saved) : data.catalog.transit;
-  return `<section class="travel-dock glass" id="transit" aria-label="Transportation">
-    <div class="provider-row">${shown.map(o=>{
-      const art = transportArt[o.id];
-      const label = {muni:"Muni",waymo:"Waymo",tesla:"Tesla Robotaxi",taxi:"Taxi"}[o.id] || o.title;
-      return `<button class="provider" data-action="choose" data-slot="transit" data-id="${esc(o.id)}"
-        aria-label="${esc(label)}, estimated ${esc(money(o.price))}, ${o.minutes} minutes" aria-pressed="${saved===o.id}">
-        <span class="brand-box ${esc(o.id)}">${art ? `<img src="${esc(art.src)}" alt="">` : icon("car")}</span>
-        <span class="provider-type">${esc(label)}</span>
-        <span class="provider-meta">${esc(money(o.price))} · ${o.minutes} min</span>
-      </button>`;
-    }).join("")}
-    ${collapsed ? '<button class="change-transport" data-toggle-transit>Change ride</button>' : ""}
-    </div>
-    ${roundButton('data-detail="transit"','chevron','Ride details and directions','dock-detail')}
+const rideNames = {muni:"Muni",waymo:"Waymo",tesla:"Tesla Robotaxi",taxi:"Taxi"};
+const mealSlots = ["breakfast","lunch","dinner"];
+function slotOptions(data,slot) {
+  return slot === "event" ? [data.catalog.event] : data.catalog[slot];
+}
+function optionName(slot,item) {
+  return slot === "transit" ? rideNames[item.id] || item.title : venueName(item);
+}
+function choiceArt(slot,item) {
+  const src = slot === "transit" ? transportArt[item.id]?.src : optionPhotos[item.id] || previewPhotos[item.id]?.[0]?.src;
+  return `<span class="choice-art ${slot === "transit" ? "brand-box "+esc(item.id) : ""}">${src ? `<img src="${esc(src)}" alt="">` : icon(slot)}</span>`;
+}
+function choiceButton(slot,item,savedId) {
+  const name = optionName(slot,item);
+  const branch = ["breakfast","breakfast-battery"].includes(item.id) ? item.title.split(" · ")[1] : "";
+  const saved = savedId === item.id;
+  return `<button type="button" class="choice-tile" data-preview="${esc(item.id)}" data-slot="${slot}"
+    aria-label="${esc("Preview "+name+(branch ? ", "+branch : "")+(saved ? ", on your route" : ""))}">
+    <span class="tile-art">${choiceArt(slot,item)}${saved ? `<i class="saved-mark">${icon("check")}</i>` : ""}</span>
+    <strong>${esc(name)}</strong>${branch ? `<small>${esc(branch)}</small>` : ""}
+  </button>`;
+}
+function gallery(slot,item) {
+  const photos = previewPhotos[item.id] || [];
+  return photos.length ? `<div class="menu-strip${photos.length>3 ? " scrollable" : ""}" aria-label="${slotNames[slot]} photos">${photos.map((p,i)=>`
+    <button class="dish" type="button" data-photo-id="${esc(item.id)}" data-photo-slot="${slot}" data-photo-index="${i}" aria-label="${esc(p.label)} · view photo">
+      <img src="${esc(p.src)}" alt=""><span>${esc(p.label)}</span>
+    </button>`).join("")}</div>` : "";
+}
+function selectionActions(slot,item,confirmed) {
+  const name = optionName(slot,item);
+  return `<div class="selection-actions">${confirmed
+    ? roundButton(`data-options="${slot}"`,"return","Return to "+slotNames[slot].toLowerCase()+" options","return-choice")
+    : roundButton(`data-action="choose" data-slot="${slot}" data-id="${esc(item.id)}"`,"check","Confirm "+name,"included")
+      + roundButton(`data-options="${slot}"`,"close","Cancel "+name+" preview","excluded")}</div>`;
+}
+function rideDetails(item) {
+  return `<dl class="ride-facts">
+    <div><dt>Expected wait</dt><dd>${esc(item.wait || "Check service")}</dd></div>
+    <div><dt>Direct to downtown</dt><dd>${esc(item.minutes)} min</dd></div>
+    <div><dt>Est. downtown fare</dt><dd>${esc(money(item.price))}</dd></div>
+    </dl>${item.waitNote ? `<p class="ride-note">${esc(item.waitNote)}</p>` : ""}
+    <p class="ride-payment">${icon("money")}${esc(item.payment)}</p>`;
+}
+function stopBody(slot,item,confirmed) {
+  const detail = slot==="transit" ? "Ride details" : mealSlots.includes(slot) ? "Menu & dietary details" : "Venue details";
+  return `${slot==="transit" ? rideDetails(item) : gallery(slot,item)}
+    <div class="stop-links">
+      <button class="sheet-link" data-detail="${slot}" data-item-id="${esc(item.id)}">${detail} ${icon("chevron")}</button>
+      ${slot==="dinner" && confirmed ? '<button class="sheet-link" data-group-invite>Invite Gio &amp; Andrew</button>' : ""}
+    </div>`;
+}
+export function routeSection(data,slot,edit) {
+  const options = slotOptions(data,slot);
+  const saved = data.state.confirmedSlots.includes(slot) && !data.state.skippedSlots?.includes(slot);
+  const selected = options.find(o=>o.id===data.state.choices[slot]) || options[0];
+  const confirmed = saved && edit === undefined;
+  const item = confirmed ? selected : options.find(o=>o.id===edit);
+  const reference = item || selected;
+  const at = tracking(data).lines.find(line=>line.title===reference.title)?.time;
+  const when = slot === "transit" ? "" : displayTime(at || (slot === "event" ? reference.starts : reference.time));
+  const title = slotNames[slot];
+  const id = slot === "transit" ? "transit" : "slot-"+slot;
+  return `<section class="stop glass stop-${slot}${item ? " expanded" : ""}" id="${id}" aria-labelledby="${id}-heading">
+    <div class="stop-head">
+      <span class="stop-pin pin-${slot}">${icon(slot)}</span><div class="stop-title">
+        ${item ? `<span class="stop-type">${title}${when ? `<i></i><time>${esc(when)}</time>` : ""}</span>` : ""}
+        <h2 id="${id}-heading">${item ? esc(optionName(slot,item)) : title}</h2>
+        ${!item && when ? `<time class="section-time">${esc(when)}</time>` : ""}
+        ${item && slot==="transit" && item.title!==optionName(slot,item) ? `<small>${esc(item.title)}</small>` : ""}
+        ${item && slot!=="transit" ? `<small>${esc(item.address)}</small>` : ""}
+      </div>${item ? selectionActions(slot,item,confirmed) : ""}</div>
+    ${item ? stopBody(slot,item,confirmed) : `<div class="choices" role="group" aria-label="${title} options">${options.map(o=>choiceButton(slot,o,saved ? selected.id : null)).join("")}</div>`}
   </section>`;
 }
 function locationMap(data) {
@@ -240,35 +297,8 @@ function locationMap(data) {
     </div>
   </section>`;
 }
-function stopCard(data,slot) {
-  const meal = ["breakfast","lunch","dinner"].includes(slot);
-  const item = slot === "event" ? data.catalog.event : activeOption(data,slot);
-  if (!item) return "";
-  const skipped = data.state.skippedSlots?.includes(slot);
-  const at = tracking(data).lines.find(line=>line.title===item.title)?.time;
-  const label = slotNames[slot];
-  const when = displayTime(at || (slot==="event" ? item.starts : item.time));
-  const status = meal ? roundButton(
-    `data-action="${skipped ? "choose" : "skip"}" data-slot="${slot}" data-id="${esc(item.id)}"`,
-    skipped ? "close" : "check", skipped ? `Restore ${label.toLowerCase()} to route` : `Skip ${label.toLowerCase()} on route`,
-    skipped ? "excluded" : "included"
-  ) : roundButton(`data-detail="${slot}"`, "chevron", label+" details");
-  const photos = meal ? menuPhotos[item.id] || [] : [];
-  return `<article id="slot-${slot}" class="stop glass stop-${slot}${skipped ? " skipped" : ""}">
-    <div class="stop-head">
-      <span class="stop-pin pin-${slot}">${icon(slot)}</span>
-      <button type="button" class="stop-name" data-detail="${slot}" aria-label="${esc(label+' details and options: '+item.title)}">
-        <span class="stop-type">${label}<i></i><time>${esc(when)}</time>${skipped ? " · Skipped" : ""}</span>
-        <h2>${esc(slot==="event" ? "AWS Builder Loft" : venueName(item))}</h2>
-      </button>${status}
-    </div>
-    ${photos.length ? `<div class="menu-strip${photos.length>3 ? " scrollable" : ""}" aria-label="${label} menu photos">${photos.map((p,i)=>`
-      <button type="button" class="dish" data-menu-slot="${slot}" data-menu-index="${i}" aria-label="${esc(p.label)} · view menu photo">
-        <img src="${esc(p.src)}" alt="" loading="${slot==="breakfast" ? "eager" : "lazy"}"><span>${esc(p.label)}</span>
-      </button>`).join("")}</div>` : meal ? '<p class="menu-unknown">Menu photos unavailable</p>' : ""}
-  </article>`;
-}
 function nearby(data) {
+  const dinnerChosen = data.state.confirmedSlots.includes("dinner");
   return `<section class="people glass" id="people" aria-labelledby="nearby-title">
     <div class="section-label"><span class="section-symbol">${icon("people")}</span><h2 id="nearby-title">People nearby</h2></div>
     ${data.catalog.contacts.map(person=>`<button class="person" data-detail="person" data-person="${esc(person.id)}">
@@ -276,8 +306,8 @@ function nearby(data) {
       <span class="person-text"><strong>${esc(person.name)}</strong><small>${esc(person.place)}</small></span>
       ${icon("chevron")}
     </button>`).join("")}
-    <button class="group-invite" type="button" data-group-invite ${data.state.skippedSlots?.includes("dinner") ? "disabled" : ""}>
-      ${icon("message")}${data.state.sentDinnerTexts?.some(m=>m.key===data.dinnerTextDraft?.key) ? "Replay dinner invitation" : "Invite both to dinner"}
+    <button class="group-invite" type="button" ${dinnerChosen ? "data-group-invite" : "data-pick-dinner"}>
+      ${icon("message")}${!dinnerChosen ? "Choose dinner to invite" : data.state.sentDinnerTexts?.some(m=>m.key===data.dinnerTextDraft?.key) ? "Replay dinner invitation" : "Invite both to dinner"}
     </button>
     ${data.state.sentDinnerTexts?.length ? '<button type="button" class="sheet-link" data-show-messages>View messages</button>' : ""}
   </section>`;
@@ -334,33 +364,25 @@ function trackerCard(data) {
     <button class="sheet-link" data-detail="schedule">Full schedule ${icon("chevron")}</button>
   </section>`;
 }
-export function dashboard(data,expanded,thread = {}) {
+export function dashboard(data,edits = {},thread = {}) {
   return `${locationMap(data)}
     <div class="workspace">
       <section class="route-column" id="day-plan" aria-label="Today's route">
-        ${travelDock(data,expanded)}
-        <div class="stops">${["breakfast","event","lunch","dinner","nightlife"].map(s=>stopCard(data,s)).join("")}</div>
+        ${routeSection(data,"transit",edits.transit)}
+        <div class="stops">${routeSlots.slice(1).map(s=>routeSection(data,s,edits[s])).join("")}</div>
       </section>
       <aside class="sidebar">${nearby(data)}${conversation(data.state,thread)}${trackerCard(data)}${toolsPanel(data)}</aside>
     </div>`;
 }
-function picker(data,slot) {
-  const selected = activeOption(data,slot);
-  return `<label for="select-${slot}">Choose ${slotNames[slot].toLowerCase()}</label>
-    <select id="select-${slot}" data-choose-slot="${slot}">${data.catalog[slot].map(o=>`
-      <option value="${esc(o.id)}" ${o.id===selected.id ? "selected" : ""} ${o.available===false?"disabled":""}>
-      ${esc(o.title)} · ${esc(money(o.price))}</option>`).join("")}</select>`;
-}
 export function detailsFor(data,kind,id) {
   const {catalog,state} = data;
   if (kind==="transit" || kind==="map") {
-    const opt = activeOption(data,"transit");
+    const opt = catalog.transit.find(o=>o.id===id) || activeOption(data,"transit");
     const art = transportArt[opt.id];
     return { title:kind==="map" ? "Current location" : "Your ride", body:`
-      <p>${esc(catalog.origin)}</p>${picker(data,"transit")}
+      <p>${esc(catalog.origin)}</p>
       ${info(opt)}${art?.source ? link(art.source,"Service icon source","photo-credit") : ""}
-      <button class="btn secondary" data-commute>${icon("route")}Replay commute</button>
-      <div id="commute-replay" role="status"></div>
+      ${kind==="map" ? `<button class="btn secondary" data-commute>${icon("route")}Replay commute</button><div id="commute-replay" role="status"></div>` : ""}
       <p class="photo-credit">Map data · ${link("https://www.openstreetmap.org/copyright","OpenStreetMap contributors")} · ${link("https://openfreemap.org/","OpenFreeMap")} · ${link("https://openmaptiles.org/","OpenMapTiles")} · ${link("https://data.sf.gov/d/9exe-acju","SFMTA routes")}</p>` };
   }
   if (kind==="person") {
@@ -368,7 +390,7 @@ export function detailsFor(data,kind,id) {
     if (!c) return;
     return {title:c.name,body:`<p class="subtle">${esc(c.platform)} · fictional post</p>
       ${photo(c,"post-photo")}<p>${esc(c.caption)}</p><p class="address">${icon("pin")}${esc(c.place)}</p>
-      ${state.skippedSlots?.includes("dinner") ? "" : `<button class="btn primary" data-group-invite>Invite Gio &amp; Andrew</button>
+      ${!state.confirmedSlots.includes("dinner") ? '<button class="btn primary" data-pick-dinner>Choose dinner to invite</button>' : `<button class="btn primary" data-group-invite>Invite Gio &amp; Andrew</button>
       <button class="btn secondary" type="button" data-action="invite" data-id="${esc(c.id)}">
       ${state.invitations.includes(c.id)?"Review individual draft":"Draft individual invite"}</button>`}`};
   }
@@ -376,21 +398,19 @@ export function detailsFor(data,kind,id) {
     const schedule = tracking(data).lines.map(l=>`<li><time>${esc(displayTime(l.time))}</time>${link(l.url,esc(l.title))}</li>`).join("");
     return {title:"Full schedule",body:`<ol class="schedule">${schedule}</ol>`};
   }
-  if (kind==="event") return {title:catalog.event.title,body:photo(catalog.event)+info(catalog.event,false)};
-  const item = activeOption(data,kind);
+  const item = slotOptions(data,kind)?.find(option=>option.id===id);
   if (!item) return;
-  const canReserve = kind==="dinner" && !state.skippedSlots?.includes(kind) && item.reservable;
-  return {title:slotNames[kind],body:`${picker(data,kind)}${info(item)}
-      ${kind==="nightlife" && !state.confirmedSlots.includes(kind) ? `<button class="btn primary" data-action="choose" data-slot="nightlife" data-id="${esc(item.id)}">Confirm nightlife stop</button>` : ""}
-      ${canReserve ? '<button class="btn secondary" data-action="reserve">Draft reservation</button>' : ""}
-      ${kind==="dinner" && !state.skippedSlots?.includes(kind) ? '<button class="btn primary" data-group-invite>Invite Gio &amp; Andrew</button>' : ""}`};
+  const chosen = state.confirmedSlots.includes(kind) && state.choices[kind]===id;
+  return {title:item.title,body:`${info(item,false)}
+    ${chosen && mealSlots.includes(kind) ? `<button class="btn secondary" data-action="skip" data-slot="${kind}">Skip this meal</button>` : ""}
+    ${chosen && kind==="dinner" && item.reservable ? '<button class="btn secondary" data-action="reserve">Draft reservation</button>' : ""}`};
 }
-export function menuPhotoFor(data,slot,index) {
-  const food = activeOption(data,slot);
-  const p = menuPhotos[food.id]?.[index];
-  if (!p) return;
-  return { title:p.label, body:`<img class="dish-full" src="${esc(p.src)}" alt="${esc(p.label)}">
-    <p>${esc(venueName(food))} · ${link(p.source,"Photo source")}</p>${detailList({diet:food.diet})}`};
+export function menuPhotoFor(data,slot,id,index) {
+  const venue = slotOptions(data,slot)?.find(o=>o.id===id);
+  const p = previewPhotos[id]?.[index];
+  if (!venue || !p) return;
+  return {title:p.label,body:`<img class="dish-full" src="${esc(p.src)}" alt="${esc(p.label)}">
+    <p>${esc(venueName(venue))} · ${link(p.source,"Photo source")}</p>${detailList({diet:venue.diet})}`};
 }
 export function briefingView(data) {
   return data.state.started && data.briefing?.length ? `<details class="brief-response"><summary>Atmos’ itinerary</summary>

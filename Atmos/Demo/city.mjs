@@ -13,6 +13,7 @@ const loft = "525 Market St, 2nd floor, San Francisco, CA 94105";
 const loftMap = link("AWS venue pin on Google Maps", "https://maps.app.goo.gl/rXg15QRsDQqnFYMD8");
 const routePage = link("SFMTA · 38R route and stops", "https://www.sfmta.com/routes/38r-geary-rapid");
 const farePage = link("SFMTA · fares and payment", "https://www.sfmta.com/getting-around/muni/fares");
+const californiaRoute = link("SFMTA · 1 California stops and weekday frequency", "https://www.sfmta.com/routes/1-california");
 const originDirections = (mode) => maps(pickup, loft, mode);
 const fromLoft = (to) => maps(loft, to + ", San Francisco, CA", "walking");
 const weatherPage = link("National Weather Service · Nov 20, 2:02 PM bulletin", "https://api.weather.gov/products/5b3e3fe8-0885-4ed1-b00f-35777776562e");
@@ -44,21 +45,26 @@ export const transit = [
   {
     id: "muni", title: "38R Geary Rapid", address: "Geary Blvd & Park Presidio Blvd → Market St & 1st St",
     time: "07:50", minutes: 43, steps: 1050, price: 2.85,
+    wait: "0–5 min scheduled", waitNote: "At Geary & Park Presidio, inbound 38R buses are scheduled five minutes apart around 8 AM Friday. Check stop 14756 for the next predicted arrival.",
     payment: "Tap Clipper, a contactless bank card or a mobile wallet on boarding. Exact cash is $3.",
-    notes: "Walk south to the eastbound stop and take the 38R toward downtown. Get off at Market & 1st and walk to the courtyard. The posted weekday headway is about six minutes. The budget includes walking and a short wait.",
+    notes: "Walk south to the eastbound stop and take the 38R toward downtown. Get off at Market & 1st. The 43-minute downtown estimate includes walking and a short wait.",
     url: originDirections("transit"),
     sources: [routePage, farePage,
       link("SFMTA · inbound timetable", "https://www.sfmta.com/routes/schedule/38R?direction_id=1"),
+      link("SFMTA · stop 14756 arrival predictions", "https://www.sfmta.com/stops/geary-blvd-park-presidio-blvd-14756"),
       link("Google Maps · transit directions", originDirections("transit"))],
   },
   {
     id: "waymo", title: "Waymo", address: "Clement St & 14th Ave → 525 Market St",
     time: "08:00", minutes: 34, steps: 350, price: 30,
+    wait: "Allow 10 min", waitNote: "Ten minutes is a planning allowance. Waymo serves SF around the clock. Check the app for a car, or choose a pickup time 5–60 minutes ahead.",
     payment: "Pay through Waymo with a linked card or Apple Pay.",
     notes: "Allow $30 for this example ride. Waymo quotes the fare and pickup point in the app before booking. Allow for the walk from its permitted drop-off to the courtyard.",
     url: originDirections("driving"),
     sources: [
       link("Waymo · San Francisco service", "https://waymo.com/rides/san-francisco/"),
+      link("Waymo · 24-hour SF coverage", "https://waymo.com/blog/2024/06/waymo-one-is-now-open-to-everyone-in-san-francisco/"),
+      link("Waymo · choosing a pickup time", "https://support.google.com/waymo/answer/15939031"),
       link("Waymo · trip pricing", "https://support.google.com/waymo/answer/9059184"),
       link("Waymo · payment options", "https://support.google.com/waymo/answer/14160746"),
       link("Google Maps · driving directions", originDirections("driving"))],
@@ -66,25 +72,42 @@ export const transit = [
   {
     id: "tesla", title: "Tesla supervised rideshare", address: "Clement St & 14th Ave → 525 Market St",
     time: "08:00", minutes: 35, steps: 350, price: 25,
+    wait: "Allow 15 min if offered", waitNote: "Fifteen minutes is a demo allowance for a supervised Tesla pickup. Availability and ETA at 8 AM in the Richmond are unconfirmed. Enter both addresses in the Robotaxi app for the current offer and wait.",
     payment: "The rideshare app charges the designated payment method on your account.",
     notes: "Bay Area rideshare uses a safety driver. Allow $25 as a demo budget. Check the Tesla app for service at pickup, the wait and the fare before relying on this option.",
     url: originDirections("driving"),
     sources: [
       link("Tesla · Bay Area service with a safety driver", "https://assets-ir.tesla.com/tesla-contents/IR/TSLA-Q2-2026-Update.pdf"),
+      link("Tesla · app service map, hours and pickup estimates", "https://www.tesla.com/support/robotaxi"),
       link("Tesla · FSD (Supervised) rideshare terms", "https://www.tesla.com/legal/terms"),
       link("Google Maps · driving directions", originDirections("driving"))],
   },
   {
     id: "taxi", title: "City taxi", address: "Clement St & 14th Ave → 525 Market St",
     time: "08:00", minutes: 33, steps: 320, price: 25,
+    wait: "Allow 15 min", waitNote: "Fifteen minutes is a planning allowance. SF taxi dispatch takes calls 24 hours a day. Flywheel shows the assigned cab’s estimated arrival.",
     payment: "Pay the driver with cash or a credit card. An e-hail app can charge a stored card.",
     notes: "A metered estimate for five miles and eight delayed minutes is $24.95 before tip. Budget $25. Distance and traffic affect the meter. Dispatch can arrange pickup in advance.",
     url: originDirections("driving"),
     sources: [
       link("SFMTA · taxi meter, dispatch and payment", "https://www.sfmta.com/getting-around/accessibility/taxi-ramp-taxi-services"),
+      link("Flywheel · cab pickup estimates", "https://www.flywheel.com/riders"),
       link("Google Maps · driving directions", originDirections("driving"))],
   },
 ];
+
+// The Sacramento Street breakfast uses a different corridor. Its timetable and
+// boarding instructions travel together when the itinerary changes.
+export function transitForBreakfast(options, breakfast) {
+  if (breakfast?.id !== 'breakfast') return options;
+  const directions = maps(pickup, breakfast.address, 'transit');
+  return options.map(option => option.id === 'muni' ? {
+    ...option, title: '1 California', address: 'California St & Park Presidio Blvd → California St & Spruce St',
+    wait: '0–10 min scheduled', waitNote: 'The 1 California serves stops west of Presidio Avenue every 10 minutes on weekday mornings. Check the inbound stop prediction before walking to California & Park Presidio.',
+    notes: 'Board the 1 California toward downtown. Get off at Spruce and walk to Boichik on Sacramento Street. After breakfast, return to the inbound stop for downtown.',
+    url: directions, sources: [californiaRoute, link('SFMTA · stop 13887 arrival predictions', 'https://www.sfmta.com/stops/california-st-park-presidio-blvd-13887'), farePage, link('Google Maps · directions to breakfast', directions)],
+  } : option);
+}
 
 export const nightlife = [
   {

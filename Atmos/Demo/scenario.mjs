@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { event, transit, nightlife, weekend, visitorTips, visitorSources, weather, weatherSources, origin, originCoords } from './city.mjs';
+import { event, transit, transitForBreakfast, nightlife, weekend, visitorTips, visitorSources, weather, weatherSources, origin, originCoords } from './city.mjs';
 import { breakfast, lunch, dinner } from './food.mjs';
 
 export const intro = "Hey Atmos, I'm visiting Richmond SF for the first time from Singapore for work, and I signed up for a hackathon at the AWS building. I've told my boss I'm sick today because I really wanted to attend this event and meet cool people. I'm here until Sunday and want to explore the best food and entertainment this city has to offer. Can you plan my itinerary for me?";
@@ -23,13 +23,17 @@ export const catalog = { date: '2026-11-20', intro, heroImage, heroCredit: { lab
 export const catalogRevision = createHash('sha256').update(JSON.stringify(catalog)).digest('hex');
 const meals = ['breakfast','lunch','dinner'];
 const slots = ['transit',...meals,'nightlife'];
+function choiceById(guide,slot,id) {
+  if (slot === 'event') return id === guide.event.id ? guide.event : undefined;
+  return guide[slot]?.find(option => option.id === id);
+}
 export const defaultProfile = { diet: 'Vegan, dairy-free, gluten-free', walkingGoal: 2000, budget: 400, socialStatus: 'Socialize', habits: 'Coffee and breakfast around 8 AM. Likes an evening drink.' };
 export function searchLocalMemory(guide, state, scope, query) {
   const facts = scope === 'private'
     ? [...Object.entries(state.profile).filter(([,v])=>typeof v !== 'boolean').map(([k,v]) => `${k}: ${v}`),
       ...Object.entries(state.choices).map(([slot,id]) => state.skippedSlots?.includes(slot)
         ? `${slot}: skipped for this visit`
-        : `${slot}: ${guide[slot]?.find(o=>o.id===id)?.title ?? ''}`)]
+        : `${slot}: ${choiceById(guide,slot,id)?.title ?? ''}`)]
     : [guide.event,...guide.transit,...guide.breakfast,...guide.lunch,...guide.dinner,...guide.nightlife,...guide.weekend]
       .map(o=>[o.title,o.address,o.notes,o.diet,o.sources?.[0]?.url].filter(Boolean).join(' · ')).concat(guide.weather,guide.visitorTips);
   const ignored = new Set(['what','which','where','when','would','could','should','about','that','the','and','for','are','was','can','does','will','you','how','tell']);
@@ -66,7 +70,7 @@ function profileFrom(text) {
 }
 function selected(s, slot) {
   if (s.skippedSlots?.includes(slot)) return undefined;
-  return catalog[slot].find(o => o.id === s.choices[slot]);
+  return choiceById(catalog,slot,s.choices[slot]);
 }
 function alternateDinner(s) {
   const candidates = dinner.filter(o => o.available !== false && o.id !== s.choices.dinner && km(o, teamVenue) > 1);
@@ -76,8 +80,10 @@ function alternateDinner(s) {
 export function guideForVisit(guide,s,evidence) {
   const eveningOrigin = selected(s,'dinner') ?? loft;
   const alternate = alternateDinner(s);
+  const morning = s.started ? selected(s,'breakfast') : guide.breakfast.find(place => place.available !== false);
   return {
     ...guide,
+    transit:transitForBreakfast(guide.transit,morning),
     weather:evidence?.weather ?? guide.weather,
     alert:{...guide.alert,alternative:alternate && `${alternate.title} at ${alternate.address}. ${alternate.diet}`},
     nightlife:s.started ? guide.nightlife.map(night=>({
@@ -96,6 +102,7 @@ function confirm(s,slot) {
 export function updateState(previous, input) {
   if (!input || typeof input !== 'object') throw new InputError('Choose a demo action.');
   const s = structuredClone(previous);
+  s.confirmedSlots ??= [];
   s.skippedSlots ??= [];
   s.sentDinnerTexts ??= [];
   if (input.action === 'reset') return { ...newState(), revision: s.revision + 1 };
@@ -109,8 +116,8 @@ export function updateState(previous, input) {
     if (!s.started) throw new InputError('Start your trip briefing first.');
     switch (input.action) {
       case 'choose': {
-        if (!slots.includes(input.slot)) throw new InputError('Unknown itinerary segment.');
-        const o = catalog[input.slot].find(option => option.id === input.id);
+        if (input.slot !== 'event' && !slots.includes(input.slot)) throw new InputError('Unknown itinerary segment.');
+        const o = choiceById(catalog,input.slot,input.id);
         if (!o || o.available === false) throw new InputError('This option is unavailable.');
         if (input.slot === 'dinner') changeDinner(s, o.id);
         else s.choices[input.slot] = o.id;

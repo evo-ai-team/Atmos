@@ -68,7 +68,7 @@ export function createDemo({filename=':memory:',env={}} = {}) {
     const cookie = /(?:^|;\s*)atmos_visit=([0-9a-f]{64})(?:;|$)/.exec(req.headers.cookie ?? '')?.[1];
     if (cookie) {
       const id = hash(cookie), row = read.get(id);
-      if (row) return {id, state:{skippedSlots:[],sentDinnerTexts:[],...JSON.parse(row.state)}};
+      if (row) return {id, state:{confirmedSlots:[],skippedSlots:[],sentDinnerTexts:[],...JSON.parse(row.state)}};
     }
     const key = token(), id = hash(key), state = newState();
     write.run(id,JSON.stringify(state));
